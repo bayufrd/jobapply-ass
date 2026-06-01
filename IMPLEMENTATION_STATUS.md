@@ -31,7 +31,7 @@ Status saat ini:
 * [ ] MVP selesai
 
 Catatan singkat:
-Project sekarang sudah bisa dijalankan sebagai fondasi MVP lokal yang jujur: upload CV, analisis CV, create campaign, dan start campaign yang membuka browser visible lalu melakukan pencarian lowongan Jobstreet secara nyata. Pencarian lowongan, ekstraksi detail, penyimpanan ke `JobListing`, AI scoring, assisted apply flow, final submit dengan approval user, dan campaign loop sudah diimplementasikan. Submit final memerlukan persetujuan eksplisit user dan berhenti otomatis jika captcha/login/OTP/pertanyaan baru terdeteksi.
+Project sekarang sudah bisa dijalankan sebagai fondasi MVP lokal yang jujur: upload CV, analisis CV, create campaign, dan start campaign yang membuka browser visible lalu melakukan pencarian lowongan Jobstreet secara nyata. Pencarian lowongan, ekstraksi detail, penyimpanan ke `JobListing`, AI scoring, assisted apply flow, final submit dengan approval user, campaign loop, dan apply calibration dry run sudah diimplementasikan. Submit final memerlukan persetujuan eksplisit user dan berhenti otomatis jika captcha/login/OTP/pertanyaan baru terdeteksi. Apply calibration memungkinkan dry run untuk mendeteksi flow type, platform, form fields, dan submit candidates sebelum melakukan apply sesungguhnya.
 
 ## 4. Progress Fitur Utama
 
@@ -67,7 +67,8 @@ Project sekarang sudah bisa dijalankan sebagai fondasi MVP lokal yang jujur: upl
 | Submit Lamaran                     | Selesai (Perlu Verifikasi Manual) | Final submit diimplementasikan dengan approval user eksplisit. Browser visible membuka halaman, re-fill field, deteksi captcha/login/OTP/pertanyaan baru, screenshot sebelum submit, safe submit button matching. Berhenti otomatis jika intervensi terdeteksi. | `lib/browser/jobstreet-apply-agent.ts`, `app/api/applications/[id]/submit/route.ts` |
 | Skip Lamaran                       | Selesai | Tombol "Lewati Lamaran" di halaman review mengubah status ke `skipped` dan mengembalikan job ke `shortlisted`. | `app/applications/[id]/review/page.tsx`, `app/api/applications/[id]/skip/route.ts` |
 | Campaign Loop                      | Selesai (Perlu Verifikasi Manual) | Loop kampanye menyiapkan lamaran berikutnya dari shortlisted jobs. Membuat Application `pending_review` dan menunggu approval user sebelum submit. Berhenti saat target tercapai, tidak ada job, atau intervensi manual. | `lib/campaign/loop-runner.ts`, `app/api/campaigns/[id]/loop/route.ts`, `components/campaign-actions.tsx` |
-| Log Aktivitas                      | Selesai | Dashboard dan halaman `/logs` kini membaca `AutomationLog` nyata dari database. Log search Jobstreet dan assisted apply lengkap dengan semua event. | `lib/logging/automation-log.ts`, `prisma/schema.prisma`, `app/logs/page.tsx`, `app/dashboard/page.tsx` |
+| Apply Calibration / Dry Run        | Selesai (Perlu Verifikasi Manual) | One-time dry run apply untuk mendeteksi flow type, platform, form fields, buttons, questions, dan submit candidates tanpa melakukan submit. Mendukung deteksi internal Jobstreet, external redirect, email apply, WhatsApp apply. Manual intervention (login/captcha/OTP) menghentikan flow dan membiarkan browser terbuka. | `lib/browser/jobstreet-apply-calibrator.ts`, `app/api/jobs/[id]/apply/calibrate/route.ts`, `app/api/jobs/[id]/calibration/route.ts`, `app/jobs/[id]/calibration/page.tsx` |
+| Log Aktivitas                      | Selesai | Dashboard dan halaman `/logs` kini membaca `AutomationLog` nyata dari database. Log search Jobstreet, assisted apply, dan kalibrasi lengkap dengan semua event. | `lib/logging/automation-log.ts`, `prisma/schema.prisma`, `app/logs/page.tsx`, `app/dashboard/page.tsx` |
 | Pause/Resume/Stop Campaign         | Partial | API route status update dan log nyata sudah ada, tetapi resume belum melanjutkan automation session sesungguhnya. Kontrol kampanye di halaman detail kini terintegrasi dengan campaign loop. | `app/api/campaigns/[id]/pause/route.ts`, `app/api/campaigns/[id]/resume/route.ts`, `app/api/campaigns/[id]/stop/route.ts`, `components/campaign-actions.tsx` |
 | Screenshot Saat Submit             | Selesai | Screenshot sebelum submit, setelah submit, dan saat error/intervensi disimpan ke `storage/screenshots` dan ditautkan ke `Application.screenshotPath`. | `lib/browser/jobstreet-apply-agent.ts`, `prisma/schema.prisma` |
 | README Setup                       | Selesai | README sudah menjelaskan instalasi, ENV, Prisma, Playwright, route, dan batasan. | `README.md` |
@@ -91,7 +92,9 @@ app/
     jobs/
       [id]/
         apply/
+          calibrate/  (NEW)
           start/
+        calibration/  (NEW)
     questions/
   applications/
     [id]/
@@ -100,6 +103,8 @@ app/
   cv/
   dashboard/
   jobs/
+    [id]/
+      calibration/  (NEW)
   logs/
   profile/
   question-memory/
@@ -112,6 +117,7 @@ lib/
   api/
   browser/
     jobstreet-apply-agent.ts  (UPDATED: submitApplication, safe submit button)
+    jobstreet-apply-calibrator.ts  (NEW)
     form-filler.ts
     page-detector.ts
   campaign/
@@ -142,6 +148,7 @@ storage/
 * [x] AutomationLog
 * [x] BrowserSession
 * [x] UserSetting
+* [x] ApplicationCalibration
 
 ### Migrasi
 
@@ -152,11 +159,13 @@ npx prisma migrate dev
 ```
 
 Catatan:
-Migration `add_job_listing_campaign_tracking` berhasil dijalankan. Perubahan schema:
-* `JobListing` mendapat field opsional `campaignId String?` dan `snippet String?`
-* `JobListing` mendapat relasi `campaign Campaign?`
-* `Campaign` mendapat relasi `jobListings JobListing[]`
-* `JobListing.url` tetap mempertahankan `@unique` constraint untuk deduplication
+Migration `add_application_calibration` berhasil dijalankan. Perubahan schema:
+* `ApplicationCalibration` model baru dengan field: `id`, `jobListingId`, `campaignId`, `flowType`, `platform`, `currentUrl`, `pageTitle`, `detectedFieldsJson`, `detectedQuestionsJson`, `detectedButtonsJson`, `submitCandidatesJson`, `screenshotPath`, `status`, `notes`, `createdAt`, `updatedAt`
+* `JobListing` mendapat relasi `calibrations ApplicationCalibration[]`
+* `ApplicationCalibration` memiliki relasi ke `JobListing` dengan `onDelete: Cascade`
+
+Migration sebelumnya:
+* `add_job_listing_campaign_tracking`: `JobListing.campaignId`, `JobListing.snippet`, relasi campaign/jobListings
 
 ## 7. Environment Variables
 
@@ -195,7 +204,8 @@ Jangan tulis value rahasia asli di file ini.
 | /campaigns       | Selesai | List kampanye membaca SQLite, bukan mock data. |
 | /campaigns/new   | Selesai | Form submit nyata ke API create campaign dan mendukung fallback default dari ENV. |
 | /campaigns/[id]  | Selesai | Detail kampanye menampilkan ringkasan lengkap, jumlah lowongan ditemukan, status pencarian terbaru, riwayat lamaran, status lamaran (shortlisted/menunggu review/terkirim/gagal/dijeda/dilewati), progres bar, kontrol loop (Siapkan Lamaran Berikutnya/Jeda/Lanjutkan/Hentikan), dan tombol Review untuk pending applications. |
-| /jobs            | Selesai | Membaca `JobListing` nyata dari Prisma. Menampilkan title, company, location, salary, workType, match score, match reason, status, filter shortlist/dilewati/belum dinilai, tombol buka URL Jobstreet, dan tombol "Bantu Lamar" untuk shortlisted jobs. Tombol non-shortlist menampilkan pesan bantuan. Empty state Bahasa Indonesia. |
+| /jobs            | Selesai | Membaca `JobListing` nyata dari Prisma. Menampilkan title, company, location, salary, workType, match score, match reason, status, filter shortlist/dilewati/belum dinilai, tombol buka URL Jobstreet, tombol "Kalibrasi Apply" dan "Bantu Lamar" untuk shortlisted jobs. Status kalibrasi ditampilkan sebagai badge (Belum dikalibrasi/Internal Jobstreet/External/Butuh Login/Gagal). Tombol non-shortlist menampilkan pesan bantuan. Empty state Bahasa Indonesia. |
+| /jobs/[id]/calibration | Selesai | Halaman hasil kalibrasi dry run. Menampilkan tipe flow, platform, URL saat ini, field terdeteksi (input/textarea/select), pertanyaan terdeteksi, tombol terdeteksi, kandidat tombol submit, risiko submit, dan rekomendasi. Label Bahasa Indonesia. |
 | /applications    | Selesai | Membaca `Application` nyata dari Prisma. Menampilkan campaign, job listing, status, notes, match score, tombol "Review" dan "Buka Jobstreet". Empty state Bahasa Indonesia. |
 | /applications/[id]/review | Selesai | Halaman review lamaran menampilkan info lowongan, skor AI, kampanye, field yang diisi, pertanyaan dijawab (dengan confidence dan sumber), pertanyaan pending, catatan, screenshot, dan aksi aktif (Lewati Lamaran/Setujui dan Kirim/Buka Jobstreet). Tombol "Setujui dan Kirim" aktif untuk status `pending_review` tanpa pending questions. Tombol "Lewati Lamaran" aktif untuk status `pending_review` dan `paused`. Konfirmasi dialog sebelum submit/skip. Menampilkan hasil submit (success/error/paused). |
 | /question-memory | Selesai | Membaca `QuestionMemory` nyata dari Prisma. Menampilkan question, answer, confidence, usage count, source, updated date. Empty state Bahasa Indonesia. |
@@ -222,6 +232,8 @@ Jangan tulis value rahasia asli di file ini.
 | app/api/applications/[id]/submit/route.ts | Selesai (Perlu Verifikasi Manual) | POST submit lamaran dengan approval user eksplisit (`{ approved: true }`). Verifikasi status `pending_review`, load profile, jalankan `submitApplication()`, update status/JobListing/campaign berdasarkan hasil. |
 | app/api/applications/[id]/skip/route.ts | Selesai | POST skip lamaran. Update status ke `skipped`, kembalikan JobListing ke `shortlisted`, tulis log. |
 | app/api/campaigns/[id]/loop/route.ts   | Selesai (Perlu Verifikasi Manual) | POST campaign loop. Siapkan lamaran berikutnya dari shortlisted jobs, jalankan assisted apply, buat Application `pending_review`. Berhenti saat target tercapai atau tidak ada job. |
+| app/api/jobs/[id]/apply/calibrate/route.ts | Selesai (Perlu Verifikasi Manual) | POST kalibrasi dry run. Validasi job shortlisted, launch visible browser, buka halaman lowongan, deteksi intervensi manual, temukan dan klik tombol apply, klasifikasi flow type dan platform, snapshot form fields/questions/buttons, simpan hasil ke `ApplicationCalibration`. Tidak melakukan submit. |
+| app/api/jobs/[id]/calibration/route.ts | Selesai | GET hasil kalibrasi terbaru untuk job listing. Mengembalikan data `ApplicationCalibration` terbaru dengan relasi job listing. |
 
 ## 10. Automation / Playwright Status
 
@@ -250,6 +262,8 @@ Jelaskan status browser automation:
 * Campaign loop: Sudah diimplementasikan. `prepareNextApplication()` di `lib/campaign/loop-runner.ts` mencari shortlisted job berikutnya tanpa submitted application, menjalankan assisted apply, membuat Application `pending_review`. Setiap submit tetap butuh approval user.
 * Application record creation: Sudah diimplementasikan. Membuat Application dengan status `pending_review`, `paused`, atau `failed` tergantung hasil flow.
 * Screenshot on submit: Sudah diimplementasikan. Screenshot sebelum submit, setelah submit, dan saat error/intervensi disimpan ke `storage/screenshots` dan ditautkan ke `Application.screenshotPath`.
+* Apply calibration dry run: Sudah diimplementasikan. `calibrateJobApply()` di `lib/browser/jobstreet-apply-calibrator.ts` membuka browser visible, mendeteksi intervensi manual, menemukan dan mengklik tombol apply, mengklasifikasi flow type (jobstreet_internal/external_redirect/email_apply/whatsapp_apply/unknown) dan platform (jobstreet/google_form/greenhouse/lever/workday/company_site/unknown), mengambil snapshot form (inputs/textareas/selects/questions/buttons/submit candidates), menyimpan hasil ke `ApplicationCalibration`. Tidak melakukan submit. Browser tetap terbuka untuk review user.
+* Apply button detection (calibration): Sudah diimplementasikan dengan 6 strategy: getByRole button text, getByRole link text, CSS text-based, href pattern, data-automation attributes, dan generic scan fallback.
 * Resume after intervention: Belum ada flow resume automation yang nyata.
 
 ## 11. AI Integration Status
@@ -295,7 +309,8 @@ Status log:
 * Log submit: Lengkap dengan event `application.submit_requested`, `application.before_submit_review`, `application.submitted`, `application.submit_failed`, `application.submit_manual_intervention`.
 * Log campaign loop: Lengkap dengan event `campaign.loop_started`, `campaign.loop_next_job`, `campaign.loop_paused`, `campaign.loop_completed`, `campaign.target_reached`, `campaign.applied_count_incremented`.
 * Log skip: Event `application.skipped`.
-* Screenshot path tersimpan: Screenshot sebelum submit, setelah submit, dan saat error/intervensi disimpan ke `storage/screenshots` dan ditautkan ke `Application.screenshotPath`.
+* Log calibration: Lengkap dengan event `application.calibration_started`, `application.calibration_job_opened`, `application.calibration_apply_button_found`, `application.calibration_apply_button_clicked`, `application.calibration_apply_button_not_found`, `application.calibration_flow_classified`, `application.calibration_form_snapshot_saved`, `application.calibration_external_redirect`, `application.calibration_manual_intervention`, `application.calibration_failed`.
+* Screenshot path tersimpan: Screenshot sebelum submit, setelah submit, dan saat error/intervensi disimpan ke `storage/screenshots` dan ditautkan ke `Application.screenshotPath`. Screenshot kalibrasi juga disimpan dan ditautkan ke `ApplicationCalibration.screenshotPath`.
 
 Contoh event log yang digunakan:
 
@@ -343,6 +358,16 @@ application.submitted
 application.submit_failed
 application.submit_manual_intervention
 application.skipped
+application.calibration_started
+application.calibration_job_opened
+application.calibration_apply_button_found
+application.calibration_apply_button_clicked
+application.calibration_apply_button_not_found
+application.calibration_flow_classified
+application.calibration_form_snapshot_saved
+application.calibration_external_redirect
+application.calibration_manual_intervention
+application.calibration_failed
 campaign.loop_started
 campaign.loop_next_job
 campaign.loop_paused
@@ -355,7 +380,7 @@ campaign.applied_count_incremented
 
 Tuliskan hasil testing manual terakhir:
 
-Tanggal: 2026-06-02 (04:56 WIB)
+Tanggal: 2026-06-02 (05:29 WIB)
 Command yang dijalankan:
 
 ```bash
@@ -367,31 +392,30 @@ npm run lint
 Hasil:
 
 * [x] Previous verification items all still pass
-* [x] `submitApplication()` added to `jobstreet-apply-agent.ts` with safe submit button matching
-* [x] `POST /api/applications/[id]/submit/route.ts` created with explicit user approval
-* [x] `POST /api/applications/[id]/skip/route.ts` created
-* [x] `/applications/[id]/review` page updated: "Setujui dan Kirim" button active with confirmation dialog
-* [x] `/applications/[id]/review` page updated: "Lewati Lamaran" button active
-* [x] Review page shows submit result (success/error/paused) banner
-* [x] Review page shows screenshot path if available
-* [x] Campaign loop runner created at `lib/campaign/loop-runner.ts`
-* [x] Campaign loop API at `POST /api/campaigns/[id]/loop/route.ts`
-* [x] Campaign detail page shows application status counts (shortlisted/pending review/submitted/failed/paused/skipped)
-* [x] Campaign detail page shows progress bar (appliedCount / targetApplyCount)
-* [x] Campaign detail page has loop controls (Siapkan Lamaran Berikutnya/Jeda/Lanjutkan/Hentikan)
-* [x] Campaign detail page shows Review button for pending applications
-* [x] `CampaignActions` client component created at `components/campaign-actions.tsx`
-* [x] Safe submit button detection with allowed/blocked label lists
-* [x] Screenshot before submit saved and linked to Application.screenshotPath
-* [x] All required log events added (submit, loop, skip)
+* [x] `ApplicationCalibration` model added to Prisma schema with all required fields
+* [x] `npx prisma migrate dev --name add_application_calibration` succeeded
+* [x] `calibrateJobApply()` created at `lib/browser/jobstreet-apply-calibrator.ts`
+* [x] Apply button detection with 6 strategies (role button, role link, CSS text, href, data-automation, generic scan)
+* [x] Flow type classification (jobstreet_internal/external_redirect/email_apply/whatsapp_apply/unknown)
+* [x] Platform detection (jobstreet/google_form/greenhouse/lever/workday/company_site/unknown)
+* [x] Form snapshot: inputs, textareas, selects, buttons, questions, submit candidates
+* [x] Final submit risk assessment (low/medium/high)
+* [x] `POST /api/jobs/[id]/apply/calibrate/route.ts` created
+* [x] `GET /api/jobs/[id]/calibration/route.ts` created
+* [x] `/jobs/[id]/calibration` page created with Bahasa Indonesia labels
+* [x] `/jobs` page updated with "Kalibrasi Apply" button and calibration status badges
+* [x] All calibration log events added (started, job_opened, apply_button_found/clicked/not_found, flow_classified, form_snapshot_saved, external_redirect, manual_intervention, failed)
 * [x] `npx tsc --noEmit` passes (no TypeScript errors)
 * [x] `npm run lint` passes (no ESLint errors)
 * [x] `npx prisma generate` passes
-* [ ] Submit flow not verified end-to-end against live Jobstreet (requires manual testing with visible browser)
-* [ ] Campaign loop not verified end-to-end (requires manual testing)
+* [ ] Calibration flow not verified end-to-end against live Jobstreet (requires manual testing with visible browser)
+* [ ] External redirect flow not verified end-to-end
+* [ ] Manual intervention (login/captcha/OTP) handling not verified
 
 Catatan:
-* Submit flow memerlukan verifikasi manual karena bergantung pada Jobstreet UI yang nyata.
+* Calibration dry run tidak melakukan submit. Browser tetap terbuka untuk review user.
+* Jika login/captcha/OTP terdeteksi, flow berhenti dan pesan dikembalikan ke user.
+* External redirect hanya menyimpan metadata, tidak mencoba submit.
 * Safe submit button matching menggunakan allowed labels (Kirim, Submit, Apply, dll) dan blocked labels (Search, Simpan, Next, dll) untuk menghindari klik yang tidak aman.
 * Submit berhenti otomatis jika captcha, login, OTP, security check, atau pertanyaan baru terdeteksi.
 * Campaign loop menyiapkan satu lamaran per iterasi dan menunggu approval user sebelum submit.
@@ -412,6 +436,8 @@ Catatan:
 | 2026-06-02 | Edit jawaban belum berfungsi dari UI | Tombol "Edit Jawaban" ada tetapi dinonaktifkan | Open | `app/applications/[id]/review/page.tsx` |
 | 2026-06-02 | Submit flow belum diverifikasi end-to-end terhadap Jobstreet nyata | Memerlukan testing manual dengan browser visible | Open | `lib/browser/jobstreet-apply-agent.ts`, `app/api/applications/[id]/submit/route.ts` |
 | 2026-06-02 | Campaign loop belum diverifikasi end-to-end | Memerlukan testing manual dengan browser visible | Open | `lib/campaign/loop-runner.ts`, `app/api/campaigns/[id]/loop/route.ts` |
+| 2026-06-02 | Apply calibration belum diverifikasi end-to-end | Memerlukan testing manual dengan browser visible terhadap Jobstreet nyata | Open | `lib/browser/jobstreet-apply-calibrator.ts`, `app/api/jobs/[id]/apply/calibrate/route.ts` |
+| 2026-06-02 | External redirect flow belum diverifikasi | Flow external redirect hanya menyimpan metadata, perlu mode pengisian eksternal | Open/Limitation | `lib/browser/jobstreet-apply-calibrator.ts` |
 
 ## 16. Risiko / Batasan
 
@@ -438,7 +464,9 @@ Checklist fitur yang belum selesai:
 * [ ] Implementasi login Jobstreet otomatis atau semi-otomatis yang benar-benar memakai credential/session secara aman.
 * [x] Final submit lamaran setelah approval user. (Implemented, needs manual verification against live Jobstreet)
 * [x] Tautkan screenshot error/intervensi ke record aplikasi yang relevan. (Screenshots now saved and linked)
-* [ ] Verifikasi end-to-end submit dan campaign loop terhadap Jobstreet nyata.
+* [x] Apply calibration dry run. (Implemented, needs manual verification against live Jobstreet)
+* [ ] Verifikasi end-to-end submit, campaign loop, dan calibration terhadap Jobstreet nyata.
+* [ ] Mode pengisian eksternal untuk flow external redirect.
 * [ ] Resume automation setelah intervensi manual (bukan hanya status-level, tetapi melanjutkan browser session yang sama).
 * [ ] Pagination hasil pencarian Jobstreet untuk kampanye besar.
 * [ ] UI real-time untuk menampilkan status manual intervention dan tombol "Lanjutkan Kampanye" setelah user menyelesaikan intervensi.
@@ -450,11 +478,11 @@ Checklist fitur yang belum selesai:
 
 Tuliskan 3–5 langkah paling masuk akal berikutnya.
 
-1. Verifikasi manual end-to-end: submit lamaran dengan browser visible terhadap Jobstreet nyata, pastikan captcha/login detection berfungsi.
-2. Verifikasi manual campaign loop: jalankan loop hingga target tercapai atau berhenti karena intervensi.
-3. Implementasikan edit jawaban dari halaman review.
-4. Implementasikan form multi-step/accordion handling untuk form lamaran yang kompleks.
-5. Implementasikan flow resume automation setelah intervensi manual (melanjutkan browser session yang sama).
+1. Verifikasi manual end-to-end: jalankan apply calibration pada shortlisted job, pastikan flow type dan platform terdeteksi dengan benar, form fields tersnapshot, dan browser tidak melakukan submit.
+2. Verifikasi manual end-to-end: submit lamaran dengan browser visible terhadap Jobstreet nyata, pastikan captcha/login detection berfungsi.
+3. Verifikasi manual campaign loop: jalankan loop hingga target tercapai atau berhenti karena intervensi.
+4. Implementasikan mode pengisian eksternal untuk flow external redirect (google_form, greenhouse, lever, workday, company_site).
+5. Implementasikan edit jawaban dari halaman review.
 
 ## 19. Prompt Lanjutan yang Direkomendasikan
 
@@ -462,13 +490,15 @@ Tuliskan prompt pendek untuk task berikutnya.
 
 ```txt
 Continue from IMPLEMENTATION_STATUS.md. Focus on verification and remaining features:
-1. Manual verification: test submit flow against live Jobstreet with visible browser.
-2. Manual verification: test campaign loop until target reached or intervention.
-3. Implement edit answer from review page.
-4. Add form multi-step/accordion handling for complex application forms.
-5. Keep UI in Bahasa Indonesia.
-6. Update IMPLEMENTATION_STATUS.md after finishing.
-7. Follow the mandatory GitHub workflow.
+1. Manual verification: test apply calibration dry run against live Jobstreet with visible browser. Pick 1 shortlisted job, click "Kalibrasi Apply", verify flow type/platform detection, form snapshot, and that no submit occurs.
+2. Manual verification: test submit flow against live Jobstreet with visible browser.
+3. Manual verification: test campaign loop until target reached or intervention.
+4. Implement external form filling mode for external redirect flows (google_form, greenhouse, lever, workday, company_site).
+5. Implement edit answer from review page.
+6. Add form multi-step/accordion handling for complex application forms.
+7. Keep UI in Bahasa Indonesia.
+8. Update IMPLEMENTATION_STATUS.md after finishing.
+9. Follow the mandatory GitHub workflow.
 ```
 
 ## 20. Catatan untuk AI Assistant Berikutnya
@@ -490,6 +520,7 @@ Tuliskan hal penting yang harus diketahui AI assistant berikutnya:
 * AI job scoring sudah terintegrasi ke campaign runner. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold.
 * Manual intervention message sudah diupdate untuk memandu user menyelesaikan login/captcha/OTP di browser yang terbuka, lalu klik Lanjutkan Kampanye.
 * Browser tidak ditutup saat manual intervention terdeteksi, tetapi session tidak dapat dilanjutkan otomatis setelah intervensi selesai (perlu restart campaign).
+* Apply calibration dry run: `calibrateJobApply()` di `lib/browser/jobstreet-apply-calibrator.ts` melakukan deteksi flow, platform, form fields, dan submit candidates tanpa submit. Hasil disimpan ke `ApplicationCalibration`.
 * `/profile` UI sudah dipoles: tidak ada raw JSON yang ditampilkan ke user normal, skills sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize, raw CV text tersembunyi dalam collapsible section.
 * Helper functions untuk profile: `parseProfileJson` (safe JSON parser), `humanizeKey` (convert camelCase/snake_case ke readable label), `renderFlexibleObject` (render object sebagai description list dengan formatting yang baik).
 * Assisted apply flow ada di `lib/browser/jobstreet-apply-agent.ts` dengan fungsi `startJobApplication()`.

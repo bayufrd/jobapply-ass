@@ -141,6 +141,16 @@ export async function getJobsData() {
       campaign: {
         select: { id: true, name: true },
       },
+      calibrations: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          status: true,
+          flowType: true,
+          createdAt: true,
+        },
+      },
       logs: {
         orderBy: { createdAt: "desc" },
         take: 1,

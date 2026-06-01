@@ -118,9 +118,10 @@ model JobListing {
   status       JobListingStatus @default(discovered)
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
-  campaign     Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  applications Application[]
-  logs         AutomationLog[]
+  campaign      Campaign?               @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  applications  Application[]
+  calibrations  ApplicationCalibration[]
+  logs          AutomationLog[]
 }
 
 model Application {
@@ -185,4 +186,26 @@ model UserSetting {
   value     String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ApplicationCalibration {
+  id                   String   @id @default(cuid())
+  jobListingId         String
+  campaignId           String?
+  flowType             String?  @default("unknown")
+  platform             String?  @default("unknown")
+  currentUrl           String?
+  pageTitle            String?
+  detectedFieldsJson   String?
+  detectedQuestionsJson String?
+  detectedButtonsJson  String?
+  submitCandidatesJson String?
+  screenshotPath       String?
+  status               String   @default("pending")
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  jobListing           JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+
+  @@index([jobListingId, createdAt])
 }
