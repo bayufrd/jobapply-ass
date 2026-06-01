@@ -2,12 +2,20 @@ import { NextResponse } from "next/server";
 import { analyzeCvText } from "@/lib/ai/cv-analyzer";
 import { prisma } from "@/lib/db/prisma";
 
+function isNineRouterEnvMissing(message: string) {
+  return (
+    message.includes("NINE_ROUTER_API_KEY") ||
+    message.includes("NINE_ROUTER_BASE_URL") ||
+    message.includes("NINE_ROUTER_CHAT_MODEL")
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as { uploadedCvId?: string };
 
     if (!body.uploadedCvId) {
-      return NextResponse.json({ error: "uploadedCvId is required." }, { status: 400 });
+      return NextResponse.json({ error: "uploadedCvId wajib diisi." }, { status: 400 });
     }
 
     const uploadedCv = await prisma.uploadedCV.findUnique({
@@ -15,7 +23,7 @@ export async function POST(request: Request) {
     });
 
     if (!uploadedCv?.extractedText) {
-      return NextResponse.json({ error: "Uploaded CV or extracted text not found." }, { status: 404 });
+      return NextResponse.json({ error: "CV unggahan atau teks hasil ekstraksi tidak ditemukan." }, { status: 404 });
     }
 
     const analysis = await analyzeCvText(uploadedCv.extractedText);
@@ -42,7 +50,17 @@ export async function POST(request: Request) {
       candidateProfile,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "CV analysis failed.";
+    const message = error instanceof Error ? error.message : "Analisis CV gagal.";
+
+    if (isNineRouterEnvMissing(message)) {
+      return NextResponse.json(
+        {
+          error:
+            "Konfigurasi 9router belum lengkap. Periksa NINE_ROUTER_API_KEY, NINE_ROUTER_BASE_URL, dan NINE_ROUTER_CHAT_MODEL di file .env.",
+        },
+        { status: 500 },
+      );
+    }
 
     return NextResponse.json({ error: message }, { status: 500 });
   }

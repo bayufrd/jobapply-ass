@@ -10,5 +10,8 @@ export async function GET() {
     session,
     configuredPath: process.env.PLAYWRIGHT_SESSION_PATH ?? "./storage/jobstreet.auth.json",
     visibleMode: (process.env.PLAYWRIGHT_HEADLESS ?? "false") !== "true",
+    message: session
+      ? "Metadata sesi browser ditemukan. Validasi sesi masih dasar dan perlu pengujian manual."
+      : "Belum ada metadata sesi browser tersimpan.",
   });
 }
