@@ -1,16 +1,16 @@
 import { AppShell } from "@/components/app-shell";
 
 const applications = [
-  ["PT Arunika", "Senior Backend Engineer", "pending_review", "Waiting for explicit submit approval"],
-  ["Garuda Labs", "Remote Node.js Developer", "submitted", "Submitted after user approval"],
-  ["Nusantara Cloud", "Platform Engineer", "skipped", "Salary mismatch"],
+  ["PT Arunika", "Senior Backend Engineer", "Menunggu Persetujuan", "Menunggu persetujuan kirim dari user"],
+  ["Garuda Labs", "Remote Node.js Developer", "Terkirim", "Dikirim setelah disetujui user"],
+  ["Nusantara Cloud", "Platform Engineer", "Dilewati", "Gaji tidak sesuai"],
 ];
 
 export default function ApplicationsPage() {
   return (
     <AppShell
-      title="Applications"
-      description="Audit every application attempt, including skipped jobs, pending reviews, submitted records, and screenshot notes."
+      title="Riwayat Lamaran"
+      description="Tinjau setiap percobaan lamaran, termasuk lowongan yang dilewati, review tertunda, lamaran terkirim, dan catatan tangkapan layar."
     >
       <div className="grid gap-4">
         {applications.map(([company, role, status, note]) => (

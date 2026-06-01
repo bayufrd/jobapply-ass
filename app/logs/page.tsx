@@ -4,8 +4,8 @@ import { latestLogs } from "@/lib/dashboard/mock-data";
 export default function LogsPage() {
   return (
     <AppShell
-      title="Logs"
-      description="Inspect timestamped automation events, browser pauses, captcha detections, AI decisions, and operator actions."
+      title="Log Aktivitas"
+      description="Tinjau aktivitas otomatisasi berdasarkan waktu, jeda browser, deteksi captcha, keputusan AI, dan tindakan user."
     >
       <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
         <ul className="space-y-3 text-sm text-slate-300">

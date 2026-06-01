@@ -2,14 +2,14 @@ import Link from "next/link";
 import { BriefcaseBusiness, FileText, LayoutDashboard, Logs, Settings2, User2, Workflow } from "lucide-react";
 
 const navigation = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/cv/upload", label: "Upload CV", icon: FileText },
-  { href: "/profile", label: "Profile", icon: User2 },
-  { href: "/campaigns", label: "Campaigns", icon: Workflow },
-  { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
-  { href: "/applications", label: "Applications", icon: FileText },
-  { href: "/logs", label: "Logs", icon: Logs },
-  { href: "/settings", label: "Settings", icon: Settings2 },
+  { href: "/dashboard", label: "Dasbor", icon: LayoutDashboard },
+  { href: "/cv/upload", label: "Unggah CV", icon: FileText },
+  { href: "/profile", label: "Profil Kandidat", icon: User2 },
+  { href: "/campaigns", label: "Kampanye Lamaran", icon: Workflow },
+  { href: "/jobs", label: "Lowongan", icon: BriefcaseBusiness },
+  { href: "/applications", label: "Riwayat Lamaran", icon: FileText },
+  { href: "/logs", label: "Log Aktivitas", icon: Logs },
+  { href: "/settings", label: "Pengaturan", icon: Settings2 },
 ];
 
 type AppShellProps = {
@@ -25,10 +25,10 @@ export function AppShell({ title, description, children, actions }: AppShellProp
       <div className="mx-auto grid min-h-screen max-w-7xl gap-6 px-4 py-4 lg:grid-cols-[260px_1fr]">
         <aside className="rounded-3xl border border-slate-800 bg-slate-900/80 p-5 backdrop-blur">
           <div className="mb-8">
-            <p className="text-xs uppercase tracking-[0.35em] text-cyan-300">Local-first MVP</p>
+            <p className="text-xs uppercase tracking-[0.35em] text-cyan-300">MVP Lokal</p>
             <h1 className="mt-2 text-2xl font-semibold">JobApply Assistant</h1>
             <p className="mt-2 text-sm text-slate-400">
-              Assisted auto apply with human oversight.
+              Auto apply dibantu dengan pengawasan user.
             </p>
           </div>
 
@@ -49,7 +49,7 @@ export function AppShell({ title, description, children, actions }: AppShellProp
         <div className="flex min-h-screen flex-col gap-6 rounded-3xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur">
           <header className="flex flex-col gap-4 border-b border-slate-800 pb-6 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-cyan-300">User-controlled automation</p>
+              <p className="text-xs uppercase tracking-[0.3em] text-cyan-300">Otomasi Terkendali</p>
               <h2 className="mt-2 text-3xl font-semibold">{title}</h2>
               <p className="mt-2 max-w-3xl text-sm text-slate-400">{description}</p>
             </div>

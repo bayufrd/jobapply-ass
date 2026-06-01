@@ -1,51 +1,51 @@
 export const dashboardStats = [
-  { label: "Active Campaign", value: "Backend Jakarta Push", hint: "Assisted auto apply · threshold 78" },
-  { label: "Applied Count", value: "12", hint: "Target 25 applications" },
-  { label: "Skipped Count", value: "31", hint: "Below threshold or missing requirements" },
-  { label: "Paused Questions", value: "3", hint: "Waiting for human answers" },
+  { label: "Kampanye Aktif", value: "Backend Jakarta Push", hint: "Auto apply dibantu · batas minimal 78" },
+  { label: "Jumlah Lamaran Terkirim", value: "12", hint: "Target 25 lamaran" },
+  { label: "Jumlah Lowongan Dilewati", value: "31", hint: "Di bawah batas minimal atau syarat belum terpenuhi" },
+  { label: "Aksi yang Perlu Ditangani", value: "3", hint: "Menunggu tindakan user" },
 ];
 
 export const latestLogs = [
-  "Opened Jobstreet listing and extracted visible details.",
-  "Paused on custom recruiter question about relocation timeline.",
-  "Saved browser session after manual login completion.",
-  "Skipped role due to salary mismatch with campaign defaults.",
+  "Membuka lowongan Jobstreet dan mengambil detail yang terlihat.",
+  "Dijeda pada pertanyaan rekruter tentang waktu relokasi.",
+  "Menyimpan sesi browser setelah login manual selesai.",
+  "Melewati lowongan karena gaji tidak sesuai dengan default kampanye.",
 ];
 
 export const pendingActions = [
-  "Approve final submit for Senior Node.js Developer at PT Arunika.",
-  "Answer work authorization question for Data Engineer listing.",
-  "Resume campaign after captcha solved in visible browser.",
+  "Setujui pengiriman akhir untuk Senior Node.js Developer di PT Arunika.",
+  "Jawab pertanyaan izin kerja untuk lowongan Data Engineer.",
+  "Lanjutkan kampanye setelah captcha selesai di browser yang terlihat.",
 ];
 
 export const campaignCards = [
   {
     id: "camp-1",
     name: "Backend Jakarta Push",
-    status: "running",
+    status: "Aktif",
     progress: "12 / 25",
     job: "Senior Backend Engineer · PT Arunika",
   },
   {
     id: "camp-2",
     name: "Remote Product Roles",
-    status: "paused",
+    status: "Dijeda",
     progress: "4 / 10",
-    job: "Paused on custom question",
+    job: "Dijeda pada pertanyaan tambahan",
   },
 ];
 
 export const questionQueue = [
   {
-    question: "How soon can you join after receiving an offer?",
-    suggestion: "Immediate / ASAP",
+    question: "Seberapa cepat Anda bisa mulai bekerja setelah menerima penawaran?",
+    suggestion: "Segera / Secepatnya",
     confidence: "0.95",
-    evidence: "Campaign default availability is Immediate.",
+    evidence: "Default ketersediaan kampanye adalah Segera.",
   },
   {
-    question: "Do you have experience leading a team of 5+ engineers?",
-    suggestion: "Needs human review",
+    question: "Apakah Anda memiliki pengalaman memimpin tim berisi 5+ engineer?",
+    suggestion: "Perlu review user",
     confidence: "0.42",
-    evidence: "CV shows mentoring but not explicit team size ownership.",
+    evidence: "CV menunjukkan pengalaman mentoring, tetapi tidak menyebutkan ukuran tim secara jelas.",
   },
 ];

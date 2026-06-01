@@ -1,16 +1,16 @@
 import { AppShell } from "@/components/app-shell";
 
 const jobs = [
-  ["Senior Backend Engineer", "PT Arunika", "84", "Ready for review"],
-  ["Platform Engineer", "Nusantara Cloud", "76", "Below threshold"],
-  ["Remote Node.js Developer", "Garuda Labs", "88", "Application draft ready"],
+  ["Senior Backend Engineer", "PT Arunika", "84", "Siap direview"],
+  ["Platform Engineer", "Nusantara Cloud", "76", "Di bawah batas minimal"],
+  ["Remote Node.js Developer", "Garuda Labs", "88", "Draft lamaran siap"],
 ];
 
 export default function JobsPage() {
   return (
     <AppShell
-      title="Jobs"
-      description="Inspect discovered job listings, visible extracted details, AI scores, and why a job was shortlisted or skipped."
+      title="Lowongan"
+      description="Tinjau lowongan yang ditemukan, detail yang terlihat, skor AI, dan alasan sebuah lowongan dipilih atau dilewati."
     >
       <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
         <div className="grid gap-4">
@@ -20,8 +20,8 @@ export default function JobsPage() {
                 <p className="font-medium text-white">{title}</p>
                 <p className="text-sm text-slate-400">{company}</p>
               </div>
-              <p className="text-sm text-slate-300">Visible details extracted from current page only.</p>
-              <p className="text-sm text-cyan-300">Score {score}</p>
+              <p className="text-sm text-slate-300">Hanya detail yang terlihat pada halaman saat ini yang diambil.</p>
+              <p className="text-sm text-cyan-300">Skor {score}</p>
               <p className="text-sm text-slate-300">{status}</p>
             </div>
           ))}

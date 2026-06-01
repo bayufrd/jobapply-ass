@@ -1,17 +1,17 @@
 import { AppShell } from "@/components/app-shell";
 
 const settings = [
-  "9router base URL and model configuration",
-  "Saved Jobstreet visible browser session state",
-  "Default salary, notice period, and availability values",
-  "Safety controls for manual intervention and submit approval",
+  "URL dasar 9router dan konfigurasi model",
+  "Status sesi browser Jobstreet yang terlihat dan tersimpan",
+  "Nilai default gaji, waktu mulai kerja, dan ketersediaan",
+  "Kontrol keamanan untuk intervensi manual dan persetujuan pengiriman",
 ];
 
 export default function SettingsPage() {
   return (
     <AppShell
-      title="Settings"
-      description="Configure local environment defaults, browser session paths, AI endpoints, and guardrails for human-in-the-loop automation."
+      title="Pengaturan"
+      description="Atur default lingkungan lokal, path sesi browser, endpoint AI, dan batasan keamanan untuk otomasi dengan pengawasan user."
     >
       <div className="grid gap-4">
         {settings.map((item) => (
