@@ -1,0 +1,54 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/db/prisma";
+
+export async function GET() {
+  const campaigns = await prisma.campaign.findMany({
+    orderBy: { createdAt: "desc" },
+  });
+
+  return NextResponse.json({ campaigns });
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = (await request.json()) as {
+      name?: string;
+      keyword?: string;
+      location?: string;
+      targetApplyCount?: number;
+      matchThreshold?: number;
+      workModePreference?: string;
+      defaultCurrentSalary?: number;
+      defaultExpectedSalary?: number;
+      defaultNoticePeriod?: string;
+      defaultAvailability?: string;
+      submitMode?: "assisted_auto_apply" | "manual_review_only";
+    };
+
+    if (!body.name || !body.keyword) {
+      return NextResponse.json({ error: "name and keyword are required." }, { status: 400 });
+    }
+
+    const campaign = await prisma.campaign.create({
+      data: {
+        name: body.name,
+        keyword: body.keyword,
+        location: body.location ?? null,
+        targetApplyCount: body.targetApplyCount ?? 1,
+        matchThreshold: body.matchThreshold ?? 70,
+        workModePreference: body.workModePreference ?? null,
+        defaultCurrentSalary: body.defaultCurrentSalary ?? Number(process.env.DEFAULT_CURRENT_SALARY ?? 6000000),
+        defaultExpectedSalary: body.defaultExpectedSalary ?? Number(process.env.DEFAULT_EXPECTED_SALARY ?? 6000000),
+        defaultNoticePeriod: body.defaultNoticePeriod ?? process.env.DEFAULT_NOTICE_PERIOD ?? "ASAP",
+        defaultAvailability: body.defaultAvailability ?? process.env.DEFAULT_AVAILABILITY ?? "Immediate",
+        submitMode: body.submitMode ?? "assisted_auto_apply",
+        status: "ready",
+      },
+    });
+
+    return NextResponse.json({ success: true, campaign }, { status: 201 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to create campaign.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

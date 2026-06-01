@@ -1,0 +1,42 @@
+{
+  "name": "jobapply-ass-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:seed": "node --experimental-strip-types prisma/seed.ts"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.4.0",
+    "@prisma/client": "^6.19.0",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "lucide-react": "^1.17.0",
+    "mammoth": "^1.12.0",
+    "next": "16.2.7",
+    "openai": "^6.40.0",
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.60.0",
+    "prisma": "^6.19.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-hook-form": "^7.77.0",
+    "tailwind-merge": "^3.6.0",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.7",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
