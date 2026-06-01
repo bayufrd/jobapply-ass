@@ -1,5 +1,8 @@
+"use client";
+
 import { AppShell } from "@/components/app-shell";
 import { getJobsData } from "@/lib/dashboard/data";
+import { useState, useEffect } from "react";
 
 function formatDate(date: Date) {
   return new Intl.DateTimeFormat("id-ID", {
@@ -46,8 +49,59 @@ function statusColor(status: string) {
   }
 }
 
-export default async function JobsPage() {
-  const jobs = await getJobsData();
+export default function JobsPage() {
+  const [jobs, setJobs] = useState<Awaited<ReturnType<typeof getJobsData>>>([]);
+  const [loading, setLoading] = useState(true);
+  const [applyingJobId, setApplyingJobId] = useState<string | null>(null);
+
+  useEffect(() => {
+    getJobsData().then((data) => {
+      setJobs(data);
+      setLoading(false);
+    });
+  }, []);
+
+  async function handleApply(jobId: string) {
+    if (applyingJobId) return;
+    
+    setApplyingJobId(jobId);
+    try {
+      const response = await fetch(`/api/jobs/${jobId}/apply/start`, {
+        method: "POST",
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        alert(result.error || "Gagal memulai proses lamaran");
+        return;
+      }
+      
+      alert(result.message || "Proses lamaran dimulai");
+      
+      // Refresh jobs data
+      const updatedJobs = await getJobsData();
+      setJobs(updatedJobs);
+    } catch (error) {
+      alert("Terjadi kesalahan saat memulai proses lamaran");
+      console.error(error);
+    } finally {
+      setApplyingJobId(null);
+    }
+  }
+
+  if (loading) {
+    return (
+      <AppShell
+        title="Lowongan"
+        description="Tinjau lowongan yang ditemukan dari Jobstreet, detail yang terlihat, skor AI, dan alasan sebuah lowongan dipilih atau dilewati."
+      >
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+          <p className="text-slate-400">Memuat lowongan...</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   const allJobs = jobs;
   const shortlistedJobs = jobs.filter((j) => j.status === "shortlisted");
@@ -140,14 +194,29 @@ export default async function JobsPage() {
 
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs text-slate-500">{formatDate(job.createdAt)}</p>
-                    <a
-                      href={job.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/20"
-                    >
-                      Buka Jobstreet
-                    </a>
+                    <div className="flex gap-2">
+                      {job.status === "shortlisted" ? (
+                        <button
+                          onClick={() => handleApply(job.id)}
+                          disabled={applyingJobId !== null}
+                          className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {applyingJobId === job.id ? "Memproses..." : "Bantu Lamar"}
+                        </button>
+                      ) : (
+                        <div className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-500">
+                          {job.status === "skipped" ? "Lowongan dilewati" : "Belum masuk shortlist"}
+                        </div>
+                      )}
+                      <a
+                        href={job.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/20"
+                      >
+                        Buka Jobstreet
+                      </a>
+                    </div>
                   </div>
                 </div>
               ))}

@@ -11,6 +11,21 @@ export async function detectManualIntervention(page: Page): Promise<DetectionRes
   const content = (await page.content()).toLowerCase();
   const url = page.url().toLowerCase();
 
+  // Login detection
+  if (
+    url.includes("/login") ||
+    url.includes("/signin") ||
+    url.includes("/sign-in") ||
+    url.includes("/auth") ||
+    content.includes("masuk ke akun") ||
+    content.includes("sign in to your account") ||
+    content.includes("log in to your account") ||
+    content.includes("masuk dengan email") ||
+    content.includes("sign in with email")
+  ) {
+    return { detected: true, reason: "manual_login_required", details: "Halaman login terdeteksi." };
+  }
+
   if (content.includes("captcha") || content.includes("i'm not a robot") || url.includes("captcha")) {
     return { detected: true, reason: "captcha", details: "Captcha markers found on page." };
   }

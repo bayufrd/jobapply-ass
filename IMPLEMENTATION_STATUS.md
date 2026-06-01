@@ -31,7 +31,7 @@ Status saat ini:
 * [ ] MVP selesai
 
 Catatan singkat:
-Project sekarang sudah bisa dijalankan sebagai fondasi MVP lokal yang jujur: upload CV, analisis CV, create campaign, dan start campaign yang membuka browser visible lalu melakukan pencarian lowongan Jobstreet secara nyata. Pencarian lowongan, ekstraksi detail, dan penyimpanan ke `JobListing` sudah diimplementasikan. Final submit dan assisted form filling sengaja belum diaktifkan.
+Project sekarang sudah bisa dijalankan sebagai fondasi MVP lokal yang jujur: upload CV, analisis CV, create campaign, dan start campaign yang membuka browser visible lalu melakukan pencarian lowongan Jobstreet secara nyata. Pencarian lowongan, ekstraksi detail, penyimpanan ke `JobListing`, AI scoring, dan assisted apply flow (hingga review) sudah diimplementasikan. Final submit sengaja belum diaktifkan.
 
 ## 4. Progress Fitur Utama
 
@@ -59,13 +59,13 @@ Project sekarang sudah bisa dijalankan sebagai fondasi MVP lokal yang jujur: upl
 | Extract Info Lowongan              | Selesai | Agent membuka halaman detail setiap lowongan dan mengekstrak title, company, location, salary, workType, description. Mendukung multiple selector strategies dengan fallback. | `lib/browser/jobstreet-agent.ts` |
 | Simpan JobListing                  | Selesai | Setiap lowongan disimpan ke Prisma `JobListing` dengan deduplication berdasarkan URL (`@unique`). Lowongan duplikat diupdate, bukan dibuat ulang. Relasi `campaignId` ditambahkan. | `lib/browser/jobstreet-agent.ts`, `prisma/schema.prisma` |
 | AI Job Scoring                     | Selesai | Fungsi scoring AI sudah terintegrasi ke flow campaign automation. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold. | `lib/ai/job-scorer.ts`, `lib/browser/jobstreet-agent.ts` |
-| Assisted Form Filling              | Partial | Filler field yang jelas sudah ada, tetapi belum terbukti menangani form lamaran Jobstreet end-to-end. | `lib/browser/form-filler.ts`, `lib/browser/jobstreet-agent.ts` |
-| Modal Pertanyaan Tambahan          | Partial | Komponen modal sudah ada, tetapi wiring runtime ke UI/automation belum terlihat lengkap. | `components/modals/question-modal.tsx`, `components/modals/human-decision-modal.tsx` |
-| Memori Pertanyaan                  | Selesai | API answer menyimpan/meningkatkan `QuestionMemory`. | `app/api/questions/answer/route.ts`, `prisma/schema.prisma` |
-| Modal Captcha/Verifikasi           | Partial | Komponen modal ada dan safety policy mendeteksi intervensi manual, tetapi belum terlihat flow UI real-time penuh. | `components/modals/captcha-modal.tsx`, `lib/security/safe-automation.ts`, `lib/browser/page-detector.ts` |
-| Review Lamaran Sebelum Submit      | Partial | Komponen review ada dan automation stub berhenti di review boundary, tetapi approval UI ke submit nyata belum terhubung penuh. | `components/modals/application-review-modal.tsx`, `lib/browser/jobstreet-agent.ts` |
-| Submit Lamaran                     | Belum | Stub sengaja berhenti sebelum final submit. | `lib/browser/jobstreet-agent.ts` |
-| Log Aktivitas                      | Selesai | Dashboard dan halaman `/logs` kini membaca `AutomationLog` nyata dari database. Log search Jobstreet lengkap dengan semua event. | `lib/logging/automation-log.ts`, `prisma/schema.prisma`, `app/logs/page.tsx`, `app/dashboard/page.tsx` |
+| Assisted Form Filling              | Selesai | Filler field yang jelas sudah diimplementasikan dengan multiple selector strategies (name, placeholder, aria-label, data-automation). Mendukung nama, email, telepon, lokasi, gaji saat ini, gaji harapan, masa kerja, ketersediaan, dan ringkasan/surat lamaran. | `lib/browser/form-filler.ts`, `lib/browser/jobstreet-apply-agent.ts` |
+| Modal Pertanyaan Tambahan          | Selesai | Deteksi pertanyaan form terimplementasi (label, legend, heading, data-automation). Pertanyaan dijawab dari QuestionMemory atau AI. Pertanyaan dengan confidence rendah atau requiresHumanReview disimpan sebagai pending. | `lib/browser/form-filler.ts`, `lib/browser/jobstreet-apply-agent.ts`, `lib/ai/question-answerer.ts` |
+| Memori Pertanyaan                  | Selesai | API answer menyimpan/meningkatkan `QuestionMemory`. Pertanyaan yang dijawab AI dengan confidence tinggi juga disimpan ke memory. | `app/api/questions/answer/route.ts`, `prisma/schema.prisma` |
+| Modal Captcha/Verifikasi           | Selesai | Deteksi login page, captcha, OTP, dan security check terimplementasi di page-detector. Flow assisted apply berhenti dan membuat Application status `paused` saat intervensi terdeteksi. | `lib/browser/page-detector.ts`, `lib/security/safe-automation.ts`, `lib/browser/jobstreet-apply-agent.ts` |
+| Review Lamaran Sebelum Submit      | Selesai | Halaman `/applications/[id]/review` menampilkan detail lengkap: info lowongan, skor AI, field yang diisi, pertanyaan dijawab, pertanyaan pending, dan catatan. Tombol "Setujui dan Kirim" dinonaktifkan dengan catatan. | `app/applications/[id]/review/page.tsx`, `app/api/applications/[id]/route.ts` |
+| Submit Lamaran                     | Belum | Stub sengaja berhenti sebelum final submit. Tombol submit dideteksi tetapi tidak diklik. | `lib/browser/jobstreet-apply-agent.ts` |
+| Log Aktivitas                      | Selesai | Dashboard dan halaman `/logs` kini membaca `AutomationLog` nyata dari database. Log search Jobstreet dan assisted apply lengkap dengan semua event. | `lib/logging/automation-log.ts`, `prisma/schema.prisma`, `app/logs/page.tsx`, `app/dashboard/page.tsx` |
 | Pause/Resume/Stop Campaign         | Partial | API route status update dan log nyata sudah ada, tetapi resume belum melanjutkan automation session sesungguhnya. | `app/api/campaigns/[id]/pause/route.ts`, `app/api/campaigns/[id]/resume/route.ts`, `app/api/campaigns/[id]/stop/route.ts` |
 | Screenshot Saat Error              | Partial | Screenshot error kini dicoba disimpan ke `storage/screenshots`, tetapi belum ada penyimpanan ke field `Application.screenshotPath`. | `prisma/schema.prisma`, `lib/browser/jobstreet-agent.ts` |
 | README Setup                       | Selesai | README sudah menjelaskan instalasi, ENV, Prisma, Playwright, route, dan batasan. | `README.md` |
@@ -78,11 +78,18 @@ Struktur penting saat ini:
 app/
   api/
     applications/
+      [id]/
     browser/session/
     campaigns/
     cv/
+    jobs/
+      [id]/
+        apply/
+          start/
     questions/
   applications/
+    [id]/
+      review/
   campaigns/
   cv/
   dashboard/
@@ -97,6 +104,9 @@ lib/
   ai/
   api/
   browser/
+    jobstreet-apply-agent.ts  (NEW)
+    form-filler.ts  (UPDATED)
+    page-detector.ts  (UPDATED)
   cv/
   dashboard/
   db/
@@ -171,12 +181,13 @@ Jangan tulis value rahasia asli di file ini.
 | /dashboard       | Selesai | Tidak lagi memakai mock; statistik, kampanye terbaru, dan log terbaru dibaca langsung dari Prisma. |
 | /cv              | Selesai | Menampilkan riwayat CV nyata dari DB dan status analisis terbaru. |
 | /cv/upload       | Selesai | Form upload dan input manual teks CV. Tombol analisis nyata mendukung teks manual dan ekstraksi file. Validasi panjang teks dan fallback otomatis. |
-| /profile         | Selesai | Menampilkan `CandidateProfile` terbaru dalam layout Bahasa Indonesia yang bersih. Skills sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize. Raw CV text tersembunyi dalam collapsible section. Tombol "Analisis Ulang CV" tersedia. |
+| /profile         | Selesai | Menampilkan `CandidateProfile` terbaru dalam layout Bahasa Indonesia yang bersih dan user-friendly. Skills sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize. Raw CV text tersembunyi dalam collapsible section. Tombol "Analisis Ulang CV" tersedia. |
 | /campaigns       | Selesai | List kampanye membaca SQLite, bukan mock data. |
 | /campaigns/new   | Selesai | Form submit nyata ke API create campaign dan mendukung fallback default dari ENV. |
 | /campaigns/[id]  | Selesai | Detail kampanye menampilkan ringkasan lengkap, jumlah lowongan ditemukan, status pencarian terbaru, riwayat lamaran, dan log aktivitas. Kontrol aksi (Mulai/Jeda/Lanjutkan/Hentikan) berfungsi. |
-| /jobs            | Selesai | Membaca `JobListing` nyata dari Prisma. Menampilkan title, company, location, salary, workType, match score, match reason, status, filter shortlist/dilewati/belum dinilai, dan tombol buka URL Jobstreet. Empty state Bahasa Indonesia. |
-| /applications    | Selesai | Membaca `Application` nyata dari Prisma. Menampilkan campaign, job listing, status, notes, skipped reason, submitted date. Empty state Bahasa Indonesia. |
+| /jobs            | Selesai | Membaca `JobListing` nyata dari Prisma. Menampilkan title, company, location, salary, workType, match score, match reason, status, filter shortlist/dilewati/belum dinilai, tombol buka URL Jobstreet, dan tombol "Bantu Lamar" untuk shortlisted jobs. Tombol non-shortlist menampilkan pesan bantuan. Empty state Bahasa Indonesia. |
+| /applications    | Selesai | Membaca `Application` nyata dari Prisma. Menampilkan campaign, job listing, status, notes, match score, tombol "Review" dan "Buka Jobstreet". Empty state Bahasa Indonesia. |
+| /applications/[id]/review | Selesai | Halaman review lamaran menampilkan info lowongan, skor AI, kampanye, field yang diisi, pertanyaan dijawab (dengan confidence dan sumber), pertanyaan pending, catatan, dan aksi (Edit Jawaban/Lewati/Setujui dan Kirim/Buka Jobstreet). Tombol aksi dinonaktifkan dengan catatan "Submit final akan diaktifkan pada tahap berikutnya." |
 | /question-memory | Selesai | Membaca `QuestionMemory` nyata dari Prisma. Menampilkan question, answer, confidence, usage count, source, updated date. Empty state Bahasa Indonesia. |
 | /logs            | Selesai | Membaca `AutomationLog` nyata dari DB, urut terbaru lebih dulu. |
 | /settings        | Selesai | Menampilkan status session browser, kartu status 9router Bahasa Indonesia, tombol cek koneksi, tombol muat daftar model, daftar model chat/embedding, default ENV, dan `UserSetting` nyata. |
@@ -194,9 +205,10 @@ Jangan tulis value rahasia asli di file ini.
 | app/api/campaigns/[id]/stop/route.ts   | Selesai | Update status campaign ke `stopped` dan menulis log nyata. |
 | app/api/questions/answer/route.ts      | Selesai | AI answer + upsert question memory. |
 | app/api/browser/session/route.ts       | Selesai | Mengembalikan metadata session browser, mode visible, configured path, dan pesan status jujur. |
-
 | app/api/settings/9router/health/route.ts  | Selesai | Health check 9router ke `${rootUrl}/api/health` dengan respons Bahasa Indonesia tanpa membocorkan secret. |
 | app/api/settings/9router/models/route.ts  | Selesai | Discovery model chat dan embedding via `${apiBaseUrl}/models` dan `${apiBaseUrl}/models/embedding`, memakai `data[].id`. |
+| app/api/jobs/[id]/apply/start/route.ts | Selesai | Memulai assisted apply untuk shortlisted job. Validasi profil, campaign, status shortlist. Meluncurkan browser, membuka halaman lowongan, mendeteksi intervensi manual, mengklik tombol apply, mengisi field, mendeteksi pertanyaan, membuat Application record. |
+| app/api/applications/[id]/route.ts     | Selesai | GET single application dengan relasi campaign dan jobListing untuk halaman review. |
 
 ## 10. Automation / Playwright Status
 
@@ -204,7 +216,7 @@ Jelaskan status browser automation:
 
 * Browser visible mode: Sudah diterapkan. Headless mode ditolak.
 * Session save/load: Path persistent session dipakai dan metadata session disimpan ke `BrowserSession`, tetapi load/validasi session masih dasar.
-* Manual login: Masih mungkin diperlukan; bila intervensi terdeteksi sistem menulis log `jobstreet.search_manual_intervention` dan mengembalikan pesan Indonesia yang jelas.
+* Manual login: Masih mungkin diperlukan; bila intervensi terdeteksi sistem menulis log `application.manual_intervention_required` dan mengembalikan pesan Indonesia yang jelas. Deteksi login page ditambahkan ke page-detector.
 * Login via ENV: Belum diimplementasikan.
 * Jobstreet search: Sudah diimplementasikan. Agent membangun URL pencarian dari keyword dan lokasi, navigasi ke halaman hasil, dan mengumpulkan job card dari halaman pertama.
 * Job card extraction: Sudah diimplementasikan dengan multiple selector strategies (data-automation attributes, semantic HTML, fallback generic detection).
@@ -213,8 +225,14 @@ Jelaskan status browser automation:
 * AI job scoring: Sudah diimplementasikan. Setiap lowongan yang disimpan akan di-score oleh AI, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold. Scoring error tidak menggagalkan campaign.
 * Campaign relasi: `JobListing.campaignId` menghubungkan lowongan ke kampanye yang menemukannya.
 * Safe limits: Maksimal 10-20 lowongan per run, tidak ada paginasi endless.
-* Form filling: Helper field masih ada, tetapi belum dipakai untuk submit nyata.
-* Captcha/manual intervention pause: Sudah ada deteksi dan hasil `requiresManualIntervention(...)`. Pesan Indonesia yang jelas dikembalikan.
+* Form filling: Sudah diimplementasikan dengan multiple selector strategies (name, placeholder, aria-label, data-automation). Mendukung 9 field utama termasuk nama, email, telepon, lokasi, gaji, masa kerja, ketersediaan, dan ringkasan.
+* Question detection: Sudah diimplementasikan. Mendeteksi pertanyaan dari label, legend, heading dalam form context, dan data-automation attributes. Pertanyaan dijawab dari QuestionMemory atau AI.
+* Question answering: Sudah diimplementasikan. Mengecek QuestionMemory terlebih dahulu (confidence >= 0.7), lalu memanggil AI. Jawaban dengan confidence >= 0.7 dan tidak requiresHumanReview disimpan ke memory.
+* Pending questions: Pertanyaan dengan confidence rendah atau requiresHumanReview disimpan ke Application.answersJson sebagai pending questions. Status Application menjadi `paused`.
+* Captcha/manual intervention pause: Sudah ada deteksi dan hasil `requiresManualIntervention(...)`. Deteksi login page ditambahkan. Pesan Indonesia yang jelas dikembalikan.
+* Apply button detection: Sudah diimplementasikan dengan 4 strategy: text-based, data-automation, href matching, dan generic fallback.
+* Submit button detection: Sudah diimplementasikan. Mendeteksi tombol submit tetapi TIDAK mengklik (safety boundary).
+* Application record creation: Sudah diimplementasikan. Membuat Application dengan status `pending_review`, `paused`, atau `failed` tergantung hasil flow.
 * Screenshot on error: Ada percobaan capture ke `storage/screenshots` saat error.
 * Resume after intervention: Belum ada flow resume automation yang nyata.
 
@@ -225,7 +243,7 @@ Jelaskan status integrasi 9router:
 * Chat completions: Sudah ada melalui OpenAI-compatible client dengan base URL resmi `/v1` dari helper bersama.
 * CV analysis: Sudah ada dan terhubung ke API route.
 * Job scoring: Sudah terintegrasi ke flow campaign utama. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold.
-* Question answering: Sudah ada, menyimpan memory, dan kini ikut memakai helper config 9router melalui client bersama.
+* Question answering: Sudah ada, menyimpan memory, dan kini ikut memakai helper config 9router melalui client bersama. Terintegrasi ke assisted apply flow.
 * Structured JSON output: Sudah ada parsing JSON + schema validation.
 * Config helper 9router: Sudah ada di `lib/ai/9router-config.ts` dan mengembalikan `rootUrl`, `apiBaseUrl`, `apiKey`, `chatModel`, `embeddingModel`, `isConfigured`, dan `missingFields`.
 * Health check: Sudah ada di `app/api/settings/9router/health/route.ts` dan memakai `${rootUrl}/api/health`.
@@ -237,12 +255,12 @@ Jelaskan status integrasi 9router:
 
 Jelaskan fitur yang melibatkan keputusan user:
 
-* Modal pertanyaan tambahan: Komponen ada, integrasi penuh belum diverifikasi.
-* Modal captcha/verifikasi: Komponen ada, safety rules dan detector ada, wiring penuh belum diverifikasi.
-* Modal review lamaran: Komponen ada, automation stub berhenti sebelum submit final.
-* Approve and submit: Belum ada flow final submit nyata.
-* Edit answer: Belum diverifikasi ada alur edit jawaban tersimpan dari UI.
-* Skip job: Belum terlihat alur runtime lengkap.
+* Modal pertanyaan tambahan: Deteksi pertanyaan form terimplementasi. Pertanyaan dijawab dari memory atau AI. Pertanyaan pending disimpan ke Application.answersJson. Status `paused` untuk pertanyaan yang memerlukan input user.
+* Modal captcha/verifikasi: Deteksi login page, captcha, OTP, dan security check terimplementasi. Flow berhenti dan membuat Application status `paused` saat intervensi terdeteksi.
+* Modal review lamaran: Halaman `/applications/[id]/review` menampilkan detail lengkap. Tombol aksi dinonaktifkan dengan catatan.
+* Approve and submit: Belum ada flow final submit nyata. Tombol "Setujui dan Kirim" dinonaktifkan.
+* Edit answer: Tombol "Edit Jawaban" ada di halaman review tetapi dinonaktifkan.
+* Skip job: Tombol "Lewati Lamaran" ada di halaman review tetapi dinonaktifkan.
 * Pause campaign: API ada dan menulis log nyata.
 * Resume campaign: API ada dan menulis log nyata, tetapi baru status-level.
 
@@ -256,6 +274,7 @@ Status log:
 * Log per job: Didukung oleh relasi dan field `jobListingId`.
 * Log error: Ya, start/pause/resume/stop dan worker stub menulis log nyata.
 * Log Jobstreet search: Lengkap dengan event `jobstreet.search_started`, `jobstreet.search_page_loaded`, `jobstreet.search_manual_intervention`, `jobstreet.job_card_found`, `jobstreet.job_detail_opened`, `jobstreet.job_saved`, `jobstreet.job_skipped_duplicate`, `jobstreet.job_scoring_started`, `jobstreet.job_scored`, `jobstreet.job_shortlisted`, `jobstreet.job_skipped_score`, `jobstreet.job_scoring_failed`, `jobstreet.search_completed`, `jobstreet.search_failed`.
+* Log assisted apply: Lengkap dengan event `application.started`, `application.job_opened`, `application.searching_apply_button`, `application.apply_button_clicked`, `application.apply_button_not_found`, `application.form_detected`, `application.field_filled`, `application.question_detected`, `application.question_answered`, `application.question_needs_user_input`, `application.manual_intervention_required`, `application.review_required`, `application.failed`.
 * Screenshot path tersimpan: Capture file error dicoba ke `storage/screenshots`, tetapi belum ditautkan ke model `Application`.
 
 Contoh event log yang digunakan:
@@ -285,14 +304,26 @@ jobstreet.job_scoring_failed
 jobstreet.search_completed
 jobstreet.search_failed
 manual_intervention
-submit.review_required
+application.started
+application.job_opened
+application.searching_apply_button
+application.apply_button_clicked
+application.apply_button_not_found
+application.form_detected
+application.field_filled
+application.question_detected
+application.question_answered
+application.question_needs_user_input
+application.manual_intervention_required
+application.review_required
+application.failed
 ```
 
 ## 14. Testing Manual
 
 Tuliskan hasil testing manual terakhir:
 
-Tanggal: 2026-06-02 (04:26 WIB)
+Tanggal: 2026-06-02 (04:42 WIB)
 Command yang dijalankan:
 
 ```bash
@@ -329,7 +360,12 @@ Hasil:
 * [x] Scoring errors do not fail the campaign
 * [x] `/jobs` page shows real data with filters (Semua/Shortlist/Dilewati/Belum dinilai)
 * [x] `/jobs` page shows match score and match reason
+* [x] `/jobs` page shows "Bantu Lamar" button for shortlisted jobs
+* [x] `/jobs` page shows disabled help text for non-shortlisted jobs
 * [x] `/applications` page shows real Application data from Prisma
+* [x] `/applications` page shows "Review" button and match score
+* [x] `/applications/[id]/review` shows full review page with job info, fields filled, questions answered, pending questions
+* [x] `/applications/[id]/review` shows disabled action buttons with notes
 * [x] `/question-memory` page shows real QuestionMemory data from Prisma
 * [x] Dashboard status updated to "Pencarian Jobstreet: Aktif"
 * [x] README limitations updated to reflect current state
@@ -352,6 +388,10 @@ Catatan:
 * `npm run lint` lulus, mengonfirmasi tidak ada error ESLint.
 * Migrasi `add_job_listing_campaign_tracking` berhasil dijalankan.
 * Selector Jobstreet menggunakan multiple strategies (data-automation attributes, semantic HTML, fallback generic) untuk ketahanan terhadap perubahan UI.
+* Assisted apply flow menggunakan defensive selector strategy untuk form filling dan apply button detection.
+* Page detector mendeteksi login page, captcha, OTP, dan security check.
+* Application record dibuat dengan status yang sesuai (pending_review/paused/failed).
+* Final submit tidak dilakukan; tombol submit dideteksi tetapi tidak diklik.
 
 ## 15. Error / Bug Saat Ini
 
@@ -364,6 +404,8 @@ Catatan:
 | 2026-06-02 | Health check dan model discovery 9router belum diverifikasi end-to-end ke server eksternal pada task ini | Perubahan fokus pada wiring, route, dan UI; belum ada uji manual terhadap instance 9router target | Open | `app/api/settings/9router/health/route.ts`, `app/api/settings/9router/models/route.ts` |
 | 2026-06-02 | Selector Jobstreet bisa rusak jika UI berubah | Jobstreet UI dapat berubah sewaktu-waktu | Open/Risk | `lib/browser/jobstreet-agent.ts` |
 | 2026-06-02 | Browser tidak ditutup saat manual intervention terdeteksi | Browser tetap terbuka untuk memungkinkan user menyelesaikan login/captcha/OTP, tetapi session tidak dapat dilanjutkan otomatis setelah intervensi selesai | Open/Limitation | `lib/browser/jobstreet-agent.ts` |
+| 2026-06-02 | Assisted apply belum menangani form multi-step/accordion | Jobstreet form lamaran mungkin memerlukan navigasi multi-step yang belum diimplementasikan | Open/Limitation | `lib/browser/jobstreet-apply-agent.ts` |
+| 2026-06-02 | Edit jawaban dan skip lamaran belum berfungsi dari UI | Tombol ada tetapi dinonaktifkan | Open | `app/applications/[id]/review/page.tsx` |
 
 ## 16. Risiko / Batasan
 
@@ -378,27 +420,34 @@ Tuliskan batasan saat ini:
 * Submit final harus melalui approval user.
 * App hanya untuk penggunaan pribadi/lokal.
 * Selector extraction menggunakan multiple strategies untuk ketahanan, tetapi perubahan besar pada UI Jobstreet mungkin memerlukan update manual.
+* Form filling menggunakan defensive selector strategy, tetapi form yang sangat berbeda dari ekspektasi mungkin tidak terisi penuh.
+* Question detection bergantung pada label/legend/heading yang terlihat, mungkin tidak menangkap semua pertanyaan.
+* AI question answering memerlukan konfigurasi 9router yang valid.
+* Form multi-step/accordion belum ditangani.
 
 ## 17. Yang Belum Dikerjakan
 
 Checklist fitur yang belum selesai:
 
 * [ ] Implementasi login Jobstreet otomatis atau semi-otomatis yang benar-benar memakai credential/session secara aman.
-* [ ] Finalisasi assisted form filling + review + submit lamaran setelah approval user.
+* [ ] Final submit lamaran setelah approval user.
 * [ ] Tautkan screenshot error/intervensi ke record aplikasi yang relevan dan perluas verifikasi manual end-to-end.
 * [ ] Resume automation setelah intervensi manual (bukan hanya status-level, tetapi melanjutkan browser session yang sama).
 * [ ] Pagination hasil pencarian Jobstreet untuk kampanye besar.
 * [ ] UI real-time untuk menampilkan status manual intervention dan tombol "Lanjutkan Kampanye" setelah user menyelesaikan intervensi.
-* [ ] Implementasi Jobstreet apply automation (belum dimulai pada task ini).
+* [ ] Edit jawaban dari halaman review.
+* [ ] Skip lamaran dari halaman review.
+* [ ] Form multi-step/accordion handling.
+* [ ] Screenshot capture saat assisted apply (saat ini hanya saat error campaign).
 
 ## 18. Prioritas Berikutnya
 
 Tuliskan 3–5 langkah paling masuk akal berikutnya.
 
-1. Implementasikan assisted form filling untuk form lamaran Jobstreet.
-2. Lengkapi alur human-in-the-loop untuk pertanyaan tambahan, captcha, dan review submit dari UI ke API.
-3. Implementasikan flow resume automation setelah intervensi manual (melanjutkan browser session yang sama, bukan hanya status-level).
-4. Implementasikan final submit dengan approval user.
+1. Implementasikan final submit dengan approval user (klik tombol submit di Jobstreet setelah user menyetujui).
+2. Implementasikan edit jawaban dan skip lamaran dari halaman review.
+3. Implementasikan form multi-step/accordion handling untuk form lamaran yang kompleks.
+4. Implementasikan flow resume automation setelah intervensi manual (melanjutkan browser session yang sama, bukan hanya status-level).
 5. Tambahkan pagination atau halaman berikutnya untuk pencarian lowongan agar kampanye besar bisa menemukan lebih banyak lowongan.
 
 ## 19. Prompt Lanjutan yang Direkomendasikan
@@ -406,10 +455,10 @@ Tuliskan 3–5 langkah paling masuk akal berikutnya.
 Tuliskan prompt pendek untuk task berikutnya.
 
 ```txt
-Continue from IMPLEMENTATION_STATUS.md. Focus on implementing Jobstreet apply automation:
-1. Implement assisted form filling for Jobstreet application forms.
-2. Add human-in-the-loop flow for questions, captcha, and review before submit.
-3. Implement final submit with user approval.
+Continue from IMPLEMENTATION_STATUS.md. Focus on implementing final submit and review actions:
+1. Implement final submit with user approval (click submit button on Jobstreet after user approves).
+2. Implement edit answer and skip application from review page.
+3. Add form multi-step/accordion handling for complex application forms.
 4. Keep UI in Bahasa Indonesia.
 5. Do not implement resume automation after manual intervention yet.
 6. Update IMPLEMENTATION_STATUS.md after finishing.
@@ -437,6 +486,14 @@ Tuliskan hal penting yang harus diketahui AI assistant berikutnya:
 * Browser tidak ditutup saat manual intervention terdeteksi, tetapi session tidak dapat dilanjutkan otomatis setelah intervensi selesai (perlu restart campaign).
 * `/profile` UI sudah dipoles: tidak ada raw JSON yang ditampilkan ke user normal, skills sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize, raw CV text tersembunyi dalam collapsible section.
 * Helper functions untuk profile: `parseProfileJson` (safe JSON parser), `humanizeKey` (convert camelCase/snake_case ke readable label), `renderFlexibleObject` (render object sebagai description list dengan formatting yang baik).
+* Assisted apply flow ada di `lib/browser/jobstreet-apply-agent.ts` dengan fungsi `startJobApplication()`.
+* Form filler ada di `lib/browser/form-filler.ts` dengan fungsi `fillKnownApplicationFields()`, `detectFormQuestions()`, dan `detectSubmitButton()`.
+* Page detector ada di `lib/browser/page-detector.ts` dengan fungsi `detectManualIntervention()` yang mendeteksi login, captcha, OTP, security check, dan uncertain page.
+* API route untuk start apply ada di `app/api/jobs/[id]/apply/start/route.ts`.
+* API route untuk single application ada di `app/api/applications/[id]/route.ts`.
+* Halaman review lamaran ada di `app/applications/[id]/review/page.tsx`.
+* Next.js 16 menggunakan `Promise<{ id: string }>` untuk params di API routes.
+* Final submit TIDAK diimplementasikan. Tombol submit dideteksi tetapi tidak diklik. Ini adalah safety boundary.
 * Update file ini setiap selesai perubahan.
 
 ## 21. Workflow GitHub Wajib untuk Agent
