@@ -60,61 +60,61 @@ model CandidateProfile {
   certificationsJson String?
   rawCvText          String?
   sourceType         String?  @default("uploaded_file")
+  manualTextUsed     Boolean  @default(false)
   sourceUploadedCvId String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 }
 
 model UploadedCV {
-  id                String   @id @default(cuid())
-  fileName          String
-  fileType          String
-  filePath          String
-  extractedText     String?
-  sourceType        String?  @default("uploaded_file")
-  manualTextUsed    String?
-  sourceUploadedCvId String?
-  createdAt         DateTime @default(now())
+  id             String   @id @default(cuid())
+  fileName       String
+  fileType       String
+  filePath       String
+  extractedText  String?
+  sourceType     String?  @default("uploaded_file")
+  manualTextUsed Boolean  @default(false)
+  createdAt      DateTime @default(now())
 }
 
 model Campaign {
-  id                    String             @id @default(cuid())
+  id                    String          @id @default(cuid())
   name                  String
   keyword               String
   location              String?
-  targetApplyCount      Int                @default(1)
-  appliedCount          Int                @default(0)
-  status                CampaignStatus     @default(draft)
-  submitMode            SubmitMode         @default(assisted_auto_apply)
-  matchThreshold        Int                @default(70)
-  defaultCurrentSalary  Int                @default(6000000)
-  defaultExpectedSalary Int                @default(6000000)
-  defaultNoticePeriod   String             @default("ASAP")
-  defaultAvailability   String             @default("Immediate")
+  targetApplyCount      Int             @default(1)
+  appliedCount          Int             @default(0)
+  status                CampaignStatus  @default(draft)
+  submitMode            SubmitMode      @default(assisted_auto_apply)
+  matchThreshold        Int             @default(70)
+  defaultCurrentSalary  Int             @default(6000000)
+  defaultExpectedSalary Int             @default(6000000)
+  defaultNoticePeriod   String          @default("ASAP")
+  defaultAvailability   String          @default("Immediate")
   workModePreference    String?
   currentJobTitle       String?
   currentJobCompany     String?
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
   applications          Application[]
   logs                  AutomationLog[]
 }
 
 model JobListing {
-  id           String         @id @default(cuid())
-  source       String         @default("jobstreet")
+  id           String           @id @default(cuid())
+  source       String           @default("jobstreet")
   title        String
   company      String
   location     String?
   salaryText   String?
   workType     String?
-  url          String         @unique
+  url          String           @unique
   description  String?
   matchScore   Int?
   matchReason  String?
   status       JobListingStatus @default(discovered)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
   applications Application[]
   logs         AutomationLog[]
 }
@@ -150,15 +150,15 @@ model QuestionMemory {
 }
 
 model AutomationLog {
-  id           String    @id @default(cuid())
+  id           String      @id @default(cuid())
   campaignId   String?
   jobListingId String?
-  level        LogLevel  @default(info)
+  level        LogLevel    @default(info)
   event        String
   message      String
   metadataJson String?
-  createdAt    DateTime  @default(now())
-  campaign     Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  createdAt    DateTime    @default(now())
+  campaign     Campaign?   @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   jobListing   JobListing? @relation(fields: [jobListingId], references: [id], onDelete: SetNull)
 
   @@index([campaignId, createdAt])
@@ -166,13 +166,13 @@ model AutomationLog {
 }
 
 model BrowserSession {
-  id            String   @id @default(cuid())
-  provider      String   @unique
+  id            String    @id @default(cuid())
+  provider      String    @unique
   sessionPath   String
-  isValid       Boolean  @default(false)
+  isValid       Boolean   @default(false)
   lastCheckedAt DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 }
 
 model UserSetting {

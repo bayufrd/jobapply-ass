@@ -26,56 +26,65 @@ export async function POST(request: Request) {
     };
 
     let cvText = "";
-    let sourceType = body.sourceType || "uploaded_file";
+    let sourceType: "uploaded_file" | "manual_text" = "uploaded_file";
+    let manualTextUsed = false;
     const sourceUploadedCvId = body.uploadedCvId || null;
 
-    if (body.manualCvText && body.manualCvText.trim().length >= 300) {
+    // 1. Check manual text first
+    if (body.manualCvText && body.manualCvText.trim().length > 0) {
+      if (body.manualCvText.trim().length < 300) {
+        return NextResponse.json(
+          {
+            error:
+              "Teks CV terlalu pendek. Pastikan isi CV yang ditempel cukup lengkap sebelum dianalisis.",
+          },
+          { status: 400 },
+        );
+      }
       cvText = body.manualCvText.trim();
       sourceType = "manual_text";
-      await prisma.automationLog.create({
-        data: {
-          event: "cv.manual_text_used",
-          message: "Menggunakan teks CV manual untuk analisis.",
-          metadataJson: JSON.stringify({ length: cvText.length }),
-        },
-      });
-    } else if (body.uploadedCvId) {
+      manualTextUsed = true;
+    }
+    // 2. Fallback to uploaded file if no manual text
+    else if (body.uploadedCvId) {
       const uploadedCv = await prisma.uploadedCV.findUnique({
         where: { id: body.uploadedCvId },
       });
 
-      if (!uploadedCv?.extractedText) {
-        await prisma.automationLog.create({
-          data: {
-            event: "cv.extraction_too_short",
-            message: "Teks hasil ekstraksi CV kosong atau tidak ditemukan.",
-            metadataJson: JSON.stringify({ uploadedCvId: body.uploadedCvId }),
-          },
-        });
+      if (!uploadedCv || !uploadedCv.extractedText || uploadedCv.extractedText.trim().length < 100) {
         return NextResponse.json(
-          { error: "CV unggahan atau teks hasil ekstraksi tidak ditemukan." },
-          { status: 404 },
+          {
+            error:
+              "File berhasil diunggah, tetapi isi CV tidak berhasil dibaca dengan baik. Silakan tempel isi CV secara manual di kolom teks, lalu coba Analisis CV lagi.",
+          },
+          { status: 422 },
         );
       }
 
       cvText = uploadedCv.extractedText;
       sourceType = "uploaded_file";
-      await prisma.automationLog.create({
-        data: {
-          event: "cv.uploaded_text_used",
-          message: "Menggunakan teks hasil ekstraksi file CV.",
-          metadataJson: JSON.stringify({
-            uploadedCvId: body.uploadedCvId,
-            length: cvText.length,
-          }),
-        },
-      });
+      manualTextUsed = false;
     } else {
       return NextResponse.json(
         { error: "Teks CV manual atau ID CV unggahan wajib diisi." },
         { status: 400 },
       );
     }
+
+    // Log the source used
+    await prisma.automationLog.create({
+      data: {
+        event: sourceType === "manual_text" ? "cv.manual_text_used" : "cv.uploaded_text_used",
+        message:
+          sourceType === "manual_text"
+            ? "Menggunakan teks CV manual untuk analisis."
+            : "Menggunakan teks hasil ekstraksi file CV.",
+        metadataJson: JSON.stringify({
+          length: cvText.length,
+          uploadedCvId: sourceUploadedCvId,
+        }),
+      },
+    });
 
     const analysis = await analyzeCvText(cvText);
 
@@ -93,24 +102,18 @@ export async function POST(request: Request) {
         certificationsJson: JSON.stringify(analysis.certifications),
         rawCvText: cvText,
         sourceType,
+        manualTextUsed,
         sourceUploadedCvId,
       },
     });
 
-    // Update UploadedCV to track source information if manual text was used
-    if (sourceType === "manual_text" && body.uploadedCvId) {
+    // Update UploadedCV to track source information
+    if (body.uploadedCvId) {
       await prisma.uploadedCV.update({
         where: { id: body.uploadedCvId },
         data: {
-          sourceType: "manual_text",
-          manualTextUsed: cvText,
-        },
-      });
-    } else if (sourceType === "uploaded_file" && body.uploadedCvId) {
-      await prisma.uploadedCV.update({
-        where: { id: body.uploadedCvId },
-        data: {
-          sourceType: "uploaded_file",
+          sourceType,
+          manualTextUsed,
         },
       });
     }

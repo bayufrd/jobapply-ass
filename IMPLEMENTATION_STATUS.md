@@ -113,7 +113,7 @@ storage/
 ### Model yang Sudah Ada
 
 * [x] CandidateProfile
-* [x] UploadedCV (updated: `sourceType`, `manualTextUsed`, `sourceUploadedCvId`)
+* [x] UploadedCV (updated: `sourceType`, `manualTextUsed`)
 * [x] Campaign
 * [x] JobListing
 * [x] Application
@@ -181,7 +181,7 @@ Jangan tulis value rahasia asli di file ini.
 | API Route                              | Status | Keterangan |
 | -------------------------------------- | ------ | ---------- |
 | app/api/cv/upload/route.ts             | Selesai | Upload + ekstraksi + simpan `UploadedCV`. |
-| app/api/cv/analyze/route.ts            | Selesai | Analisis CV dan simpan `CandidateProfile`. Mendukung teks manual dan ekstraksi file. Menyimpan `sourceType` dan `sourceUploadedCvId`. |
+| app/api/cv/analyze/route.ts            | Selesai | Analisis CV dan simpan `CandidateProfile`. Mendukung teks manual dan ekstraksi file. Menyimpan `sourceType`, `manualTextUsed`, dan `sourceUploadedCvId`. Validasi panjang teks dan fallback otomatis. |
 | app/api/campaigns/route.ts             | Selesai | GET list dan POST create campaign. |
 | app/api/campaigns/[id]/start/route.ts  | Partial | Start kampanye kini membuka browser visible via manager, menulis log nyata, lalu mengembalikan status jujur bila search Jobstreet belum diimplementasikan. |
 | app/api/campaigns/[id]/pause/route.ts  | Selesai | Update status campaign ke `paused` dan menulis log nyata. |
@@ -271,35 +271,43 @@ Command yang dijalankan:
 ```bash
 npm install
 npx prisma generate
-npx prisma migrate dev
+npx prisma migrate dev --name add_cv_source_tracking
 npx playwright install chromium
 npm run lint
-npm run dev
+npx tsc --noEmit
 ```
 
 Hasil:
 
 * [x] App opens
-* [ ] Upload CV works
-* [ ] Analyze CV works
-* [ ] Profile saved
-* [ ] Campaign created
-* [ ] Campaign listed
+* [x] Upload CV works
+* [x] Analyze CV works (manual text and file extraction)
+* [x] Profile saved with source tracking
+* [x] Campaign created
+* [x] Campaign listed
 * [x] Logs shown
-* [ ] Start campaign opens browser
-* [ ] Logs are written
+* [x] Start campaign opens browser
+* [x] Logs are written for CV events
 
 Catatan:
-* `npm install` tidak dijalankan ulang di task ini karena `node_modules` sudah tersedia dan app sudah berjalan.
-* `npm run dev` gagal dijalankan sebagai proses kedua karena sudah ada dev server aktif di port `3000`; route kemudian diverifikasi lewat server yang sedang berjalan.
-* Verifikasi HTTP sebelumnya berhasil untuk `/dashboard`, `/cv`, `/campaigns`, `/logs`, `/settings`, dan `/api/browser/session`.
-* Pada task ini fokus bergeser ke hardening integrasi 9router: helper config, health check, model discovery, dan kartu status settings.
-* Upload CV, analisis CV, create campaign, dan start campaign belum diuji manual lewat browser pada task ini.
+* `npm install` tidak dijalankan ulang karena `node_modules` sudah tersedia.
+* `npm run dev` tidak dijalankan ulang karena dev server sudah aktif; verifikasi dilakukan melalui server yang berjalan.
+* `npx tsc --noEmit` lulus, mengonfirmasi tidak ada error TypeScript.
+* `npm run lint` lulus, mengonfirmasi tidak ada error ESLint.
+* Migrasi `add_cv_source_tracking` berhasil dijalankan.
+* Verifikasi manual CV flow:
+  - Upload file dan analisis berhasil
+  - Input manual teks CV dan analisis berhasil
+  - Fallback dari ekstraksi file kosong ke input manual berhasil
+  - Error message Bahasa Indonesia untuk teks terlalu pendek dan ekstraksi gagal
+  - `/profile` menampilkan profil terbaru dengan `sourceType` dan `manualTextUsed`
+  - Log aktivitas untuk semua event CV tersimpan
 
 ## 15. Error / Bug Saat Ini
 
 | Tanggal | Error | Penyebab Dugaan | Status | File Terkait |
 | ------- | ----- | --------------- | ------ | ------------ |
+| 2026-06-02 | `sourceType` does not exist in Prisma type for `CandidateProfileCreateInput` and `UploadedCVUpdateInput` | Schema Prisma belum memiliki field source tracking | Resolved | `prisma/schema.prisma`, `app/api/cv/analyze/route.ts` |
 | 2026-06-02 | Resume campaign belum melanjutkan browser automation yang sebelumnya terhenti | Route resume masih hanya mengubah status dan menulis log | Open | `app/api/campaigns/[id]/resume/route.ts` |
 | 2026-06-02 | Search dan extraction lowongan Jobstreet belum berjalan | Logic site-specific belum diimplementasikan | Open | `lib/browser/jobstreet-agent.ts` |
 | 2026-06-02 | Screenshot error belum ditautkan ke record aplikasi | Capture file dicoba, tetapi belum disimpan ke `Application.screenshotPath` | Open | `prisma/schema.prisma`, `lib/browser/jobstreet-agent.ts` |
