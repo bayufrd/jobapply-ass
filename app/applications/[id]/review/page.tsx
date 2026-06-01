@@ -105,6 +105,10 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
   const [answers, setAnswers] = useState<AnswersJson | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [skipping, setSkipping] = useState(false);
+  const [submitResult, setSubmitResult] = useState<string | null>(null);
+  const [submitStatus, setSubmitStatus] = useState<"success" | "error" | "paused" | null>(null);
 
   useEffect(() => {
     fetch(`/api/applications/${id}`)
@@ -132,6 +136,91 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
       });
   }, [id]);
 
+  async function handleSubmit() {
+    if (!confirm("Anda yakin ingin mengirim lamaran ini? Browser akan terbuka dan tombol submit akan diklik secara otomatis.")) {
+      return;
+    }
+
+    setSubmitting(true);
+    setSubmitResult(null);
+    setSubmitStatus(null);
+
+    try {
+      const res = await fetch(`/api/applications/${id}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved: true }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setSubmitResult(data.error || "Gagal submit lamaran.");
+        setSubmitStatus("error");
+      } else {
+        setSubmitResult(data.message);
+        setSubmitStatus(data.status === "submitted" ? "success" : data.status === "paused" ? "paused" : "error");
+
+        // Refresh application data
+        const appRes = await fetch(`/api/applications/${id}`);
+        if (appRes.ok) {
+          const appData = await appRes.json();
+          setApplication(appData);
+          if (appData.answersJson) {
+            try {
+              setAnswers(JSON.parse(appData.answersJson));
+            } catch {
+              // Ignore
+            }
+          }
+        }
+      }
+    } catch (err) {
+      setSubmitResult(err instanceof Error ? err.message : "Terjadi kesalahan.");
+      setSubmitStatus("error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleSkip() {
+    if (!confirm("Anda yakin ingin melewati lamaran ini? Lamaran tidak akan dikirim.")) {
+      return;
+    }
+
+    setSkipping(true);
+    setSubmitResult(null);
+    setSubmitStatus(null);
+
+    try {
+      const res = await fetch(`/api/applications/${id}/skip`, {
+        method: "POST",
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setSubmitResult(data.error || "Gagal melewati lamaran.");
+        setSubmitStatus("error");
+      } else {
+        setSubmitResult(data.message);
+        setSubmitStatus("success");
+
+        // Refresh application data
+        const appRes = await fetch(`/api/applications/${id}`);
+        if (appRes.ok) {
+          const appData = await appRes.json();
+          setApplication(appData);
+        }
+      }
+    } catch (err) {
+      setSubmitResult(err instanceof Error ? err.message : "Terjadi kesalahan.");
+      setSubmitStatus("error");
+    } finally {
+      setSkipping(false);
+    }
+  }
+
   if (loading) {
     return (
       <AppShell title="Review Lamaran" description="Tinjau detail lamaran sebelum mengirim.">
@@ -156,6 +245,8 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
   }
 
   const job = application.jobListing;
+  const canSubmit = application.status === "pending_review";
+  const canSkip = application.status === "pending_review" || application.status === "paused";
 
   return (
     <AppShell
@@ -167,6 +258,21 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
         <a href="/applications" className="inline-block text-sm text-cyan-300 hover:underline">
           ← Kembali ke daftar lamaran
         </a>
+
+        {/* Submit Result Banner */}
+        {submitResult && (
+          <div
+            className={`rounded-xl border p-4 text-sm ${
+              submitStatus === "success"
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                : submitStatus === "paused"
+                  ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                  : "border-rose-500/30 bg-rose-500/10 text-rose-200"
+            }`}
+          >
+            {submitResult}
+          </div>
+        )}
 
         {/* Job Info */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
@@ -221,6 +327,14 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
             <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
               <p className="font-medium">⚠️ Perlu perhatian manual</p>
               <p className="mt-1">Lamaran ini memerlukan tindakan manual Anda sebelum dapat dilanjutkan.</p>
+            </div>
+          )}
+
+          {/* Screenshot preview */}
+          {application.screenshotPath && (
+            <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950 p-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Screenshot</p>
+              <p className="mt-1 text-sm text-slate-400 break-all">{application.screenshotPath}</p>
             </div>
           )}
         </div>
@@ -306,25 +420,34 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
           <h3 className="text-lg font-semibold text-white">Aksi</h3>
           <div className="mt-4 flex flex-wrap gap-3">
             <button
-              disabled
-              className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-500 cursor-not-allowed"
-              title="Edit jawaban akan diaktifkan pada tahap berikutnya"
+              onClick={handleSkip}
+              disabled={!canSkip || skipping}
+              className={`rounded-lg border px-4 py-2 text-sm font-medium ${
+                canSkip
+                  ? "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
+                  : "border-slate-700 bg-slate-950 text-slate-500 cursor-not-allowed"
+              }`}
+              title={canSkip ? "Lewati lamaran ini" : "Lamaran sudah tidak bisa dilewati"}
             >
-              Edit Jawaban
+              {skipping ? "Melewati..." : "Lewati Lamaran"}
             </button>
             <button
-              disabled
-              className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-500 cursor-not-allowed"
-              title="Lewati lamaran akan diaktifkan pada tahap berikutnya"
+              onClick={handleSubmit}
+              disabled={!canSubmit || submitting || answers?.pendingQuestions.length !== 0}
+              className={`rounded-lg border px-4 py-2 text-sm font-medium ${
+                canSubmit && (answers?.pendingQuestions.length ?? 0) === 0
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                  : "border-slate-700 bg-slate-950 text-slate-500 cursor-not-allowed"
+              }`}
+              title={
+                !canSubmit
+                  ? "Lamaran sudah tidak dalam status review"
+                  : (answers?.pendingQuestions.length ?? 0) > 0
+                    ? "Masih ada pertanyaan yang belum dijawab"
+                    : "Setujui dan kirim lamaran ini"
+              }
             >
-              Lewati Lamaran
-            </button>
-            <button
-              disabled
-              className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300/50 cursor-not-allowed"
-              title="Submit final akan diaktifkan pada tahap berikutnya."
-            >
-              Setujui dan Kirim
+              {submitting ? "Mengirim..." : "Setujui dan Kirim"}
             </button>
             <a
               href={job.url}
@@ -336,7 +459,15 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
             </a>
           </div>
           <p className="mt-3 text-xs text-slate-500">
-            Submit final akan diaktifkan pada tahap berikutnya. Saat ini Anda hanya dapat mereview data yang sudah diisi.
+            {canSubmit
+              ? 'Klik "Setujui dan Kirim" untuk mengirim lamaran. Browser akan terbuka dan tombol submit akan diklik secara otomatis. Pastikan Anda sudah meninjau semua data.'
+              : application.status === "submitted"
+                ? "Lamaran sudah berhasil dikirim."
+                : application.status === "failed"
+                  ? "Lamaran gagal dikirim. Periksa screenshot dan log untuk detail."
+                  : application.status === "skipped"
+                    ? "Lamaran ini dilewati."
+                    : "Status lamaran: " + statusLabel(application.status)}
           </p>
         </div>
       </div>

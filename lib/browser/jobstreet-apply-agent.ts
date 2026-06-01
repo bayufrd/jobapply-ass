@@ -11,6 +11,8 @@ import { answerApplicationQuestion } from "@/lib/ai/question-answerer";
 import type { QuestionAnswerResult } from "@/lib/ai/schemas";
 import { prisma } from "@/lib/db/prisma";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -60,6 +62,40 @@ type ApplyResult = {
   error?: string;
 };
 
+type SubmitResult = {
+  status: "submitted" | "failed" | "paused";
+  message: string;
+  screenshotPath?: string;
+  error?: string;
+};
+
+// Allowed submit button labels (safe matching)
+const ALLOWED_SUBMIT_LABELS = [
+  "kirim",
+  "submit",
+  "submit application",
+  "kirim lamaran",
+  "lamar sekarang",
+  "apply",
+  "apply now",
+];
+
+// Labels that should NOT be clicked as submit (navigation/search/save)
+const BLOCKED_SUBMIT_LABELS = [
+  "search",
+  "cari",
+  "simpan",
+  "save",
+  "bookmark",
+  "selanjutnya",
+  "next",
+  "lanjut",
+  "back",
+  "kembali",
+  "cancel",
+  "batal",
+];
+
 type AnswersJson = {
   fieldsFilled: FilledField[];
   questionAnswers: Array<{
@@ -105,6 +141,27 @@ function buildCandidateProfile(profile: ProfileData) {
     suggestedJobRoles: [],
   };
 }
+
+// ── Screenshot Helper ─────────────────────────────────────────────────
+
+async function saveScreenshot(
+  page: Page,
+  label: string,
+  applicationId: string,
+): Promise<string | null> {
+  try {
+    const screenshotDir = path.join(process.cwd(), "storage", "screenshots");
+    await mkdir(screenshotDir, { recursive: true });
+    const fileName = `${applicationId}-${label}-${Date.now()}.png`;
+    const filePath = path.join(screenshotDir, fileName);
+    await page.screenshot({ path: filePath, fullPage: true });
+    return `./storage/screenshots/${fileName}`;
+  } catch {
+    return null;
+  }
+}
+
+// ── Intervention Check (reuse) ────────────────────────────────────────
 
 async function checkAndHandleIntervention(
   page: Page,
@@ -502,6 +559,350 @@ export async function startJobApplication({
     };
   }
   // Browser intentionally left open for manual review
+}
+
+// ── Submit Application ────────────────────────────────────────────────
+
+export async function submitApplication({
+  applicationId,
+  jobListingUrl,
+  campaignId,
+  jobListingId,
+  profile,
+  campaign,
+  answersJson,
+}: {
+  applicationId: string;
+  jobListingUrl: string;
+  campaignId: string;
+  jobListingId: string;
+  profile: ProfileData;
+  campaign: CampaignData;
+  answersJson: AnswersJson;
+}): Promise<SubmitResult> {
+  let screenshotPath: string | null = null;
+
+  try {
+    const session = await launchManagedBrowser();
+    const page = session.page;
+
+    // Step 1: Log submit requested
+    await writeAutomationLog({
+      campaignId,
+      jobListingId,
+      event: "application.submit_requested",
+      message: `Submit lamaran ${applicationId} diminta oleh user. Membuka halaman lowongan...`,
+      metadata: { applicationId, jobUrl: jobListingUrl },
+    });
+
+    // Step 2: Navigate to job page
+    await page.goto(jobListingUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.waitForTimeout(2000);
+
+    // Step 3: Check for manual intervention
+    const intervention = await detectManualIntervention(page);
+    if (intervention.detected && intervention.reason) {
+      screenshotPath = await saveScreenshot(page, "intervention", applicationId);
+
+      await writeAutomationLog({
+        campaignId,
+        jobListingId,
+        level: "warn",
+        event: "application.submit_manual_intervention",
+        message: `Intervensi manual terdeteksi saat submit: ${intervention.details ?? intervention.reason}`,
+        metadata: { reason: intervention.reason, details: intervention.details ?? null, screenshotPath },
+      });
+
+      // Update application to paused
+      await prisma.application.update({
+        where: { id: applicationId },
+        data: { status: "paused", screenshotPath },
+      });
+
+      return {
+        status: "paused",
+        message: "Submit dijeda karena Jobstreet meminta login/verifikasi manual.",
+        screenshotPath: screenshotPath ?? undefined,
+      };
+    }
+
+    // Step 4: Try to click apply button if not already on form
+    // Check if there's already a form visible, if not try to open apply
+    const hasForm = (await page.locator("form, [role='form'], [class*='form']").count()) > 0;
+    if (!hasForm) {
+      const applyFound = await findAndClickApplyButton(page);
+      if (applyFound) {
+        await page.waitForTimeout(3000);
+      }
+    }
+
+    // Step 5: Re-check intervention after potential apply click
+    const intervention2 = await detectManualIntervention(page);
+    if (intervention2.detected && intervention2.reason) {
+      screenshotPath = await saveScreenshot(page, "intervention_post_apply", applicationId);
+
+      await writeAutomationLog({
+        campaignId,
+        jobListingId,
+        level: "warn",
+        event: "application.submit_manual_intervention",
+        message: `Intervensi manual terdeteksi setelah klik apply: ${intervention2.details ?? intervention2.reason}`,
+        metadata: { reason: intervention2.reason, details: intervention2.details ?? null, screenshotPath },
+      });
+
+      await prisma.application.update({
+        where: { id: applicationId },
+        data: { status: "paused", screenshotPath },
+      });
+
+      return {
+        status: "paused",
+        message: "Submit dijeda karena Jobstreet meminta login/verifikasi manual.",
+        screenshotPath: screenshotPath ?? undefined,
+      };
+    }
+
+    // Step 6: Re-fill fields if needed (defensive)
+    await fillKnownApplicationFields(page, profile, {
+      currentSalary: campaign.defaultCurrentSalary,
+      expectedSalary: campaign.defaultExpectedSalary,
+      noticePeriod: campaign.defaultNoticePeriod,
+      availability: campaign.defaultAvailability,
+    });
+
+    // Step 7: Check for unknown required questions
+    const currentQuestions = await detectFormQuestions(page);
+    const answeredQuestions = new Set(
+      answersJson.questionAnswers.map((qa) => normalizeQuestion(qa.question)),
+    );
+    const pendingQuestions = new Set(
+      answersJson.pendingQuestions.map((pq) => normalizeQuestion(pq.question)),
+    );
+
+    const unknownQuestions: string[] = [];
+    for (const q of currentQuestions) {
+      const norm = normalizeQuestion(q);
+      if (!answeredQuestions.has(norm) && !pendingQuestions.has(norm)) {
+        // Check if it's a known field label
+        let isField = false;
+        for (const f of answersJson.fieldsFilled) {
+          if (norm.includes(normalizeQuestion(f.label)) || normalizeQuestion(f.label).includes(norm)) {
+            isField = true;
+            break;
+          }
+        }
+        if (!isField && q.length > 3) {
+          unknownQuestions.push(q);
+        }
+      }
+    }
+
+    if (unknownQuestions.length > 0) {
+      screenshotPath = await saveScreenshot(page, "unknown_questions", applicationId);
+
+      await writeAutomationLog({
+        campaignId,
+        jobListingId,
+        level: "warn",
+        event: "application.submit_manual_intervention",
+        message: `Ditemukan ${unknownQuestions.length} pertanyaan baru yang belum diketahui jawabannya.`,
+        metadata: { unknownQuestions, screenshotPath },
+      });
+
+      await prisma.application.update({
+        where: { id: applicationId },
+        data: { status: "paused", screenshotPath },
+      });
+
+      return {
+        status: "paused",
+        message: `Submit dijeda: ditemukan ${unknownQuestions.length} pertanyaan baru yang belum dijawab.`,
+        screenshotPath: screenshotPath ?? undefined,
+      };
+    }
+
+    // Step 8: Pre-submit screenshot and log
+    screenshotPath = await saveScreenshot(page, "before_submit", applicationId);
+
+    await writeAutomationLog({
+      campaignId,
+      jobListingId,
+      event: "application.before_submit_review",
+      message: `Screenshot sebelum submit disimpan. Mencari tombol submit yang aman...`,
+      metadata: { screenshotPath, applicationId },
+    });
+
+    // Step 9: Find and click submit button (safe matching)
+    const submitClicked = await findAndClickSafeSubmitButton(page);
+
+    if (!submitClicked) {
+      screenshotPath = await saveScreenshot(page, "submit_not_found", applicationId);
+
+      await writeAutomationLog({
+        campaignId,
+        jobListingId,
+        level: "error",
+        event: "application.submit_failed",
+        message: "Tombol submit yang aman tidak ditemukan di halaman.",
+        metadata: { screenshotPath },
+      });
+
+      await prisma.application.update({
+        where: { id: applicationId },
+        data: { status: "failed", screenshotPath },
+      });
+
+      return {
+        status: "failed",
+        message: "Tombol submit tidak ditemukan atau tidak dapat diklik dengan aman.",
+        screenshotPath: screenshotPath ?? undefined,
+      };
+    }
+
+    // Step 10: Wait for response and verify
+    await page.waitForTimeout(5000);
+
+    // Check for post-submit intervention
+    const postSubmitIntervention = await detectManualIntervention(page);
+    if (postSubmitIntervention.detected) {
+      screenshotPath = await saveScreenshot(page, "post_submit_intervention", applicationId);
+
+      await writeAutomationLog({
+        campaignId,
+        jobListingId,
+        level: "warn",
+        event: "application.submit_manual_intervention",
+        message: `Intervensi terdeteksi setelah klik submit: ${postSubmitIntervention.details ?? postSubmitIntervention.reason}`,
+        metadata: { screenshotPath },
+      });
+
+      await prisma.application.update({
+        where: { id: applicationId },
+        data: { status: "paused", screenshotPath },
+      });
+
+      return {
+        status: "paused",
+        message: "Submit dijeda: Jobstreet meminta verifikasi setelah klik submit.",
+        screenshotPath: screenshotPath ?? undefined,
+      };
+    }
+
+    // Step 11: Capture success screenshot
+    screenshotPath = await saveScreenshot(page, "after_submit", applicationId);
+
+    await writeAutomationLog({
+      campaignId,
+      jobListingId,
+      event: "application.submitted",
+      message: `Lamaran berhasil dikirim untuk "${jobListingUrl}".`,
+      metadata: { applicationId, screenshotPath },
+    });
+
+    return {
+      status: "submitted",
+      message: "Lamaran berhasil dikirim.",
+      screenshotPath: screenshotPath ?? undefined,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    await writeAutomationLog({
+      campaignId,
+      jobListingId,
+      level: "error",
+      event: "application.submit_failed",
+      message: `Gagal submit lamaran: ${errorMessage}`,
+      metadata: { applicationId, error: errorMessage },
+    });
+
+    return {
+      status: "failed",
+      message: `Gagal submit lamaran: ${errorMessage}`,
+      error: errorMessage,
+      screenshotPath: screenshotPath ?? undefined,
+    };
+  }
+}
+
+// ── Safe Submit Button Finder ─────────────────────────────────────────
+
+async function findAndClickSafeSubmitButton(page: Page): Promise<boolean> {
+  // Strategy 1: Submit type buttons
+  const typeSubmitSelectors = [
+    "button[type='submit']",
+    "input[type='submit']",
+  ];
+
+  for (const selector of typeSubmitSelectors) {
+    try {
+      const el = page.locator(selector).first();
+      if ((await el.count()) > 0 && (await el.isVisible())) {
+        const text = ((await el.textContent()) ?? (await el.getAttribute("value")) ?? "").toLowerCase().trim();
+        // Verify it's not a blocked label
+        const isBlocked = BLOCKED_SUBMIT_LABELS.some((b) => text.includes(b));
+        if (!isBlocked) {
+          await el.click();
+          return true;
+        }
+      }
+    } catch {
+      // Try next
+    }
+  }
+
+  // Strategy 2: Text-based matching with allowed labels
+  for (const label of ALLOWED_SUBMIT_LABELS) {
+    try {
+      const el = page.locator(`button:has-text('${label}')`).first();
+      if ((await el.count()) > 0 && (await el.isVisible())) {
+        const text = ((await el.textContent()) ?? "").toLowerCase().trim();
+        const isBlocked = BLOCKED_SUBMIT_LABELS.some((b) => text.includes(b));
+        if (!isBlocked) {
+          await el.click();
+          return true;
+        }
+      }
+    } catch {
+      // Try next
+    }
+  }
+
+  // Strategy 3: data-automation submit
+  try {
+    const el = page.locator("[data-automation*='submit' i]").first();
+    if ((await el.count()) > 0 && (await el.isVisible())) {
+      const text = ((await el.textContent()) ?? "").toLowerCase().trim();
+      const isBlocked = BLOCKED_SUBMIT_LABELS.some((b) => text.includes(b));
+      if (!isBlocked) {
+        await el.click();
+        return true;
+      }
+    }
+  } catch {
+    // Continue
+  }
+
+  // Strategy 4: Generic submit button in form context
+  try {
+    const formButtons = page.locator("form button[type='submit'], form [role='button'][type='submit']");
+    const count = await formButtons.count();
+    for (let i = 0; i < count; i++) {
+      const btn = formButtons.nth(i);
+      if (await btn.isVisible()) {
+        const text = ((await btn.textContent()) ?? "").toLowerCase().trim();
+        const isBlocked = BLOCKED_SUBMIT_LABELS.some((b) => text.includes(b));
+        if (!isBlocked) {
+          await btn.click();
+          return true;
+        }
+      }
+    }
+  } catch {
+    // Continue
+  }
+
+  return false;
 }
 
 // ── Apply Button Finder ────────────────────────────────────────────────
