@@ -97,11 +97,13 @@ model Campaign {
   createdAt             DateTime        @default(now())
   updatedAt             DateTime        @updatedAt
   applications          Application[]
+  jobListings           JobListing[]
   logs                  AutomationLog[]
 }
 
 model JobListing {
   id           String           @id @default(cuid())
+  campaignId   String?
   source       String           @default("jobstreet")
   title        String
   company      String
@@ -110,11 +112,13 @@ model JobListing {
   workType     String?
   url          String           @unique
   description  String?
+  snippet      String?
   matchScore   Int?
   matchReason  String?
   status       JobListingStatus @default(discovered)
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
+  campaign     Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   applications Application[]
   logs         AutomationLog[]
 }

@@ -135,6 +135,28 @@ export async function getLogsData() {
   });
 }
 
+export async function getJobsData() {
+  return prisma.jobListing.findMany({
+    include: {
+      campaign: {
+        select: { id: true, name: true },
+      },
+      logs: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+}
+
+export async function getJobsCountForCampaign(campaignId: string) {
+  return prisma.jobListing.count({
+    where: { campaignId },
+  });
+}
+
 export async function getSettingsData() {
   const [session, userSettings] = await Promise.all([
     prisma.browserSession.findUnique({

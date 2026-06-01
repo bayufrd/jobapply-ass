@@ -24,6 +24,8 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       campaignId: id,
       keyword: campaign.keyword,
       location: campaign.location,
+      targetApplyCount: campaign.targetApplyCount,
+      matchThreshold: campaign.matchThreshold,
       profile: {
         fullName: profile.fullName ?? undefined,
         email: profile.email ?? undefined,
@@ -38,20 +40,24 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       },
     });
 
-    await setCampaignStatus(id, "paused");
-
-    if (result.status === "not_implemented") {
-      return NextResponse.json({
-        success: true,
-        status: "partial",
-        result,
-        message: result.message,
-      });
+    // Set campaign status based on result
+    if (result.status === "completed") {
+      await setCampaignStatus(id, "completed");
+      await logCampaignEvent(
+        id,
+        "campaign.completed",
+        `Pencarian selesai. ${result.jobsSaved} lowongan berhasil disimpan dari ${result.jobsFound} yang ditemukan.`,
+      );
+    } else if (result.status === "manual_intervention") {
+      await setCampaignStatus(id, "paused");
+      await logCampaignEvent(id, "campaign.paused", "Kampanye dijeda karena intervensi manual diperlukan.");
+    } else if (result.status === "search_failed") {
+      await setCampaignStatus(id, "error");
     }
 
     return NextResponse.json({
       success: true,
-      status: "paused",
+      status: result.status,
       result,
       message: result.message,
     });

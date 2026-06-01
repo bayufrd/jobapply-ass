@@ -42,3 +42,14 @@ next-env.d.ts
 
 # local agent config
 .roo/
+/prisma/dev.db
+prisma/dev.db
+
+# storage files (private data)
+storage/cv/*
+storage/screenshots/*
+storage/jobstreet.auth.json
+
+# keep storage directories
+!storage/cv/.gitkeep
+!storage/screenshots/.gitkeep
