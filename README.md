@@ -204,9 +204,11 @@ Submission must only happen after explicit user approval.
 
 ## Limitations
 
-- The current Jobstreet automation is a safe stub in [`runJobstreetCampaign()`](lib/browser/jobstreet-agent.ts:23), not a full production-grade applier
+- Jobstreet search and extraction are implemented in [`runJobstreetCampaign()`](lib/browser/jobstreet-agent.ts:369)
+- AI job scoring is integrated via [`scoreJobFit()`](lib/ai/job-scorer.ts:23)
+- Final submit is not implemented yet
 - No background queue or dedicated long-running worker process has been added yet
-- The UI currently uses mock dashboard content from [`lib/dashboard/mock-data.ts`](lib/dashboard/mock-data.ts:1) for several screens
+- Manual intervention requires restarting the campaign after resolving login/captcha/OTP in the visible browser
 - Session validation and login reuse are basic and need deeper site-specific handling
 - Form filling is intentionally conservative and only fills obvious known fields in [`fillKnownApplicationFields()`](lib/browser/form-filler.ts:18)
 

@@ -1,5 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import type { CandidateProfileResult } from "@/lib/ai/schemas";
+import { scoreJobFit } from "@/lib/ai/job-scorer";
 import type { Page } from "playwright";
 import { closeManagedBrowser, launchManagedBrowser } from "@/lib/browser/playwright-manager";
 import { detectManualIntervention } from "@/lib/browser/page-detector";
@@ -109,13 +111,150 @@ async function checkIntervention(
       paused: manualState.paused,
       reason: manualState.reason,
       message:
-        "Jobstreet meminta login atau verifikasi manual. Silakan selesaikan di browser, lalu jalankan ulang kampanye.",
+        "Jobstreet meminta login atau verifikasi manual. Selesaikan di browser yang terbuka, lalu klik Lanjutkan Kampanye.",
       status: "manual_intervention",
       jobsFound: 0,
       jobsSaved: 0,
     };
   }
   return null;
+}
+
+function parseJsonArray<T>(value: string | null | undefined): T[] {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function getLatestCandidateProfileResult(): Promise<CandidateProfileResult | null> {
+  const latestProfile = await prisma.candidateProfile.findFirst({
+    orderBy: { updatedAt: "desc" },
+  });
+
+  if (!latestProfile) {
+    return null;
+  }
+
+  return {
+    fullName: latestProfile.fullName ?? "",
+    email: latestProfile.email ?? "",
+    phone: latestProfile.phone ?? "",
+    location: latestProfile.location ?? "",
+    summary: latestProfile.summary ?? "",
+    skills: parseJsonArray<string>(latestProfile.skillsJson),
+    workExperience: parseJsonArray<Record<string, unknown>>(latestProfile.experienceJson),
+    education: parseJsonArray<Record<string, unknown>>(latestProfile.educationJson),
+    projects: parseJsonArray<Record<string, unknown>>(latestProfile.projectsJson),
+    certifications: parseJsonArray<string>(latestProfile.certificationsJson),
+    suggestedJobRoles: [],
+  };
+}
+
+async function scoreAndUpdateJobListing(
+  jobListingId: string,
+  job: JobDetail,
+  input: StartCampaignInput,
+) {
+  await writeAutomationLog({
+    campaignId: input.campaignId,
+    jobListingId,
+    event: "jobstreet.job_scoring_started",
+    message: `Memulai AI scoring untuk lowongan "${job.title || "Tanpa judul"}".`,
+    metadata: {
+      url: job.url,
+      keyword: input.keyword,
+      location: input.location ?? null,
+      matchThreshold: input.matchThreshold,
+    },
+  });
+
+  try {
+    const candidateProfile = await getLatestCandidateProfileResult();
+
+    if (!candidateProfile) {
+      throw new Error("Profil kandidat terbaru tidak ditemukan untuk scoring.");
+    }
+
+    const score = await scoreJobFit(
+      candidateProfile,
+      {
+        keyword: input.keyword,
+        location: input.location ?? null,
+        expectedSalary: input.defaults.expectedSalary ?? null,
+        workModePreference: null,
+        matchThreshold: input.matchThreshold,
+      },
+      {
+        title: job.title || "Tanpa judul",
+        company: job.company || "Tidak diketahui",
+        location: job.location || null,
+        salaryText: job.salaryText || null,
+        workType: job.workType || null,
+        description: job.description || null,
+        url: job.url,
+      },
+    );
+
+    const nextStatus = score.overallScore >= input.matchThreshold ? "shortlisted" : "skipped";
+
+    await prisma.jobListing.update({
+      where: { id: jobListingId },
+      data: {
+        matchScore: score.overallScore,
+        matchReason: score.reasoning,
+        status: nextStatus,
+      },
+    });
+
+    await writeAutomationLog({
+      campaignId: input.campaignId,
+      jobListingId,
+      event: "jobstreet.job_scored",
+      message: `AI scoring selesai untuk lowongan "${job.title || "Tanpa judul"}" dengan skor ${score.overallScore}.`,
+      metadata: {
+        overallScore: score.overallScore,
+        reasoning: score.reasoning,
+        threshold: input.matchThreshold,
+      },
+    });
+
+    await writeAutomationLog({
+      campaignId: input.campaignId,
+      jobListingId,
+      event:
+        nextStatus === "shortlisted"
+          ? "jobstreet.job_shortlisted"
+          : "jobstreet.job_skipped_score",
+      message:
+        nextStatus === "shortlisted"
+          ? `Lowongan "${job.title || "Tanpa judul"}" masuk shortlist.`
+          : `Lowongan "${job.title || "Tanpa judul"}" dilewati karena skor di bawah ambang batas.`,
+      metadata: {
+        overallScore: score.overallScore,
+        threshold: input.matchThreshold,
+        reasoning: score.reasoning,
+      },
+    });
+  } catch (error) {
+    await writeAutomationLog({
+      campaignId: input.campaignId,
+      jobListingId,
+      level: "error",
+      event: "jobstreet.job_scoring_failed",
+      message: `AI scoring gagal untuk lowongan "${job.title || "Tanpa judul"}". Lowongan tetap disimpan sebagai ditemukan.`,
+      metadata: {
+        error: error instanceof Error ? error.message : String(error),
+        url: job.url,
+      },
+    });
+  }
 }
 
 // ── Search URL Builder ─────────────────────────────────────────────────
@@ -549,6 +688,8 @@ export async function runJobstreetCampaign(
           });
         }
 
+        await scoreAndUpdateJobListing(jobListingId, detail, input);
+
         // Small delay between jobs to be respectful
         await page.waitForTimeout(1500);
       } catch (jobError) {
@@ -618,6 +759,8 @@ export async function runJobstreetCampaign(
       screenshotPath,
     };
   } finally {
-    await closeManagedBrowser(session);
+    if (page.isClosed()) {
+      await closeManagedBrowser(session);
+    }
   }
 }

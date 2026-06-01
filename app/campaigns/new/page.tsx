@@ -169,8 +169,8 @@ export default function NewCampaignPage() {
               </div>
             ))}
           </div>
-          <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
-            Pencarian Jobstreet belum diimplementasikan. Kampanye yang dibuat di sini hanya menyiapkan fondasi data lokal dan kontrol start/pause/resume/stop.
+          <div className="mt-4 rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-4 text-sm text-cyan-100">
+            Pencarian Jobstreet dan AI scoring sudah aktif. Final submit belum diimplementasikan.
           </div>
         </section>
       </div>

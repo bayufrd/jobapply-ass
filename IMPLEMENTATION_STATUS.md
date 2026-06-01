@@ -58,7 +58,7 @@ Project sekarang sudah bisa dijalankan sebagai fondasi MVP lokal yang jujur: upl
 | Search Jobstreet                   | Selesai | Agent membuka Jobstreet, membangun URL pencarian dari keyword dan lokasi, navigasi ke halaman hasil, dan mengumpulkan job card dari halaman pertama. | `lib/browser/jobstreet-agent.ts` |
 | Extract Info Lowongan              | Selesai | Agent membuka halaman detail setiap lowongan dan mengekstrak title, company, location, salary, workType, description. Mendukung multiple selector strategies dengan fallback. | `lib/browser/jobstreet-agent.ts` |
 | Simpan JobListing                  | Selesai | Setiap lowongan disimpan ke Prisma `JobListing` dengan deduplication berdasarkan URL (`@unique`). Lowongan duplikat diupdate, bukan dibuat ulang. Relasi `campaignId` ditambahkan. | `lib/browser/jobstreet-agent.ts`, `prisma/schema.prisma` |
-| AI Job Scoring                     | Partial | Fungsi scoring AI sudah ada, tetapi belum terlihat terintegrasi ke flow campaign automation. | `lib/ai/job-scorer.ts` |
+| AI Job Scoring                     | Selesai | Fungsi scoring AI sudah terintegrasi ke flow campaign automation. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold. | `lib/ai/job-scorer.ts`, `lib/browser/jobstreet-agent.ts` |
 | Assisted Form Filling              | Partial | Filler field yang jelas sudah ada, tetapi belum terbukti menangani form lamaran Jobstreet end-to-end. | `lib/browser/form-filler.ts`, `lib/browser/jobstreet-agent.ts` |
 | Modal Pertanyaan Tambahan          | Partial | Komponen modal sudah ada, tetapi wiring runtime ke UI/automation belum terlihat lengkap. | `components/modals/question-modal.tsx`, `components/modals/human-decision-modal.tsx` |
 | Memori Pertanyaan                  | Selesai | API answer menyimpan/meningkatkan `QuestionMemory`. | `app/api/questions/answer/route.ts`, `prisma/schema.prisma` |
@@ -175,9 +175,9 @@ Jangan tulis value rahasia asli di file ini.
 | /campaigns       | Selesai | List kampanye membaca SQLite, bukan mock data. |
 | /campaigns/new   | Selesai | Form submit nyata ke API create campaign dan mendukung fallback default dari ENV. |
 | /campaigns/[id]  | Selesai | Detail kampanye menampilkan ringkasan lengkap, jumlah lowongan ditemukan, status pencarian terbaru, riwayat lamaran, dan log aktivitas. Kontrol aksi (Mulai/Jeda/Lanjutkan/Hentikan) berfungsi. |
-| /jobs            | Selesai | Membaca `JobListing` nyata dari Prisma. Menampilkan title, company, location, salary, workType, match score, status, sumber, dan tombol buka URL Jobstreet. Empty state Bahasa Indonesia. |
-| /applications    | Partial | Route ada, API list ada, tetapi UI belum diaudit di task ini. |
-| /question-memory | Partial | Route ada, tetapi UI belum diaudit di task ini. |
+| /jobs            | Selesai | Membaca `JobListing` nyata dari Prisma. Menampilkan title, company, location, salary, workType, match score, match reason, status, filter shortlist/dilewati/belum dinilai, dan tombol buka URL Jobstreet. Empty state Bahasa Indonesia. |
+| /applications    | Selesai | Membaca `Application` nyata dari Prisma. Menampilkan campaign, job listing, status, notes, skipped reason, submitted date. Empty state Bahasa Indonesia. |
+| /question-memory | Selesai | Membaca `QuestionMemory` nyata dari Prisma. Menampilkan question, answer, confidence, usage count, source, updated date. Empty state Bahasa Indonesia. |
 | /logs            | Selesai | Membaca `AutomationLog` nyata dari DB, urut terbaru lebih dulu. |
 | /settings        | Selesai | Menampilkan status session browser, kartu status 9router Bahasa Indonesia, tombol cek koneksi, tombol muat daftar model, daftar model chat/embedding, default ENV, dan `UserSetting` nyata. |
 
@@ -188,7 +188,7 @@ Jangan tulis value rahasia asli di file ini.
 | app/api/cv/upload/route.ts             | Selesai | Upload + ekstraksi + simpan `UploadedCV`. |
 | app/api/cv/analyze/route.ts            | Selesai | Analisis CV dan simpan `CandidateProfile`. Mendukung teks manual dan ekstraksi file. Menyimpan `sourceType`, `manualTextUsed`, dan `sourceUploadedCvId`. Validasi panjang teks dan fallback otomatis. |
 | app/api/campaigns/route.ts             | Selesai | GET list dan POST create campaign. |
-| app/api/campaigns/[id]/start/route.ts  | Selesai | Start kampanye membuka browser visible, melakukan pencarian Jobstreet, mengekstrak detail lowongan, menyimpan ke `JobListing`, dan mengembalikan hasil lengkap. Status kampanye diupdate berdasarkan hasil (completed/error/paused). |
+| app/api/campaigns/[id]/start/route.ts  | Selesai | Start kampanye membuka browser visible, melakukan pencarian Jobstreet, mengekstrak detail lowongan, menyimpan ke `JobListing`, melakukan AI scoring, dan mengembalikan hasil lengkap. Status kampanye diupdate berdasarkan hasil (completed/error/paused). |
 | app/api/campaigns/[id]/pause/route.ts  | Selesai | Update status campaign ke `paused` dan menulis log nyata. |
 | app/api/campaigns/[id]/resume/route.ts | Partial | Mengubah status ke `running` dan menulis log nyata, tetapi belum benar-benar melanjutkan automation. |
 | app/api/campaigns/[id]/stop/route.ts   | Selesai | Update status campaign ke `stopped` dan menulis log nyata. |
@@ -210,6 +210,7 @@ Jelaskan status browser automation:
 * Job card extraction: Sudah diimplementasikan dengan multiple selector strategies (data-automation attributes, semantic HTML, fallback generic detection).
 * Job detail extraction: Sudah diimplementasikan. Membuka halaman detail setiap lowongan dan mengekstrak title, company, location, salary, workType, description.
 * Save to DB: Sudah diimplementasikan dengan deduplication berdasarkan URL (`@unique`). Lowongan duplikat diupdate.
+* AI job scoring: Sudah diimplementasikan. Setiap lowongan yang disimpan akan di-score oleh AI, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold. Scoring error tidak menggagalkan campaign.
 * Campaign relasi: `JobListing.campaignId` menghubungkan lowongan ke kampanye yang menemukannya.
 * Safe limits: Maksimal 10-20 lowongan per run, tidak ada paginasi endless.
 * Form filling: Helper field masih ada, tetapi belum dipakai untuk submit nyata.
@@ -223,7 +224,7 @@ Jelaskan status integrasi 9router:
 
 * Chat completions: Sudah ada melalui OpenAI-compatible client dengan base URL resmi `/v1` dari helper bersama.
 * CV analysis: Sudah ada dan terhubung ke API route.
-* Job scoring: Fungsi ada dan kini ikut memakai helper config 9router melalui client bersama, tetapi belum tampak dipakai di flow campaign utama.
+* Job scoring: Sudah terintegrasi ke flow campaign utama. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold.
 * Question answering: Sudah ada, menyimpan memory, dan kini ikut memakai helper config 9router melalui client bersama.
 * Structured JSON output: Sudah ada parsing JSON + schema validation.
 * Config helper 9router: Sudah ada di `lib/ai/9router-config.ts` dan mengembalikan `rootUrl`, `apiBaseUrl`, `apiKey`, `chatModel`, `embeddingModel`, `isConfigured`, dan `missingFields`.
@@ -254,7 +255,7 @@ Status log:
 * Log per campaign: Didukung oleh relasi dan field `campaignId`.
 * Log per job: Didukung oleh relasi dan field `jobListingId`.
 * Log error: Ya, start/pause/resume/stop dan worker stub menulis log nyata.
-* Log Jobstreet search: Lengkap dengan event `jobstreet.search_started`, `jobstreet.search_page_loaded`, `jobstreet.search_manual_intervention`, `jobstreet.job_card_found`, `jobstreet.job_detail_opened`, `jobstreet.job_saved`, `jobstreet.job_skipped_duplicate`, `jobstreet.search_completed`, `jobstreet.search_failed`.
+* Log Jobstreet search: Lengkap dengan event `jobstreet.search_started`, `jobstreet.search_page_loaded`, `jobstreet.search_manual_intervention`, `jobstreet.job_card_found`, `jobstreet.job_detail_opened`, `jobstreet.job_saved`, `jobstreet.job_skipped_duplicate`, `jobstreet.job_scoring_started`, `jobstreet.job_scored`, `jobstreet.job_shortlisted`, `jobstreet.job_skipped_score`, `jobstreet.job_scoring_failed`, `jobstreet.search_completed`, `jobstreet.search_failed`.
 * Screenshot path tersimpan: Capture file error dicoba ke `storage/screenshots`, tetapi belum ditautkan ke model `Application`.
 
 Contoh event log yang digunakan:
@@ -276,6 +277,11 @@ jobstreet.job_card_found
 jobstreet.job_detail_opened
 jobstreet.job_saved
 jobstreet.job_skipped_duplicate
+jobstreet.job_scoring_started
+jobstreet.job_scored
+jobstreet.job_shortlisted
+jobstreet.job_skipped_score
+jobstreet.job_scoring_failed
 jobstreet.search_completed
 jobstreet.search_failed
 manual_intervention
@@ -286,7 +292,7 @@ submit.review_required
 
 Tuliskan hasil testing manual terakhir:
 
-Tanggal: 2026-06-02
+Tanggal: 2026-06-02 (03:59 WIB)
 Command yang dijalankan:
 
 ```bash
@@ -316,9 +322,21 @@ Hasil:
 * [x] `/campaigns/[id]` shows job count and search status
 * [x] Logs written for all Jobstreet search events
 * [x] Manual intervention detection works (captcha/OTP/security check)
+* [x] Manual intervention message updated to guide user to continue campaign after resolving in browser
 * [x] Re-running same campaign does not create duplicate jobs (URL deduplication)
+* [x] AI job scoring integrated into campaign runner
+* [x] Jobs scored and status updated to shortlisted/skipped based on matchThreshold
+* [x] Scoring errors do not fail the campaign
+* [x] `/jobs` page shows real data with filters (Semua/Shortlist/Dilewati/Belum dinilai)
+* [x] `/jobs` page shows match score and match reason
+* [x] `/applications` page shows real Application data from Prisma
+* [x] `/question-memory` page shows real QuestionMemory data from Prisma
+* [x] Dashboard status updated to "Pencarian Jobstreet: Aktif"
+* [x] README limitations updated to reflect current state
+* [x] Campaign new page message updated to reflect active search and scoring
 * [x] `npx tsc --noEmit` passes (no TypeScript errors)
 * [x] `npm run lint` passes (no ESLint errors)
+* [x] `npx prisma generate` passes
 
 Catatan:
 * `npm install` tidak dijalankan ulang karena `node_modules` sudah tersedia.
@@ -338,6 +356,7 @@ Catatan:
 | 2026-06-02 | Menjalankan `npm run dev` kedua menghasilkan error server duplikat | Sudah ada dev server aktif di port `3000` | Resolved/Informational | `package.json` |
 | 2026-06-02 | Health check dan model discovery 9router belum diverifikasi end-to-end ke server eksternal pada task ini | Perubahan fokus pada wiring, route, dan UI; belum ada uji manual terhadap instance 9router target | Open | `app/api/settings/9router/health/route.ts`, `app/api/settings/9router/models/route.ts` |
 | 2026-06-02 | Selector Jobstreet bisa rusak jika UI berubah | Jobstreet UI dapat berubah sewaktu-waktu | Open/Risk | `lib/browser/jobstreet-agent.ts` |
+| 2026-06-02 | Browser tidak ditutup saat manual intervention terdeteksi | Browser tetap terbuka untuk memungkinkan user menyelesaikan login/captcha/OTP, tetapi session tidak dapat dilanjutkan otomatis setelah intervensi selesai | Open/Limitation | `lib/browser/jobstreet-agent.ts` |
 
 ## 16. Risiko / Batasan
 
@@ -358,34 +377,32 @@ Tuliskan batasan saat ini:
 Checklist fitur yang belum selesai:
 
 * [ ] Implementasi login Jobstreet otomatis atau semi-otomatis yang benar-benar memakai credential/session secara aman.
-* [ ] Integrasi `job-scorer` ke flow campaign untuk shortlist/skip job berdasarkan nilai AI.
 * [ ] Finalisasi assisted form filling + review + submit lamaran setelah approval user.
 * [ ] Tautkan screenshot error/intervensi ke record aplikasi yang relevan dan perluas verifikasi manual end-to-end.
-* [ ] Resume automation setelah intervensi manual (bukan hanya status-level).
+* [ ] Resume automation setelah intervensi manual (bukan hanya status-level, tetapi melanjutkan browser session yang sama).
 * [ ] Pagination hasil pencarian Jobstreet untuk kampanye besar.
-* [ ] Filter lowongan berdasarkan match score sebelum menyimpan.
+* [ ] UI real-time untuk menampilkan status manual intervention dan tombol "Lanjutkan Kampanye" setelah user menyelesaikan intervensi.
 
 ## 18. Prioritas Berikutnya
 
 Tuliskan 3–5 langkah paling masuk akal berikutnya.
 
-1. Hubungkan `lib/ai/job-scorer.ts` ke campaign runner untuk scoring otomatis dan keputusan skip/lanjut berdasarkan match threshold.
-2. Lengkapi alur human-in-the-loop untuk pertanyaan tambahan, captcha, dan review submit dari UI ke API.
-3. Implementasikan flow resume automation setelah intervensi manual (bukan hanya status-level).
-4. Implementasikan assisted form filling untuk form lamaran Jobstreet.
-5. Tambahkan pagination atau halaman berikutnya untuk pencarian lowongan agar kampanye besar bisa menemukan lebih banyak lowongan.
+1. Lengkapi alur human-in-the-loop untuk pertanyaan tambahan, captcha, dan review submit dari UI ke API.
+2. Implementasikan flow resume automation setelah intervensi manual (melanjutkan browser session yang sama, bukan hanya status-level).
+3. Implementasikan assisted form filling untuk form lamaran Jobstreet.
+4. Tambahkan pagination atau halaman berikutnya untuk pencarian lowongan agar kampanye besar bisa menemukan lebih banyak lowongan.
+5. Implementasikan final submit dengan approval user.
 
 ## 19. Prompt Lanjutan yang Direkomendasikan
 
 Tuliskan prompt pendek untuk task berikutnya.
 
 ```txt
-Continue from IMPLEMENTATION_STATUS.md. Focus on integrating AI job scoring into the campaign runner:
-1. After job listings are saved, automatically call job-scorer to calculate match score.
-2. Use matchThreshold to shortlist or skip jobs.
-3. Update JobListing.matchScore and JobListing.matchReason with AI results.
-4. Log scoring decisions.
-5. Do not implement final submit yet. Update IMPLEMENTATION_STATUS.md after finishing.
+Continue from IMPLEMENTATION_STATUS.md. Focus on implementing resume automation after manual intervention:
+1. When manual intervention is detected, keep the browser session open and return a paused status.
+2. Add a UI component or API endpoint to allow user to signal "intervention resolved".
+3. Resume the campaign from where it left off using the same browser session.
+4. Do not implement final submit yet. Update IMPLEMENTATION_STATUS.md after finishing.
 ```
 
 ## 20. Catatan untuk AI Assistant Berikutnya
@@ -399,11 +416,14 @@ Tuliskan hal penting yang harus diketahui AI assistant berikutnya:
 * Gunakan 9router OpenAI-compatible API.
 * Integrasi 9router kini dipusatkan di `lib/ai/9router-config.ts` dan `lib/ai/9router-client.ts`; prioritaskan `NINEROUTER_*`, fallback ke `NINE_ROUTER_*`.
 * Health check internal ada di `app/api/settings/9router/health/route.ts` dan model discovery ada di `app/api/settings/9router/models/route.ts`.
-* Dashboard, CV, profile, campaigns, logs, jobs, dan settings target scope task ini sudah tidak memakai mock data lagi.
+* Dashboard, CV, profile, campaigns, logs, jobs, applications, question-memory, dan settings sudah tidak memakai mock data lagi.
 * `JobListing` sekarang memiliki `campaignId` opsional dan `snippet` field.
 * `JobListing.url` memiliki `@unique` constraint untuk deduplication.
 * `Campaign` memiliki relasi `jobListings` ke `JobListing`.
 * Selector Jobstreet menggunakan multiple strategies (data-automation, semantic HTML, generic fallback). Jika selector rusak, update `extractJobCards()` dan `extractJobDetail()` di `lib/browser/jobstreet-agent.ts`.
+* AI job scoring sudah terintegrasi ke campaign runner. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold.
+* Manual intervention message sudah diupdate untuk memandu user menyelesaikan login/captcha/OTP di browser yang terbuka, lalu klik Lanjutkan Kampanye.
+* Browser tidak ditutup saat manual intervention terdeteksi, tetapi session tidak dapat dilanjutkan otomatis setelah intervensi selesai (perlu restart campaign).
 * Update file ini setiap selesai perubahan.
 
 ## 21. Workflow GitHub Wajib untuk Agent

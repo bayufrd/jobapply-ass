@@ -49,6 +49,11 @@ function statusColor(status: string) {
 export default async function JobsPage() {
   const jobs = await getJobsData();
 
+  const allJobs = jobs;
+  const shortlistedJobs = jobs.filter((j) => j.status === "shortlisted");
+  const skippedJobs = jobs.filter((j) => j.status === "skipped");
+  const unscored = jobs.filter((j) => j.matchScore === null);
+
   return (
     <AppShell
       title="Lowongan"
@@ -62,61 +67,92 @@ export default async function JobsPage() {
             </p>
           </div>
         ) : (
-          <div className="grid gap-4">
-            {jobs.map((job) => (
-              <div
-                key={job.id}
-                className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 md:grid-cols-[1.3fr_1fr_120px_140px_120px] md:items-center"
-              >
-                <div>
-                  <p className="font-medium text-white">{job.title}</p>
-                  <p className="text-sm text-slate-400">{job.company}</p>
-                  {job.location && (
-                    <p className="mt-1 text-xs text-slate-500">{job.location}</p>
-                  )}
-                </div>
-                <div className="text-sm text-slate-300">
-                  {job.salaryText && (
-                    <p className="text-emerald-300">{job.salaryText}</p>
-                  )}
-                  {job.workType && (
-                    <p className="mt-1 text-xs text-slate-400">{job.workType}</p>
-                  )}
-                  {job.snippet && !job.salaryText && !job.workType && (
-                    <p className="line-clamp-2 text-xs text-slate-400">{job.snippet}</p>
-                  )}
-                </div>
-                <div>
-                  {job.matchScore !== null ? (
-                    <p className="text-sm text-cyan-300">Skor {job.matchScore}</p>
-                  ) : (
-                    <p className="text-xs text-slate-500">Belum dinilai</p>
-                  )}
-                </div>
-                <div>
-                  <p className={`text-sm font-medium ${statusColor(job.status)}`}>
-                    {statusLabel(job.status)}
-                  </p>
-                  {job.campaign && (
-                    <p className="mt-1 text-xs text-slate-500">
-                      Kampanye: {job.campaign.name}
-                    </p>
-                  )}
-                </div>
-                <div className="flex flex-col items-end gap-2">
-                  <a
-                    href={job.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/20"
-                  >
-                    Buka Jobstreet
-                  </a>
-                  <p className="text-xs text-slate-500">{formatDate(job.createdAt)}</p>
-                </div>
+          <>
+            <div className="mb-6 flex flex-wrap gap-3 text-sm">
+              <div className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-2">
+                <span className="text-slate-400">Semua:</span>{" "}
+                <span className="font-medium text-white">{allJobs.length}</span>
               </div>
-            ))}
-          </div>
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2">
+                <span className="text-slate-400">Shortlist:</span>{" "}
+                <span className="font-medium text-emerald-300">{shortlistedJobs.length}</span>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-2">
+                <span className="text-slate-400">Dilewati:</span>{" "}
+                <span className="font-medium text-slate-400">{skippedJobs.length}</span>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-950 px-4 py-2">
+                <span className="text-slate-400">Belum dinilai:</span>{" "}
+                <span className="font-medium text-slate-500">{unscored.length}</span>
+              </div>
+            </div>
+
+            <div className="grid gap-4">
+              {jobs.map((job) => (
+                <div
+                  key={job.id}
+                  className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-950 p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <p className="font-medium text-white">{job.title}</p>
+                      <p className="text-sm text-slate-400">{job.company}</p>
+                      {job.location && (
+                        <p className="mt-1 text-xs text-slate-500">{job.location}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {job.matchScore !== null ? (
+                        <div className="text-right">
+                          <p className="text-sm font-medium text-cyan-300">Skor {job.matchScore}</p>
+                          <p className={`text-xs font-medium ${statusColor(job.status)}`}>
+                            {statusLabel(job.status)}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500">Belum dinilai</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-4 text-sm text-slate-300">
+                    {job.salaryText && (
+                      <p className="text-emerald-300">{job.salaryText}</p>
+                    )}
+                    {job.workType && (
+                      <p className="text-slate-400">{job.workType}</p>
+                    )}
+                    {job.campaign && (
+                      <p className="text-xs text-slate-500">
+                        Kampanye: {job.campaign.name}
+                      </p>
+                    )}
+                  </div>
+
+                  {job.matchReason && (
+                    <div className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-sm text-slate-300">
+                      <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                        Alasan AI
+                      </p>
+                      <p className="mt-1">{job.matchReason}</p>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-slate-500">{formatDate(job.createdAt)}</p>
+                    <a
+                      href={job.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/20"
+                    >
+                      Buka Jobstreet
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </AppShell>

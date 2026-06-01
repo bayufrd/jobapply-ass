@@ -122,7 +122,7 @@ export default async function DashboardPage() {
                   Kampanye aktif: {data.runningCampaign ? data.runningCampaign.name : "Tidak ada"}
                 </li>
                 <li className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-3">
-                  Pencarian Jobstreet: Belum diimplementasikan
+                  Pencarian Jobstreet: Aktif
                 </li>
               </ul>
             </div>
