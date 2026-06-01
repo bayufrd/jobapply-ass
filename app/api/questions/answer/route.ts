@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { answerApplicationQuestion } from "@/lib/ai/question-answerer";
+import {
+  NINE_ROUTER_CONFIG_ERROR_MESSAGE,
+  NINE_ROUTER_MODEL_ERROR_MESSAGE,
+} from "@/lib/ai/9router-config";
 import { prisma } from "@/lib/db/prisma";
 
 type RequestBody = {
@@ -15,6 +19,17 @@ type RequestBody = {
 
 function normalizeQuestion(question: string) {
   return question.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isNineRouterConfigError(message: string) {
+  return (
+    message === NINE_ROUTER_CONFIG_ERROR_MESSAGE ||
+    message === NINE_ROUTER_MODEL_ERROR_MESSAGE ||
+    message.includes("NINEROUTER_URL") ||
+    message.includes("NINEROUTER_KEY") ||
+    message.includes("NINEROUTER_CHAT_MODEL") ||
+    message.includes("NINE_ROUTER_CHAT_MODEL")
+  );
 }
 
 export async function POST(request: Request) {
@@ -85,6 +100,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, answer });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Question answering failed.";
+
+    if (isNineRouterConfigError(message)) {
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
 
     return NextResponse.json({ error: message }, { status: 500 });
   }

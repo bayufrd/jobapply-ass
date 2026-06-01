@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/app-shell";
+import { NineRouterStatusCard } from "@/components/ninerouter-status-card";
 import { getSettingsData } from "@/lib/dashboard/data";
 
 function formatDate(date?: Date | null) {
@@ -19,14 +20,13 @@ export default async function SettingsPage() {
       description="Status runtime lokal untuk 9router, browser session Playwright, dan nilai default yang dipakai kampanye."
     >
       <div className="grid gap-4">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-300">
-          <h3 className="text-lg font-semibold text-white">Status 9router</h3>
-          <p className="mt-2">
-            {envDefaults.nineRouterConfigured
-              ? "Konfigurasi 9router terdeteksi di ENV."
-              : "Konfigurasi 9router belum lengkap. Analisis CV akan gagal sampai ENV dilengkapi."}
-          </p>
-        </div>
+        <NineRouterStatusCard
+          initialConfigured={envDefaults.nineRouterConfigured}
+          initialRootUrl={envDefaults.nineRouterRootUrl}
+          initialChatModel={envDefaults.nineRouterChatModel}
+          initialEmbeddingModel={envDefaults.nineRouterEmbeddingModel}
+          initialMissingFields={envDefaults.nineRouterMissingFields}
+        />
 
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-300">
           <h3 className="text-lg font-semibold text-white">Sesi Browser Jobstreet</h3>

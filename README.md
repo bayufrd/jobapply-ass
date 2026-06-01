@@ -20,14 +20,23 @@ npm install
 
 ## Environment configuration
 
-Create or edit [` .env `](.env) with values like these:
+Create or edit [`.env`](.env) with values like these:
 
 ```env
 DATABASE_URL="file:./dev.db"
-NINE_ROUTER_API_KEY=""
+
+# Recommended official 9router ENV
+NINEROUTER_URL="http://localhost:20128"
+NINEROUTER_KEY=""
+NINEROUTER_CHAT_MODEL=""
+NINEROUTER_EMBEDDING_MODEL=""
+
+# Backward-compatible aliases
 NINE_ROUTER_BASE_URL=""
+NINE_ROUTER_API_KEY=""
 NINE_ROUTER_CHAT_MODEL=""
 NINE_ROUTER_EMBEDDING_MODEL=""
+
 JOBSTREET_EMAIL=""
 JOBSTREET_PASSWORD=""
 PLAYWRIGHT_HEADLESS="false"
@@ -40,6 +49,65 @@ OPTIONAL_MYSQL_DATABASE_URL="mysql://root:0202@192.168.1.2:3307/jobapply_ass"
 ```
 
 Primary runtime database is SQLite via [`DATABASE_URL`](.env:1). The MySQL server at `192.168.1.2:3307` is documented as an optional future target and is not used by the current Prisma datasource in [`prisma/schema.prisma`](prisma/schema.prisma:5).
+
+## Konfigurasi 9router
+
+Urutan prioritas ENV 9router di app ini:
+
+1. [`NINEROUTER_URL`](.env.example), [`NINEROUTER_KEY`](.env.example), [`NINEROUTER_CHAT_MODEL`](.env.example), [`NINEROUTER_EMBEDDING_MODEL`](.env.example)
+2. Fallback ke [`NINE_ROUTER_BASE_URL`](.env.example), [`NINE_ROUTER_API_KEY`](.env.example), [`NINE_ROUTER_CHAT_MODEL`](.env.example), [`NINE_ROUTER_EMBEDDING_MODEL`](.env.example)
+
+Perilaku URL 9router sekarang mengikuti helper bersama di [`getNineRouterConfig()`](lib/ai/9router-config.ts:43):
+
+- Root URL health check memakai nilai root tanpa suffix [`/v1`](app/api/settings/9router/health/route.ts:25)
+- OpenAI-compatible API selalu memakai base [`/v1`](lib/ai/9router-client.ts:21)
+- Bila ENV sudah berakhir dengan [`/v1`](lib/ai/9router-config.ts:36), app tidak akan menambahkan [`/v1`](lib/ai/9router-config.ts:66) dua kali
+
+Jika konfigurasi belum lengkap, app akan mengembalikan error berikut:
+
+`Konfigurasi 9router belum lengkap. Pastikan NINEROUTER_URL dan NINEROUTER_KEY sudah diisi di file .env.`
+
+Jika model chat belum dipilih, app akan mengembalikan error berikut:
+
+`Model 9router belum dipilih. Isi NINEROUTER_CHAT_MODEL atau NINE_ROUTER_CHAT_MODEL di file .env.`
+
+## Cek health dan model 9router
+
+Halaman [`/settings`](app/settings/page.tsx:14) sekarang menampilkan kartu status 9router dalam Bahasa Indonesia melalui [`NineRouterStatusCard`](components/ninerouter-status-card.tsx:35), termasuk tombol cek koneksi dan muat daftar model.
+
+Route internal yang tersedia:
+
+- Health check: [`GET /api/settings/9router/health`](app/api/settings/9router/health/route.ts:4)
+- Model chat + embedding: [`GET /api/settings/9router/models`](app/api/settings/9router/models/route.ts:41)
+
+Contoh [`curl`](README.md:1):
+
+```bash
+curl http://localhost:20128/api/health
+curl http://localhost:20128/v1/models
+curl http://localhost:20128/v1/models/embedding
+curl http://localhost:20128/v1/chat/completions \
+  -H "Authorization: Bearer $NINEROUTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "YOUR_CHAT_MODEL",
+    "messages": [{"role": "user", "content": "Halo"}]
+  }'
+curl http://localhost:20128/v1/embeddings \
+  -H "Authorization: Bearer $NINEROUTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "YOUR_EMBEDDING_MODEL",
+    "input": "contoh teks"
+  }'
+```
+
+Contoh cek route internal app:
+
+```bash
+curl http://localhost:3000/api/settings/9router/health
+curl http://localhost:3000/api/settings/9router/models
+```
 
 ## Database setup
 

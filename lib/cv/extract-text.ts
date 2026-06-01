@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
+// @ts-expect-error pdf-parse has no types
+import { PDFParse } from "pdf-parse/dist/pdf-parse/cjs/index.cjs";
 
 const supportedMimeTypes = new Set([
   "application/pdf",
@@ -51,7 +52,16 @@ async function readDocxText(filePath: string) {
 
 async function readPdfText(filePath: string) {
   const buffer = await readFile(filePath);
-  const parser = new PDFParse({ data: buffer });
+
+  // Point to the worker file explicitly to avoid Next.js resolution issues
+  const workerPath = path.resolve("node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+  PDFParse.setWorker(workerPath);
+
+  const parser = new PDFParse({
+    data: new Uint8Array(buffer),
+    disableFontFace: true,
+    useWorkerFetch: false,
+  });
   const result = await parser.getText();
 
   return result.text.trim();

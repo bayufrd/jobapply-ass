@@ -1,3 +1,4 @@
+import { getNineRouterConfig } from "@/lib/ai/9router-config";
 import { prisma } from "@/lib/db/prisma";
 
 export async function getDashboardData() {
@@ -144,6 +145,8 @@ export async function getSettingsData() {
     }),
   ]);
 
+  const nineRouter = getNineRouterConfig();
+
   return {
     session,
     userSettings,
@@ -154,11 +157,11 @@ export async function getSettingsData() {
       availability: process.env.DEFAULT_AVAILABILITY ?? "Immediate",
       sessionPath: process.env.PLAYWRIGHT_SESSION_PATH ?? "./storage/jobstreet.auth.json",
       visibleMode: (process.env.PLAYWRIGHT_HEADLESS ?? "false") !== "true",
-      nineRouterConfigured: Boolean(
-        process.env.NINE_ROUTER_API_KEY?.trim() &&
-          process.env.NINE_ROUTER_BASE_URL?.trim() &&
-          process.env.NINE_ROUTER_CHAT_MODEL?.trim(),
-      ),
+      nineRouterConfigured: nineRouter.isConfigured,
+      nineRouterRootUrl: nineRouter.rootUrl,
+      nineRouterChatModel: nineRouter.chatModel,
+      nineRouterEmbeddingModel: nineRouter.embeddingModel,
+      nineRouterMissingFields: nineRouter.missingFields,
     },
   };
 }

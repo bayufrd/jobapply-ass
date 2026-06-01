@@ -59,17 +59,22 @@ model CandidateProfile {
   projectsJson       String?
   certificationsJson String?
   rawCvText          String?
+  sourceType         String?  @default("uploaded_file")
+  sourceUploadedCvId String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 }
 
 model UploadedCV {
-  id            String   @id @default(cuid())
-  fileName      String
-  fileType      String
-  filePath      String
-  extractedText String?
-  createdAt     DateTime @default(now())
+  id                String   @id @default(cuid())
+  fileName          String
+  fileType          String
+  filePath          String
+  extractedText     String?
+  sourceType        String?  @default("uploaded_file")
+  manualTextUsed    String?
+  sourceUploadedCvId String?
+  createdAt         DateTime @default(now())
 }
 
 model Campaign {

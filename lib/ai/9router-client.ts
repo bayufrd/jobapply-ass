@@ -1,32 +1,24 @@
 import OpenAI from "openai";
+import {
+  assertNineRouterConfigured,
+  getNineRouterChatModelOrThrow,
+  getNineRouterConfig,
+  getNineRouterEmbeddingModelOrThrow,
+} from "@/lib/ai/9router-config";
 
 let cachedClient: OpenAI | null = null;
-
-function getBaseUrl() {
-  const baseUrl = process.env.NINE_ROUTER_BASE_URL?.trim();
-
-  if (!baseUrl) {
-    throw new Error("NINE_ROUTER_BASE_URL is not configured.");
-  }
-
-  return baseUrl;
-}
-
-function getApiKey() {
-  const apiKey = process.env.NINE_ROUTER_API_KEY?.trim();
-
-  if (!apiKey) {
-    throw new Error("NINE_ROUTER_API_KEY is not configured.");
-  }
-
-  return apiKey;
-}
+let cachedBaseUrl = "";
+let cachedApiKey = "";
 
 export function getNineRouterClient() {
-  if (!cachedClient) {
+  const config = assertNineRouterConfigured();
+
+  if (!cachedClient || cachedBaseUrl !== config.apiBaseUrl || cachedApiKey !== config.apiKey) {
+    cachedBaseUrl = config.apiBaseUrl;
+    cachedApiKey = config.apiKey;
     cachedClient = new OpenAI({
-      apiKey: getApiKey(),
-      baseURL: getBaseUrl(),
+      apiKey: config.apiKey,
+      baseURL: config.apiBaseUrl,
     });
   }
 
@@ -34,15 +26,21 @@ export function getNineRouterClient() {
 }
 
 export function getNineRouterChatModel() {
-  const model = process.env.NINE_ROUTER_CHAT_MODEL?.trim();
-
-  if (!model) {
-    throw new Error("NINE_ROUTER_CHAT_MODEL is not configured.");
-  }
-
-  return model;
+  return getNineRouterChatModelOrThrow();
 }
 
 export function getNineRouterEmbeddingModel() {
-  return process.env.NINE_ROUTER_EMBEDDING_MODEL?.trim() || "";
+  return getNineRouterEmbeddingModelOrThrow();
+}
+
+export function getNineRouterApiBaseUrl() {
+  return assertNineRouterConfigured().apiBaseUrl;
+}
+
+export function getNineRouterRootUrl() {
+  return assertNineRouterConfigured().rootUrl;
+}
+
+export function getNineRouterRuntimeConfig() {
+  return getNineRouterConfig();
 }
