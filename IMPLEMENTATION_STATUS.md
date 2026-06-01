@@ -49,7 +49,7 @@ Project sekarang sudah bisa dijalankan sebagai fondasi MVP lokal yang jujur: upl
 | Manual CV Text Input               | Selesai | Input manual teks CV sebagai fallback untuk ekstraksi file yang gagal. | `app/cv/upload/page.tsx`, `app/api/cv/analyze/route.ts`, `prisma/schema.prisma` |
 | 9router Client                     | Selesai | Client OpenAI-compatible kini memakai helper config bersama, normalisasi root URL, dan base `/v1` resmi untuk semua panggilan OpenAI-compatible. | `lib/ai/9router-client.ts`, `lib/ai/9router-config.ts` |
 | Analisis CV AI                     | Selesai | API analisis memanggil AI dan menyimpan hasil ke `CandidateProfile`. Mendukung teks manual dan ekstraksi file. Error konfigurasi/model 9router kini memakai pesan Indonesia yang jelas dan mengikuti ENV resmi + alias. | `app/api/cv/analyze/route.ts`, `lib/ai/cv-analyzer.ts` |
-| Profil Kandidat                    | Selesai | Halaman `/profile` kini membaca `CandidateProfile` terbaru dan menampilkan data terstruktur nyata dari DB. Menyimpan `sourceType` dan `sourceUploadedCvId`. | `prisma/schema.prisma`, `app/api/cv/analyze/route.ts`, `app/profile/page.tsx` |
+| Profil Kandidat                    | Selesai | Halaman `/profile` kini membaca `CandidateProfile` terbaru dan menampilkan data terstruktur nyata dari DB dalam layout Bahasa Indonesia yang bersih dan user-friendly. Tidak ada raw JSON yang ditampilkan ke user. Skills ditampilkan sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize. Menyimpan `sourceType` dan `sourceUploadedCvId`. | `prisma/schema.prisma`, `app/api/cv/analyze/route.ts`, `app/profile/page.tsx`, `lib/profile/parse-profile-json.ts`, `lib/profile/humanize.tsx` |
 | Buat Kampanye Lamaran              | Selesai | API create/list campaign ada, form `/campaigns/new` mengirim data nyata, dan default ENV dipakai bila field opsional kosong. | `app/api/campaigns/route.ts`, `app/campaigns/`, `lib/api/campaigns.ts` |
 | Default Salary/Notice/Availability | Selesai | Nilai default dibaca dari ENV dan disimpan saat create campaign. | `app/api/campaigns/route.ts`, `.env` |
 | Playwright Browser Visible         | Selesai | Browser manager menolak headless dan memaksa visible Chromium. | `lib/browser/playwright-manager.ts`, `lib/security/safe-automation.ts` |
@@ -171,7 +171,7 @@ Jangan tulis value rahasia asli di file ini.
 | /dashboard       | Selesai | Tidak lagi memakai mock; statistik, kampanye terbaru, dan log terbaru dibaca langsung dari Prisma. |
 | /cv              | Selesai | Menampilkan riwayat CV nyata dari DB dan status analisis terbaru. |
 | /cv/upload       | Selesai | Form upload dan input manual teks CV. Tombol analisis nyata mendukung teks manual dan ekstraksi file. Validasi panjang teks dan fallback otomatis. |
-| /profile         | Selesai | Menampilkan `CandidateProfile` terbaru dan data JSON terstruktur dari DB. |
+| /profile         | Selesai | Menampilkan `CandidateProfile` terbaru dalam layout Bahasa Indonesia yang bersih. Skills sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize. Raw CV text tersembunyi dalam collapsible section. Tombol "Analisis Ulang CV" tersedia. |
 | /campaigns       | Selesai | List kampanye membaca SQLite, bukan mock data. |
 | /campaigns/new   | Selesai | Form submit nyata ke API create campaign dan mendukung fallback default dari ENV. |
 | /campaigns/[id]  | Selesai | Detail kampanye menampilkan ringkasan lengkap, jumlah lowongan ditemukan, status pencarian terbaru, riwayat lamaran, dan log aktivitas. Kontrol aksi (Mulai/Jeda/Lanjutkan/Hentikan) berfungsi. |
@@ -292,7 +292,7 @@ submit.review_required
 
 Tuliskan hasil testing manual terakhir:
 
-Tanggal: 2026-06-02 (03:59 WIB)
+Tanggal: 2026-06-02 (04:26 WIB)
 Command yang dijalankan:
 
 ```bash
@@ -337,6 +337,13 @@ Hasil:
 * [x] `npx tsc --noEmit` passes (no TypeScript errors)
 * [x] `npm run lint` passes (no ESLint errors)
 * [x] `npx prisma generate` passes
+* [x] `/profile` UI improved: no raw JSON visible by default
+* [x] Skills render as badges with proper labels
+* [x] Experience/education/projects render as structured cards
+* [x] Field keys humanized (camelCase/snake_case → readable Bahasa Indonesia labels)
+* [x] Raw CV text hidden in collapsible `<details>` section
+* [x] Empty states use Bahasa Indonesia messages
+* [x] Helper functions created: `parseProfileJson`, `humanizeKey`, `renderFlexibleObject`
 
 Catatan:
 * `npm install` tidak dijalankan ulang karena `node_modules` sudah tersedia.
@@ -382,27 +389,31 @@ Checklist fitur yang belum selesai:
 * [ ] Resume automation setelah intervensi manual (bukan hanya status-level, tetapi melanjutkan browser session yang sama).
 * [ ] Pagination hasil pencarian Jobstreet untuk kampanye besar.
 * [ ] UI real-time untuk menampilkan status manual intervention dan tombol "Lanjutkan Kampanye" setelah user menyelesaikan intervensi.
+* [ ] Implementasi Jobstreet apply automation (belum dimulai pada task ini).
 
 ## 18. Prioritas Berikutnya
 
 Tuliskan 3–5 langkah paling masuk akal berikutnya.
 
-1. Lengkapi alur human-in-the-loop untuk pertanyaan tambahan, captcha, dan review submit dari UI ke API.
-2. Implementasikan flow resume automation setelah intervensi manual (melanjutkan browser session yang sama, bukan hanya status-level).
-3. Implementasikan assisted form filling untuk form lamaran Jobstreet.
-4. Tambahkan pagination atau halaman berikutnya untuk pencarian lowongan agar kampanye besar bisa menemukan lebih banyak lowongan.
-5. Implementasikan final submit dengan approval user.
+1. Implementasikan assisted form filling untuk form lamaran Jobstreet.
+2. Lengkapi alur human-in-the-loop untuk pertanyaan tambahan, captcha, dan review submit dari UI ke API.
+3. Implementasikan flow resume automation setelah intervensi manual (melanjutkan browser session yang sama, bukan hanya status-level).
+4. Implementasikan final submit dengan approval user.
+5. Tambahkan pagination atau halaman berikutnya untuk pencarian lowongan agar kampanye besar bisa menemukan lebih banyak lowongan.
 
 ## 19. Prompt Lanjutan yang Direkomendasikan
 
 Tuliskan prompt pendek untuk task berikutnya.
 
 ```txt
-Continue from IMPLEMENTATION_STATUS.md. Focus on implementing resume automation after manual intervention:
-1. When manual intervention is detected, keep the browser session open and return a paused status.
-2. Add a UI component or API endpoint to allow user to signal "intervention resolved".
-3. Resume the campaign from where it left off using the same browser session.
-4. Do not implement final submit yet. Update IMPLEMENTATION_STATUS.md after finishing.
+Continue from IMPLEMENTATION_STATUS.md. Focus on implementing Jobstreet apply automation:
+1. Implement assisted form filling for Jobstreet application forms.
+2. Add human-in-the-loop flow for questions, captcha, and review before submit.
+3. Implement final submit with user approval.
+4. Keep UI in Bahasa Indonesia.
+5. Do not implement resume automation after manual intervention yet.
+6. Update IMPLEMENTATION_STATUS.md after finishing.
+7. Follow the mandatory GitHub workflow.
 ```
 
 ## 20. Catatan untuk AI Assistant Berikutnya
@@ -424,6 +435,8 @@ Tuliskan hal penting yang harus diketahui AI assistant berikutnya:
 * AI job scoring sudah terintegrasi ke campaign runner. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold.
 * Manual intervention message sudah diupdate untuk memandu user menyelesaikan login/captcha/OTP di browser yang terbuka, lalu klik Lanjutkan Kampanye.
 * Browser tidak ditutup saat manual intervention terdeteksi, tetapi session tidak dapat dilanjutkan otomatis setelah intervensi selesai (perlu restart campaign).
+* `/profile` UI sudah dipoles: tidak ada raw JSON yang ditampilkan ke user normal, skills sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize, raw CV text tersembunyi dalam collapsible section.
+* Helper functions untuk profile: `parseProfileJson` (safe JSON parser), `humanizeKey` (convert camelCase/snake_case ke readable label), `renderFlexibleObject` (render object sebagai description list dengan formatting yang baik).
 * Update file ini setiap selesai perubahan.
 
 ## 21. Workflow GitHub Wajib untuk Agent

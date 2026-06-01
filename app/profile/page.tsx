@@ -1,7 +1,7 @@
 import { AppShell } from "@/components/app-shell";
 import { getProfileData } from "@/lib/dashboard/data";
 import { parseProfileJson } from "@/lib/profile/parse-profile-json";
-import { renderFlexibleObject } from "@/lib/profile/humanize";
+import { humanizeKey, renderFlexibleObject } from "@/lib/profile/humanize";
 import Link from "next/link";
 
 function formatDate(date: Date) {
@@ -9,6 +9,62 @@ function formatDate(date: Date) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function getTextValue(value: unknown) {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  return "";
+}
+
+function getArrayText(value: unknown) {
+  if (!Array.isArray(value)) return [] as string[];
+
+  return value
+    .map((item) => {
+      if (typeof item === "string" || typeof item === "number") return String(item);
+      if (typeof item === "object" && item !== null) {
+        return Object.values(item)
+          .filter((nested) => typeof nested === "string" || typeof nested === "number")
+          .map(String)
+          .join(" • ");
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+function pickValue(record: unknown, keys: string[]) {
+  if (typeof record !== "object" || record === null) return "";
+  
+  for (const key of keys) {
+    const foundEntry = Object.entries(record as Record<string, unknown>).find(([entryKey]) => entryKey.toLowerCase() === key.toLowerCase());
+    if (!foundEntry) continue;
+    const text = getTextValue(foundEntry[1]);
+    if (text) return text;
+  }
+
+  return "";
+}
+
+function pickArrayValue(record: unknown, keys: string[]) {
+  if (typeof record !== "object" || record === null) return "";
+  
+  for (const key of keys) {
+    const foundEntry = Object.entries(record as Record<string, unknown>).find(([entryKey]) => entryKey.toLowerCase() === key.toLowerCase());
+    if (!foundEntry) continue;
+    const values = getArrayText(foundEntry[1]);
+    if (values.length) return values.join(", ");
+  }
+
+  return "";
+}
+
+function splitKnownFields(record: unknown, preferredKeys: string[]) {
+  if (typeof record !== "object" || record === null) return [];
+  
+  const preferredKeySet = new Set(preferredKeys.map((key) => key.toLowerCase()));
+  return Object.entries(record as Record<string, unknown>).filter(([key]) => !preferredKeySet.has(key.toLowerCase()));
 }
 
 export default async function ProfilePage() {
@@ -105,14 +161,28 @@ export default async function ProfilePage() {
             <h3 className="mb-4 text-lg font-semibold text-white">Keahlian</h3>
             <div className="flex flex-wrap gap-2">
               {skills.length > 0 ? (
-                skills.map((skill, i) => (
-                  <span
-                    key={i}
-                    className="rounded-lg bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-400 border border-blue-500/20"
-                  >
-                    {typeof skill === 'string' ? skill : JSON.stringify(skill)}
-                  </span>
-                ))
+                skills.map((skill, i) => {
+                  const label =
+                    typeof skill === "string" || typeof skill === "number"
+                      ? String(skill)
+                      : typeof skill === "object" && skill !== null
+                        ? Object.values(skill)
+                            .filter((value) => typeof value === "string" || typeof value === "number")
+                            .map(String)
+                            .join(" • ")
+                        : "";
+
+                  if (!label) return null;
+
+                  return (
+                    <span
+                      key={i}
+                      className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-400"
+                    >
+                      {label}
+                    </span>
+                  );
+                })
               ) : (
                 <p className="text-sm text-slate-500 italic">Belum ada skill yang terdeteksi.</p>
               )}
@@ -126,11 +196,55 @@ export default async function ProfilePage() {
             <h3 className="mb-4 text-lg font-semibold text-white">Pengalaman Kerja</h3>
             <div className="space-y-4">
               {experiences.length > 0 ? (
-                experiences.map((exp, i) => (
-                  <div key={i} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                    {typeof exp === 'object' && exp !== null ? renderFlexibleObject(exp) : <p className="text-sm text-slate-300">{String(exp)}</p>}
-                  </div>
-                ))
+                experiences.map((exp, i) => {
+                  if (typeof exp !== "object" || exp === null) {
+                    return (
+                      <div key={i} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                        <p className="text-sm text-slate-300">{String(exp)}</p>
+                      </div>
+                    );
+                  }
+
+                  const company = pickValue(exp, ["company", "perusahaan", "organization", "employer"]);
+                  const role = pickValue(exp, ["role", "position", "jabatan", "title"]);
+                  const period = pickValue(exp, ["period", "duration", "tahun", "year", "dates", "dateRange"]);
+                  const description = pickValue(exp, ["description", "responsibilities", "detail", "summary"]);
+                  const remainingFields = splitKnownFields(exp, [
+                    "company",
+                    "perusahaan",
+                    "organization",
+                    "employer",
+                    "role",
+                    "position",
+                    "jabatan",
+                    "title",
+                    "period",
+                    "duration",
+                    "tahun",
+                    "year",
+                    "dates",
+                    "dateRange",
+                    "description",
+                    "responsibilities",
+                    "detail",
+                    "summary",
+                  ]);
+
+                  return (
+                    <div key={i} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                      <div className="space-y-3">
+                        {(company || role || period) && (
+                          <div>
+                            <p className="text-base font-semibold text-white">{role || company || `Pengalaman ${i + 1}`}</p>
+                            <p className="text-sm text-slate-400">{[company, period].filter(Boolean).join(" • ") || "Informasi tambahan tidak tersedia"}</p>
+                          </div>
+                        )}
+                        {description ? <p className="text-sm leading-relaxed text-slate-300">{description}</p> : null}
+                        {remainingFields.length > 0 ? renderFlexibleObject(Object.fromEntries(remainingFields)) : null}
+                      </div>
+                    </div>
+                  );
+                })
               ) : (
                 <p className="text-sm text-slate-500 italic">Belum ada data pengalaman kerja yang terdeteksi.</p>
               )}
@@ -141,11 +255,47 @@ export default async function ProfilePage() {
             <h3 className="mb-4 text-lg font-semibold text-white">Pendidikan</h3>
             <div className="space-y-4">
               {education.length > 0 ? (
-                education.map((edu, i) => (
-                  <div key={i} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                    {typeof edu === 'object' && edu !== null ? renderFlexibleObject(edu) : <p className="text-sm text-slate-300">{String(edu)}</p>}
-                  </div>
-                ))
+                education.map((edu, i) => {
+                  if (typeof edu !== "object" || edu === null) {
+                    return (
+                      <div key={i} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                        <p className="text-sm text-slate-300">{String(edu)}</p>
+                      </div>
+                    );
+                  }
+
+                  const institution = pickValue(edu, ["institution", "universitas", "university", "sekolah", "school"]);
+                  const degree = pickValue(edu, ["degree", "jurusan", "major", "program", "qualification"]);
+                  const period = pickValue(edu, ["period", "tahun", "year", "dateRange"]);
+                  const remainingFields = splitKnownFields(edu, [
+                    "institution",
+                    "universitas",
+                    "university",
+                    "sekolah",
+                    "school",
+                    "degree",
+                    "jurusan",
+                    "major",
+                    "program",
+                    "qualification",
+                    "period",
+                    "tahun",
+                    "year",
+                    "dateRange",
+                  ]);
+
+                  return (
+                    <div key={i} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-base font-semibold text-white">{institution || `Pendidikan ${i + 1}`}</p>
+                          <p className="text-sm text-slate-400">{[degree, period].filter(Boolean).join(" • ") || "Informasi tambahan tidak tersedia"}</p>
+                        </div>
+                        {remainingFields.length > 0 ? renderFlexibleObject(Object.fromEntries(remainingFields)) : null}
+                      </div>
+                    </div>
+                  );
+                })
               ) : (
                 <p className="text-sm text-slate-500 italic">Belum ada data pendidikan yang terdeteksi.</p>
               )}
@@ -156,11 +306,53 @@ export default async function ProfilePage() {
             <h3 className="mb-4 text-lg font-semibold text-white">Proyek</h3>
             <div className="space-y-4">
               {projects.length > 0 ? (
-                projects.map((proj, i) => (
-                  <div key={i} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                    {typeof proj === 'object' && proj !== null ? renderFlexibleObject(proj) : <p className="text-sm text-slate-300">{String(proj)}</p>}
-                  </div>
-                ))
+                projects.map((proj, i) => {
+                  if (typeof proj !== "object" || proj === null) {
+                    return (
+                      <div key={i} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                        <p className="text-sm text-slate-300">{String(proj)}</p>
+                      </div>
+                    );
+                  }
+
+                  const name = pickValue(proj, ["name", "title"]);
+                  const description = pickValue(proj, ["description", "detail", "summary"]);
+                  const techStack = pickArrayValue(proj, ["techStack", "technologies", "tools"])
+                    || pickValue(proj, ["techStack", "technologies", "tools"]);
+                  const role = pickValue(proj, ["role", "position", "jabatan"]);
+                  const remainingFields = splitKnownFields(proj, [
+                    "name",
+                    "title",
+                    "description",
+                    "detail",
+                    "summary",
+                    "techStack",
+                    "technologies",
+                    "tools",
+                    "role",
+                    "position",
+                    "jabatan",
+                  ]);
+
+                  return (
+                    <div key={i} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-base font-semibold text-white">{name || `Proyek ${i + 1}`}</p>
+                          {role ? <p className="text-sm text-slate-400">Peran: {role}</p> : null}
+                        </div>
+                        {description ? <p className="text-sm leading-relaxed text-slate-300">{description}</p> : null}
+                        {techStack ? (
+                          <div>
+                            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">{humanizeKey("techStack")}</p>
+                            <p className="text-sm text-slate-300">{techStack}</p>
+                          </div>
+                        ) : null}
+                        {remainingFields.length > 0 ? renderFlexibleObject(Object.fromEntries(remainingFields)) : null}
+                      </div>
+                    </div>
+                  );
+                })
               ) : (
                 <p className="text-sm text-slate-500 italic">Belum ada project yang terdeteksi.</p>
               )}
@@ -171,14 +363,28 @@ export default async function ProfilePage() {
             <h3 className="mb-4 text-lg font-semibold text-white">Sertifikasi</h3>
             <div className="flex flex-wrap gap-2">
               {certifications.length > 0 ? (
-                certifications.map((cert, i) => (
-                  <span
-                    key={i}
-                    className="rounded-lg bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-400 border border-emerald-500/20"
-                  >
-                    {typeof cert === 'string' ? cert : JSON.stringify(cert)}
-                  </span>
-                ))
+                certifications.map((cert, i) => {
+                  const label =
+                    typeof cert === "string" || typeof cert === "number"
+                      ? String(cert)
+                      : typeof cert === "object" && cert !== null
+                        ? Object.values(cert)
+                            .filter((value) => typeof value === "string" || typeof value === "number")
+                            .map(String)
+                            .join(" • ")
+                        : "";
+
+                  if (!label) return null;
+
+                  return (
+                    <span
+                      key={i}
+                      className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-400"
+                    >
+                      {label}
+                    </span>
+                  );
+                })
               ) : (
                 <p className="text-sm text-slate-500 italic">Belum ada sertifikasi yang terdeteksi.</p>
               )}
