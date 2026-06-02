@@ -63,6 +63,8 @@ type CampaignRunResult = {
 // ── Constants ──────────────────────────────────────────────────────────
 
 const JOBSTREET_BASE = "https://id.jobstreet.com";
+const JOBSTREET_DEFAULT_LOCATION = "West Jakarta, Jakarta";
+const JOBSTREET_DEFAULT_LOCATION_SLUG = "West-Jakarta-Jakarta";
 const MAX_JOBS_HARD_LIMIT = 20;
 const DEFAULT_MAX_JOBS = 10;
 const PAGE_LOAD_TIMEOUT = 30_000;
@@ -173,7 +175,8 @@ async function scoreAndUpdateJobListing(
     metadata: {
       url: job.url,
       keyword: input.keyword,
-      location: input.location ?? null,
+      location: JOBSTREET_DEFAULT_LOCATION,
+      locationSlug: JOBSTREET_DEFAULT_LOCATION_SLUG,
       matchThreshold: input.matchThreshold,
     },
   });
@@ -189,7 +192,7 @@ async function scoreAndUpdateJobListing(
       candidateProfile,
       {
         keyword: input.keyword,
-        location: input.location ?? null,
+        location: JOBSTREET_DEFAULT_LOCATION,
         expectedSalary: input.defaults.expectedSalary ?? null,
         workModePreference: null,
         matchThreshold: input.matchThreshold,
@@ -288,14 +291,23 @@ function normalizeSearchLocation(location?: string | null) {
   return normalized;
 }
 
-function buildSearchUrl(keyword: string, location?: string | null): string {
-  const params = new URLSearchParams();
-  params.set("keywords", keyword);
-  const normalizedLocation = normalizeSearchLocation(location);
-  if (normalizedLocation) {
-    params.set("where", normalizedLocation);
-  }
-  return `${JOBSTREET_BASE}/jobs?${params.toString()}`;
+export function buildKeywordSlug(keyword: string) {
+  const cleaned = keyword
+    .trim()
+    .toLowerCase()
+    .replace(/\+/g, " plus ")
+    .replace(/#/g, " sharp ")
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return cleaned || "software-developer";
+}
+
+export function buildSearchUrl(keyword: string): string {
+  const keywordSlug = buildKeywordSlug(keyword);
+  return `${JOBSTREET_BASE}/${keywordSlug}-jobs/in-${JOBSTREET_DEFAULT_LOCATION_SLUG}`;
 }
 
 // ── Job Card Extraction ────────────────────────────────────────────────
@@ -549,11 +561,11 @@ export async function runJobstreetCampaign(
     await writeAutomationLog({
       campaignId: input.campaignId,
       event: "jobstreet.search_started",
-      message: `Memulai pencarian Jobstreet dengan kata kunci "${input.keyword}"${input.location ? ` di ${normalizeSearchLocation(input.location) || input.location}` : ""}. Maksimal ${maxJobs} lowongan akan diperiksa.`,
+      message: `Memulai pencarian Jobstreet dengan kata kunci "${input.keyword}" di ${JOBSTREET_DEFAULT_LOCATION}. Maksimal ${maxJobs} lowongan akan diperiksa.`,
       metadata: {
         keyword: input.keyword,
-        location: input.location ?? null,
-        normalizedLocation: normalizeSearchLocation(input.location) || null,
+        location: JOBSTREET_DEFAULT_LOCATION,
+        locationSlug: JOBSTREET_DEFAULT_LOCATION_SLUG,
         maxJobs,
         targetApplyCount: input.targetApplyCount,
         matchThreshold: input.matchThreshold,
@@ -576,12 +588,16 @@ export async function runJobstreetCampaign(
     if (homeIntervention) return homeIntervention;
 
     // 4. Build search URL and navigate
-    const searchUrl = buildSearchUrl(input.keyword, input.location);
+    const searchUrl = buildSearchUrl(input.keyword);
     await writeAutomationLog({
       campaignId: input.campaignId,
       event: "jobstreet.search_page_loaded",
       message: `Navigasi ke halaman pencarian: ${searchUrl}`,
-      metadata: { searchUrl },
+      metadata: {
+        location: JOBSTREET_DEFAULT_LOCATION,
+        locationSlug: JOBSTREET_DEFAULT_LOCATION_SLUG,
+        searchUrl,
+      },
     });
 
     await page.goto(searchUrl, {
@@ -616,7 +632,7 @@ export async function runJobstreetCampaign(
     if (jobCards.length === 0) {
       return {
         paused: false,
-        message: `Pencarian selesai tetapi tidak ditemukan lowongan untuk kata kunci "${input.keyword}"${input.location ? ` di ${input.location}` : ""}. Coba kata kunci atau lokasi yang berbeda.`,
+        message: `Pencarian selesai tetapi tidak ditemukan lowongan untuk kata kunci "${input.keyword}" di ${JOBSTREET_DEFAULT_LOCATION}. Coba kata kunci yang berbeda.`,
         status: "completed",
         jobsFound: 0,
         jobsSaved: 0,

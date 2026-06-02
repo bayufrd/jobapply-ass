@@ -50,12 +50,12 @@ Project sekarang berjalan dengan arah baru MCP AI First untuk Campaign Autopilot
 | 9router Client                     | Selesai | Client OpenAI-compatible kini memakai helper config bersama, normalisasi root URL, dan base `/v1` resmi untuk semua panggilan OpenAI-compatible. | `lib/ai/9router-client.ts`, `lib/ai/9router-config.ts` |
 | Analisis CV AI                     | Selesai | API analisis memanggil AI dan menyimpan hasil ke `CandidateProfile`. Mendukung teks manual dan ekstraksi file. Error konfigurasi/model 9router kini memakai pesan Indonesia yang jelas dan mengikuti ENV resmi + alias. | `app/api/cv/analyze/route.ts`, `lib/ai/cv-analyzer.ts` |
 | Profil Kandidat                    | Selesai | Halaman `/profile` kini membaca `CandidateProfile` terbaru dan menampilkan data terstruktur nyata dari DB dalam layout Bahasa Indonesia yang bersih dan user-friendly. Tidak ada raw JSON yang ditampilkan ke user. Skills ditampilkan sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize. Menyimpan `sourceType` dan `sourceUploadedCvId`. | `prisma/schema.prisma`, `app/api/cv/analyze/route.ts`, `app/profile/page.tsx`, `lib/profile/parse-profile-json.ts`, `lib/profile/humanize.tsx` |
-| Buat Kampanye Lamaran              | Selesai | API create/list campaign ada, form [`/campaigns/new`](app/campaigns/new/page.tsx) mengirim data nyata, default mode sekarang `auto_submit_safe_only`, dan warning Bahasa Indonesia menjelaskan kapan kampanye akan dijeda. | `app/api/campaigns/route.ts`, `app/campaigns/new/page.tsx`, `lib/api/campaigns.ts` |
+| Buat Kampanye Lamaran              | Selesai | API create/list campaign ada, form [`/campaigns/new`](app/campaigns/new/page.tsx) kini tidak lagi meminta lokasi dari user, helper text mengunci pencarian ke West Jakarta, Jakarta, dan API otomatis mengisi `location` bila kosong. | `app/api/campaigns/route.ts`, `app/campaigns/new/page.tsx`, `lib/api/campaigns.ts` |
 | Default Salary/Notice/Availability | Selesai | Nilai default dibaca dari ENV dan disimpan saat create campaign. | `app/api/campaigns/route.ts`, `.env` |
 | Playwright Browser Visible         | Selesai | Browser manager menolak headless dan memaksa visible Chromium. | `lib/browser/playwright-manager.ts`, `lib/security/safe-automation.ts` |
 | Simpan Session Jobstreet           | Partial | Metadata session disimpan di DB, path session persistent dipakai, endpoint session menampilkan status nyata, tetapi validasi session masih dasar. | `lib/browser/playwright-manager.ts`, `app/api/browser/session/route.ts`, `prisma/schema.prisma` |
 | Login Jobstreet via ENV            | Belum | ENV credential sudah ada, tetapi belum ada implementasi login otomatis spesifik Jobstreet. | `.env`, `lib/browser/jobstreet-agent.ts` |
-| Search Jobstreet                   | Selesai | Agent membuka Jobstreet, membangun URL pencarian dari keyword dan lokasi, navigasi ke halaman hasil, dan mengumpulkan job card dari halaman pertama. | `lib/browser/jobstreet-agent.ts` |
+| Search Jobstreet                   | Selesai | Agent kini membangun URL pencarian Jobstreet berbasis path dengan lokasi hardcoded `West-Jakarta-Jakarta` untuk MVP, misalnya keyword `.net` menjadi `https://id.jobstreet.com/.net-jobs/in-West-Jakarta-Jakarta`. Query-param lama `/jobs?keywords=...&where=...` tidak lagi dipakai pada flow utama. | `lib/browser/jobstreet-agent.ts`, `tests/jobstreet-search-url.test.ts` |
 | Extract Info Lowongan              | Selesai | Agent membuka halaman detail setiap lowongan dan mengekstrak title, company, location, salary, workType, description. Mendukung multiple selector strategies dengan fallback. | `lib/browser/jobstreet-agent.ts` |
 | Simpan JobListing                  | Selesai | Setiap lowongan disimpan ke Prisma `JobListing` dengan deduplication berdasarkan URL (`@unique`). Lowongan duplikat diupdate, bukan dibuat ulang. Relasi `campaignId` ditambahkan. | `lib/browser/jobstreet-agent.ts`, `prisma/schema.prisma` |
 | AI Job Scoring                     | Selesai | Fungsi scoring AI sudah terintegrasi ke flow campaign automation. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold. | `lib/ai/job-scorer.ts`, `lib/browser/jobstreet-agent.ts` |
@@ -188,6 +188,7 @@ Status `.env`:
 | JOBSTREET_PASSWORD               | Ada | Credential tersedia, tetapi login otomatis belum diimplementasikan. |
 | PLAYWRIGHT_HEADLESS              | Ada | Harus `false` untuk mematuhi safe automation policy. |
 | PLAYWRIGHT_SESSION_PATH          | Ada | Dipakai untuk persistent session path. |
+| JOBSTREET_DEFAULT_LOCATION       | Hardcoded di kode | Untuk MVP, pencarian utama dikunci ke `West Jakarta, Jakarta` dengan slug `West-Jakarta-Jakarta`, bukan dari `.env`. |
 | DEFAULT_EXPECTED_SALARY          | Ada | Dipakai sebagai default campaign. |
 | DEFAULT_CURRENT_SALARY           | Ada | Dipakai sebagai default campaign. |
 | DEFAULT_NOTICE_PERIOD            | Ada | Dipakai sebagai default campaign. |
@@ -204,7 +205,7 @@ Jangan tulis value rahasia asli di file ini.
 | /cv/upload       | Selesai | Form upload dan input manual teks CV. Tombol analisis nyata mendukung teks manual dan ekstraksi file. Validasi panjang teks dan fallback otomatis. |
 | /profile         | Selesai | Menampilkan `CandidateProfile` terbaru dalam layout Bahasa Indonesia yang bersih dan user-friendly. Skills sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize. Raw CV text tersembunyi dalam collapsible section. Tombol "Analisis Ulang CV" tersedia. |
 | /campaigns       | Selesai | List kampanye membaca SQLite, bukan mock data. |
-| /campaigns/new   | Selesai | Form submit nyata ke API create campaign dan mendukung fallback default dari ENV. |
+| /campaigns/new   | Selesai | Form submit nyata ke API create campaign, tidak lagi meminta lokasi dari user, dan menampilkan info bahwa pencarian dikunci ke West Jakarta, Jakarta. |
 | /campaigns/[id]  | Selesai | Detail kampanye kini memakai panel Autopilot v2: tombol `Jalankan Kampanye Autopilot`/`Jeda`/`Lanjutkan`/`Hentikan`/`Buka Log`/`Lihat Lowongan`, polling status 3 detik, status panel realtime-like, timeline event Bahasa Indonesia, kartu keputusan low score, kartu question/review required, dan progres target apply. |
 | /jobs            | Selesai | Membaca `JobListing` nyata dari Prisma. Semua lowongan tetap bisa diinteraksikan walau skor rendah. Tombol yang tersedia: `Lamar`, `Kalibrasi`, `Paksa Lamar`, `Lewati`, plus warning bahwa AI menyarankan dilewati tetapi user tetap boleh melamar. Alasan AI ditampilkan dalam Bahasa Indonesia. |
 | /jobs/[id]/calibration | Selesai | Halaman hasil kalibrasi dry run. Menampilkan tipe flow, platform, URL saat ini, field terdeteksi (input/textarea/select), pertanyaan terdeteksi, tombol terdeteksi, kandidat tombol submit, risiko submit, dan rekomendasi. Label Bahasa Indonesia. |
@@ -250,7 +251,7 @@ Jelaskan status browser automation:
 * Session save/load: Path persistent session dipakai dan metadata session disimpan ke `BrowserSession`, tetapi load/validasi session masih dasar.
 * Manual login/security: Hanya captcha, OTP, login, dan security verification yang boleh meminta tindakan user di browser.
 * Login via ENV: Belum diimplementasikan.
-* Jobstreet search: Sudah diimplementasikan dan menjadi bagian dari loop utama kampanye.
+* Jobstreet search: Sudah diimplementasikan dan untuk MVP memakai URL path-based dengan lokasi hardcoded `West Jakarta, Jakarta` (`West-Jakarta-Jakarta`).
 * Search + apply one-by-one: Arah implementasi sekarang adalah cari lowongan → pilih lowongan eligible berikutnya → langsung buka dan lamar → lanjut ke lowongan berikutnya sampai target tercapai.
 * Save to DB: Sudah diimplementasikan dengan deduplication berdasarkan URL (`@unique`).
 * AI job scoring: Sudah diimplementasikan. Skor rendah tidak lagi memblokir tombol lamar; perilaku ditentukan oleh `lowScoreMode`.
@@ -383,7 +384,7 @@ campaign.applied_count_incremented
 
 Tuliskan hasil testing manual terakhir:
 
-Tanggal: 2026-06-02 (update dokumentasi setelah fix false manual_intervention `/apply/profile`, sebelum verifikasi final browser nyata)
+Tanggal: 2026-06-02 (update URL search Jobstreet fixed West Jakarta untuk MVP)
 Command yang dijalankan:
 
 ```bash
@@ -394,20 +395,20 @@ npx prisma generate
 
 Hasil target verifikasi manual:
 
-* [ ] Buat kampanye baru dengan default `auto_submit_safe_only` dan `ai_first`.
-* [ ] Klik `Jalankan Kampanye Autopilot` sekali dari halaman kampanye.
-* [ ] Konfirmasi sistem mencari Jobstreet lalu langsung memproses lowongan berikutnya satu per satu.
-* [ ] Konfirmasi sistem membuka lowongan dan melamar tanpa kalibrasi manual di jalur utama.
-* [ ] Konfirmasi saat URL mencapai `/job/:id/apply/profile`, langkah terdeteksi sebagai `update_profile`, bukan `manual_intervention`.
-* [ ] Konfirmasi pesan `Jobstreet meminta login/verifikasi keamanan...` tidak muncul pada `/apply/profile` normal.
-* [ ] Konfirmasi log `jobstreet_apply.step_detected_from_url` muncul dengan `step=update_profile`.
-* [ ] Konfirmasi sistem menulis log `jobstreet_apply.update_profile_started`, `jobstreet_apply.update_profile_ai_continue_search`, `jobstreet_apply.update_profile_continue_clicked`, lalu URL berpindah ke `/apply/review`.
-* [ ] Konfirmasi jika klik Continue di `/apply/profile` tidak memindahkan URL dalam 8 detik, status menjadi `stuck_no_progress` dengan keputusan in-app `Coba Lagi`, `Lewati Lowongan`, dan `Buka Browser`, tanpa klaim login/security.
-* [ ] Konfirmasi halaman `/apply/review` terdeteksi sebagai `review_submit`, tombol `Submit application` diklik, dan success hanya diakui setelah `/apply/success` atau marker sukses nyata.
-* [ ] Konfirmasi manual intervention tetap bekerja untuk captcha/login/OTP/security yang benar-benar terlihat.
+* [ ] Buat kampanye baru dengan keyword `.net`.
+* [ ] Konfirmasi UI `/campaigns/new` tidak lagi meminta alamat/lokasi.
+* [ ] Konfirmasi helper text menampilkan: `Lokasi pencarian saat ini dikunci ke: West Jakarta, Jakarta.`
+* [ ] Jalankan `Jalankan Kampanye Autopilot` sekali dari halaman kampanye.
+* [ ] Konfirmasi log menampilkan `Memulai pencarian Jobstreet dengan kata kunci ".net" di West Jakarta, Jakarta.`
+* [ ] Konfirmasi log menampilkan `Navigasi ke halaman pencarian: https://id.jobstreet.com/.net-jobs/in-West-Jakarta-Jakarta`.
+* [ ] Konfirmasi hasil pencarian Jobstreet berhasil dimuat dari URL path-based, bukan query-param `/jobs?keywords=...&where=...`.
+* [ ] Konfirmasi lowongan berhasil diekstrak dan disimpan.
+* [ ] Konfirmasi Autopilot lanjut ke flow apply berikutnya.
 
 Catatan:
-* Kalibrasi tidak lagi menjadi blocker jalur utama Autopilot.
+* Untuk MVP, lokasi pencarian utama dikunci ke West Jakarta, Jakarta.
+* Query-param search lama `/jobs?keywords=...&where=...` tidak lagi dipakai pada flow utama.
+* Saya sempat menyiapkan test unit untuk [`buildSearchUrl()`](lib/browser/jobstreet-agent.ts:308), tetapi test runner bawaan project saat ini belum bisa memuat file TypeScript yang mengimpor alias path Next.js/ESM secara langsung. Karena itu verifikasi URL search untuk task ini didokumentasikan sebagai verifikasi manual sampai setup test diperbaiki.
 * Browser tetap visible.
 * Tidak ada bypass captcha, stealth automation, atau proxy rotation.
 
@@ -418,6 +419,8 @@ Catatan:
 | 2026-06-02 | Resume campaign belum melanjutkan browser automation yang sebelumnya terhenti | Route resume masih hanya mengubah status dan menulis log | Open | `app/api/campaigns/[id]/resume/route.ts` |
 | 2026-06-02 | False manual_intervention pada langkah normal `/apply/profile` Jobstreet | Sudah diperbaiki dengan URL-step detector sebagai source of truth, reject false positive manual detector pada URL apply internal normal, dan force AI/MCP mencari tombol Continue pada `update_profile` | Fixed (Perlu verifikasi browser nyata) | `lib/browser/jobstreet-apply-step-detector.ts`, `lib/browser/page-detector.ts`, `lib/browser/jobstreet-apply-step-runner.ts`, `lib/browser/ai-first-apply-runner.ts`, `lib/browser/mcp-ai-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts` |
 | 2026-06-02 | Mapping keputusan in-app ke jawaban final backend belum sepenuhnya matang | UI sudah diarahkan ke Accept/Reject/Yes/No, tetapi penyimpanan jawaban/edit answer/remember masih perlu pendalaman | Open | `components/campaign-actions.tsx`, `app/api/campaigns/[id]/autopilot/decision/route.ts` |
+| 2026-06-02 | URL pencarian Jobstreet fixed West Jakarta belum diverifikasi manual end-to-end pada browser nyata | Kode, log, dan default API sudah diperbarui, tetapi perlu uji campaign `.net` langsung ke Jobstreet | Open | `lib/browser/jobstreet-agent.ts`, `app/campaigns/new/page.tsx`, `app/api/campaigns/route.ts` |
+| 2026-06-02 | Test runner bawaan project belum bisa menjalankan unit test TypeScript yang memuat modul app/lib berbasis alias Next.js secara langsung | `node --test tests/**/*.test.ts` gagal resolve import ESM/path alias pada file test dan modul browser terkait | Open | `package.json`, `tests/jobstreet-apply-step-detector.test.ts` |
 | 2026-06-02 | Selector Jobstreet bisa rusak jika UI berubah | Jobstreet UI dapat berubah sewaktu-waktu | Open/Risk | `lib/browser/jobstreet-agent.ts` |
 | 2026-06-02 | Browser tetap terbuka saat manual intervention | Ini sesuai kebijakan keamanan, tetapi resume session sesudah intervensi belum penuh | Open/Limitation | `lib/browser/jobstreet-agent.ts` |
 | 2026-06-02 | External redirect flow belum selesai untuk submit akhir | Default arah produk adalah pause keputusan in-app untuk website eksternal | Open/Limitation | `lib/browser/ai-first-apply-runner.ts`, `lib/browser/jobstreet-apply-calibrator.ts` |
@@ -463,9 +466,9 @@ Checklist fitur yang belum selesai:
 
 Tuliskan 3–5 langkah paling masuk akal berikutnya.
 
-1. Selesaikan dan verifikasi manual fix false manual_intervention pada `/apply/profile` dan `/apply/review` Jobstreet nyata.
-2. Pastikan semua runner memakai guard URL-first yang sama dan hanya pause bila ada bukti visible kuat captcha/login/OTP/security.
-3. Verifikasi manual submit resolver bounded 8 detik pada halaman final submit Jobstreet nyata dan pastikan tidak ada false success.
+1. Verifikasi manual flow kampanye `.net` untuk memastikan URL pencarian Jobstreet benar-benar memakai `https://id.jobstreet.com/.net-jobs/in-West-Jakarta-Jakarta`.
+2. Verifikasi lowongan hasil path-based search tetap berhasil diekstrak, disimpan, dan diteruskan ke flow apply.
+3. Selesaikan verifikasi manual fix false manual_intervention pada `/apply/profile` dan `/apply/review` Jobstreet nyata.
 4. Matangkan keputusan in-app agar Accept/Reject/Yes/No/Edit Answer benar-benar tersimpan, bisa diingat per kampanye, dan melanjutkan loop otomatis.
 5. Rapikan wiring runtime/log agar status stuck, retry, dan resume setelah false-positive sinkron di UI kampanye.
 

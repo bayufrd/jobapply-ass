@@ -44,7 +44,7 @@ export default function NewCampaignPage() {
     const payload = {
       name: String(formData.get("name") || "").trim(),
       keyword: String(formData.get("keyword") || "").trim(),
-      location: parseOptionalString(formData.get("location")),
+      location: "West Jakarta, Jakarta",
       targetApplyCount: parseOptionalNumber(formData.get("targetApplyCount")),
       matchThreshold: parseOptionalNumber(formData.get("matchThreshold")),
       workModePreference: parseOptionalString(formData.get("workModePreference")),
@@ -118,10 +118,9 @@ export default function NewCampaignPage() {
               <span>Kata Kunci Lowongan</span>
               <input name="keyword" required className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3" />
             </label>
-            <label className="grid gap-2 text-sm text-slate-300">
-              <span>Lokasi</span>
-              <input name="location" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3" />
-            </label>
+            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-4 text-sm text-cyan-100 md:col-span-2">
+              Lokasi pencarian saat ini dikunci ke: West Jakarta, Jakarta.
+            </div>
             <label className="grid gap-2 text-sm text-slate-300">
               <span>Target Jumlah Lamaran</span>
               <input name="targetApplyCount" type="number" min="1" defaultValue="1" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3" />
