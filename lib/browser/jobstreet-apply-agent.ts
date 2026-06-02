@@ -12,6 +12,7 @@ import type { QuestionAnswerResult } from "@/lib/ai/schemas";
 import { prisma } from "@/lib/db/prisma";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
 import { runAiApplyWizard } from "@/lib/browser/ai-apply-wizard";
+import { runAiFirstApplyRunner } from "@/lib/browser/ai-first-apply-runner";
 import {
   detectApplyWizardState,
   hasWizardProgress,
@@ -1053,12 +1054,27 @@ export async function startJobApplication({
 }): Promise<ApplyResult> {
   const session = await launchManagedBrowser();
   try {
+    const resolvedSubmitMode = resolveSubmitMode(campaign, submitMode);
+
+    if ((campaign.formAutomationMode ?? "ai_first") === "ai_first") {
+      return await runAiFirstApplyRunner({
+        page: session.page,
+        jobListing,
+        campaign: {
+          ...campaign,
+          formAutomationMode: campaign.formAutomationMode ?? "ai_first",
+        },
+        candidateProfile: profile,
+        mode: resolvedSubmitMode,
+      });
+    }
+
     return await runJobstreetApplyWizard({
       page: session.page,
       jobListing,
       campaign,
       profile,
-      submitMode: resolveSubmitMode(campaign, submitMode),
+      submitMode: resolvedSubmitMode,
     });
   } finally {
     // Browser intentionally remains visible for safety policy and manual inspection.

@@ -245,37 +245,27 @@ Jangan tulis value rahasia asli di file ini.
 
 Jelaskan status browser automation:
 
-* Browser visible mode: Sudah diterapkan. Headless mode ditolak.
+* Browser visible mode: Sudah diterapkan. Headless mode ditolak dan browser harus tetap terlihat.
 * Session save/load: Path persistent session dipakai dan metadata session disimpan ke `BrowserSession`, tetapi load/validasi session masih dasar.
-* Manual login: Masih mungkin diperlukan; bila intervensi terdeteksi sistem menulis log `application.manual_intervention_required` dan mengembalikan pesan Indonesia yang jelas. Deteksi login page ditambahkan ke page-detector.
+* Manual login/security: Hanya captcha, OTP, login, dan security verification yang boleh meminta tindakan user di browser.
 * Login via ENV: Belum diimplementasikan.
-* Jobstreet search: Sudah diimplementasikan. Agent membangun URL pencarian dari keyword dan lokasi, navigasi ke halaman hasil, dan mengumpulkan job card dari halaman pertama.
-* Job card extraction: Sudah diimplementasikan dengan multiple selector strategies (data-automation attributes, semantic HTML, fallback generic detection).
-* Job detail extraction: Sudah diimplementasikan. Membuka halaman detail setiap lowongan dan mengekstrak title, company, location, salary, workType, description.
-* Save to DB: Sudah diimplementasikan dengan deduplication berdasarkan URL (`@unique`). Lowongan duplikat diupdate.
-* AI job scoring: Sudah diimplementasikan. Setiap lowongan yang disimpan akan di-score oleh AI, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold. Scoring error tidak menggagalkan campaign.
-* Campaign relasi: `JobListing.campaignId` menghubungkan lowongan ke kampanye yang menemukannya.
-* Safe limits: Maksimal 10-20 lowongan per run, tidak ada paginasi endless.
-* Form filling: Sudah diimplementasikan dengan multiple selector strategies (name, placeholder, aria-label, data-automation). Mendukung 9 field utama termasuk nama, email, telepon, lokasi, gaji, masa kerja, ketersediaan, dan ringkasan.
-* Question detection: Sudah diimplementasikan. Mendeteksi pertanyaan dari label, legend, heading dalam form context, dan data-automation attributes. Pertanyaan dijawab dari QuestionMemory atau AI.
-* Question answering: Sudah diimplementasikan. Mengecek QuestionMemory terlebih dahulu (confidence >= 0.7), lalu memanggil AI. Jawaban dengan confidence >= 0.7 dan tidak requiresHumanReview disimpan ke memory.
-* Pending questions: Pertanyaan dengan confidence rendah atau requiresHumanReview disimpan ke Application.answersJson sebagai pending questions. Status Application menjadi `paused`.
-* Captcha/manual intervention pause: Sudah ada deteksi dan hasil `requiresManualIntervention(...)`. Deteksi login page ditambahkan. Pesan Indonesia yang jelas dikembalikan.
-* Apply wizard stateful: Sudah diimplementasikan melalui detektor state `job_detail` → `apply_button_visible` → `application_form` → `question_step` → `review_step` → `final_submit_ready` → `submitted_success`, plus `manual_intervention`, `external_redirect`, `stuck`, dan `unknown`.
-* Watchdog no-progress: Sudah diimplementasikan. Wizard deterministic memantau fingerprint state/url/text dan menghitung iterasi tanpa progres. Bila limit tercapai atau state unknown, flow tidak terus memaksa klik, tetapi langsung fallback terkontrol ke AI UI Agent.
-* Apply button detection: Sudah diimplementasikan dengan 4 strategy: text-based, data-automation, href matching, dan generic fallback.
-* Missing apply button handling: Jika tombol lamar tidak ditemukan saat apply wizard, flow wajib memanggil AI UI Agent sebagai fallback bounded satu kali, menulis log `ai_ui.fallback_started` + `ai_ui.apply_button_recovery_attempted`, lalu menandai lowongan `apply_unavailable` bila fallback tetap gagal. Job yang sudah `apply_unavailable` tidak boleh dipick ulang otomatis.
-* Submit button detection: Diperketat. Prioritas selector kini fokus ke area review/form final, label submit final yang diizinkan, dan menghindari tombol navigasi seperti `Continue`, `Next`, `Review`, `Back`, `Cancel`, atau `Save`. Ditambahkan helper `findFinalSubmitButton(page)` dengan confidence `high | medium | low`. Auto-submit hanya jalan bila confidence `high`.
-* Final submit: Flow utama Autopilot kini memakai same-page submit dari wizard apply yang sama, bukan reopen URL lowongan. Jika kampanye memakai `automationMode = auto_submit_safe_only` atau `autoSubmitSafeOnly = true`, sistem akan klik final `Submit application` otomatis di page Playwright yang sama setelah safety gate lolos.
-* Submit verification: Setelah klik submit, sistem menunggu perubahan DOM/network, mengambil screenshot setelah klik, lalu memverifikasi marker sukses seperti `Application submitted`, `Lamaran terkirim`, `Anda telah melamar`, atau `Thank you for applying`. Jika klik terjadi tetapi verifikasi gagal, status harus `paused`, bukan `submitted`, dan `Campaign.appliedCount` tidak boleh bertambah.
-* Skip application: Sudah diimplementasikan. Mengubah status ke `skipped`, mengembalikan JobListing ke `shortlisted`.
-* Campaign Loop / Autopilot v2: Diperluas untuk dua mode kampanye: `review_each_application` dan `auto_submit_safe_only`. Mode review tetap pause di `pending_review`. Mode Auto Submit Aman lanjut submit otomatis bila aman, lalu langsung lanjut ke lowongan berikutnya sampai target tercapai. Lowongan diproses satu per satu dengan hard lock `applying`, source of truth status di [`job-status.ts`](lib/campaign/job-status.ts), dan batas 5 lowongan `apply_unavailable` berturut-turut sebelum kampanye dijeda.
-* Low score behavior: Sudah mendukung `ask`, `auto_skip`, dan `auto_apply`. Lowongan skor rendah tidak menyembunyikan aksi apply; perilaku ditentukan dari setting kampanye.
-* Application record creation: Sudah diimplementasikan. Membuat `Application` dengan status `submitted`, `pending_review`, `paused`, `failed`, atau `apply_unavailable` sesuai hasil wizard.
-* Screenshot on submit: Sudah diimplementasikan. Screenshot sebelum submit wajib disimpan untuk Auto Submit Aman, diikuti screenshot setelah klik submit, setelah sukses, dan saat error/intervensi. File ditautkan ke `Application.screenshotPath`.
-* Apply calibration dry run: Sudah diimplementasikan. `calibrateJobApply()` di `lib/browser/jobstreet-apply-calibrator.ts` membuka browser visible, mendeteksi intervensi manual, menemukan dan mengklik tombol apply, mengklasifikasi flow type (jobstreet_internal/external_redirect/email_apply/whatsapp_apply/unknown) dan platform (jobstreet/google_form/greenhouse/lever/workday/company_site/unknown), mengambil snapshot form (inputs/textareas/selects/questions/buttons/submit candidates), menyimpan hasil ke `ApplicationCalibration`. Tidak melakukan submit. Browser tetap terbuka untuk review user.
-* Apply button detection (calibration): Sudah diimplementasikan dengan 6 strategy: getByRole button text, getByRole link text, CSS text-based, href pattern, data-automation attributes, dan generic scan fallback.
-* Resume after intervention: Belum ada flow resume automation yang nyata.
+* Jobstreet search: Sudah diimplementasikan dan menjadi bagian dari loop utama kampanye.
+* Search + apply one-by-one: Arah implementasi sekarang adalah cari lowongan → pilih lowongan eligible berikutnya → langsung buka dan lamar → lanjut ke lowongan berikutnya sampai target tercapai.
+* Save to DB: Sudah diimplementasikan dengan deduplication berdasarkan URL (`@unique`).
+* AI job scoring: Sudah diimplementasikan. Skor rendah tidak lagi memblokir tombol lamar; perilaku ditentukan oleh `lowScoreMode`.
+* Form automation default: Default kampanye baru sekarang `formAutomationMode = ai_first` dan `automationMode = auto_submit_safe_only`.
+* AI-first apply runner: Jalur baru [`runAiFirstApplyRunner()`](lib/browser/ai-first-apply-runner.ts:1) sudah dibuat sebagai runner AI-first bounded dengan `maxStepsPerJob = 30`, `maxJobDurationMs = 5 menit`, `maxNoProgress = 3`, dan `maxAiRetries = 2`.
+* AI planner: Planner menerima visible DOM snapshot, profil kandidat, kampanye, lowongan, `QuestionMemory`, dan wizard history. Output wajib JSON-only dan hanya boleh memakai `elementId` yang benar-benar terlihat.
+* Question detection: Pertanyaan normal kini diarahkan ke keputusan in-app, bukan instruksi umum untuk memeriksa browser.
+* Yes/No handling: Bila jawaban diketahui dari CV/default/memory, AI dapat menjawab. Bila tidak yakin, status harus pause ke keputusan user di halaman kampanye.
+* Captcha/manual intervention pause: Tetap ada dan hanya untuk kasus keamanan/manual yang sah.
+* Calibration in Autopilot: Dihapus dari jalur utama Autopilot. Kalibrasi tetap dipertahankan sebagai tool manual/debug di [`/jobs/[id]/calibration`](app/jobs/[id]/calibration/page.tsx).
+* Final submit: Untuk `auto_submit_safe_only`, submit final diarahkan untuk diklik otomatis di page Playwright yang sama bila safety gate lolos.
+* Submit verification: Status `submitted` hanya boleh di-set setelah marker sukses terverifikasi. Bila belum terverifikasi, kampanye pause ke status `submit_unverified`.
+* Campaign Loop / Autopilot v2: Sedang digeser dari wizard/calibration-first menjadi AI-first campaign loop. Target status per langkah sekarang mencakup `submitted_continue`, `skipped_continue`, `decision_required`, `question_required`, `manual_intervention_required`, `submit_unverified`, `completed`, dan `error`.
+* Screenshot on submit: Sudah diimplementasikan untuk alur submit aman dan kasus error/intervensi.
+* Apply calibration dry run: Tetap tersedia sebagai tool developer/debugging, bukan blocker jalur Autopilot.
+* Resume after intervention: Belum ada flow resume browser session yang benar-benar melanjutkan konteks halaman yang sama.
 
 ## 11. AI Integration Status
 
@@ -283,31 +273,30 @@ Jelaskan status integrasi 9router:
 
 * Chat completions: Sudah ada melalui OpenAI-compatible client dengan base URL resmi `/v1` dari helper bersama.
 * CV analysis: Sudah ada dan terhubung ke API route.
-* Job scoring: Sudah terintegrasi ke flow campaign utama. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold.
-* Job scoring reasoning bahasa Indonesia: Diperketat. Prompt sekarang mewajibkan JSON-only dan semua reasoning user-facing dalam Bahasa Indonesia. Ada fallback sanitasi ringan bila model masih mengembalikan frasa Inggris.
-* Question answering: Sudah ada, menyimpan memory, dan kini ikut memakai helper config 9router melalui client bersama. Terintegrasi ke assisted apply flow.
-* Question answering reasoning bahasa Indonesia: Diperketat. Reasoning dan evidence user-facing dipaksa Bahasa Indonesia dengan prompt dan fallback sanitasi.
-* Structured JSON output: Sudah ada parsing JSON + schema validation.
-* Config helper 9router: Sudah ada di `lib/ai/9router-config.ts` dan mengembalikan `rootUrl`, `apiBaseUrl`, `apiKey`, `chatModel`, `embeddingModel`, `isConfigured`, dan `missingFields`.
-* Health check: Sudah ada di `app/api/settings/9router/health/route.ts` dan memakai `${rootUrl}/api/health`.
-* Model discovery: Sudah ada di `app/api/settings/9router/models/route.ts` dan memakai `${apiBaseUrl}/models` serta `${apiBaseUrl}/models/embedding`.
-* Error handling: Sudah ada pesan Indonesia yang jelas untuk konfigurasi belum lengkap dan model chat belum dipilih.
-* Retry handling: Belum ada.
+* Job scoring: Sudah terintegrasi ke flow campaign utama.
+* AI-first UI planner: Sedang menjadi jalur utama automation form. Planner sekarang dipaksa JSON-only, visible-elements-only, tidak boleh mengarang selector, tidak boleh klik captcha/login/OTP/security, dan tidak boleh mengisi password.
+* Planner actions: Jalur AI sekarang mendukung `click`, `fill`, `select`, `check`, `choose_radio`, `ask_user`, `skip_job`, dan `final_submit` pada level rencana.
+* Question answering: Sudah ada, menyimpan memory, dan dipakai untuk membantu saran jawaban pada pertanyaan tambahan.
+* Structured JSON output: Sudah ada parsing JSON + schema validation untuk planner dan modul AI lain.
+* Bahasa Indonesia: Reasoning user-facing, pertanyaan untuk user, dan opsi keputusan diarahkan ke Bahasa Indonesia.
+* Config helper 9router: Sudah ada di [`lib/ai/9router-config.ts`](lib/ai/9router-config.ts:1).
+* Health check: Sudah ada di [`app/api/settings/9router/health/route.ts`](app/api/settings/9router/health/route.ts:1).
+* Model discovery: Sudah ada di [`app/api/settings/9router/models/route.ts`](app/api/settings/9router/models/route.ts:1).
+* Retry handling: Belum matang; AI-first runner baru membatasi retry lokal pada per-lowongan.
 
 ## 12. Human-in-the-loop Status
 
 Jelaskan fitur yang melibatkan keputusan user:
 
-* Modal pertanyaan tambahan: Deteksi pertanyaan form terimplementasi. Pertanyaan dijawab dari CV, default kampanye, `QuestionMemory`, atau AI. Pertanyaan pending disimpan ke `Application.answersJson`. Status `paused` untuk pertanyaan yang memerlukan input user. Autopilot tidak boleh auto-submit selama masih ada pending question.
-* Modal captcha/verifikasi: Deteksi login page, captcha, OTP, dan security check terimplementasi. Flow berhenti dan membuat `Application` status `paused` saat intervensi terdeteksi. Screenshot disimpan.
-* Modal review lamaran: Halaman `/applications/[id]/review` menampilkan detail lengkap. Untuk lamaran auto-submitted, halaman menampilkan status `submitted`, screenshot setelah submit, dan catatan bahwa lamaran dikirim otomatis oleh mode Auto Submit Aman.
-* Approve and submit: Route manual `POST /api/applications/[id]/submit` tetap dipertahankan sebagai fallback. Flow ini masih membuka ulang halaman lowongan dan dipakai untuk submit manual user, tetapi bukan path utama Autopilot.
-* Edit answer: Tombol "Edit Jawaban" ada di halaman review tetapi dinonaktifkan (belum diimplementasikan).
-* Skip job: Tombol "Lewati Lamaran" aktif di halaman review. Mengubah status ke `skipped` dan mengembalikan JobListing ke `shortlisted`.
-* Pause campaign: API ada dan menulis log nyata. Terintegrasi dengan panel Autopilot v2.
-* Resume campaign: Flow utama sekarang lewat `autopilot/continue` yang bounded per request dan aman untuk dipoll/di-trigger ulang dari UI. Panel kampanye juga sudah auto-continue bounded maksimal 50 panggilan per klik dengan jeda acak 500–1500ms selama status masih aman untuk lanjut.
-* Campaign loop lama: Digantikan oleh Campaign Autopilot v2 sebagai flow utama user-facing.
-* Decision memory per campaign: Sudah ada. Jika user memilih `Selalu Lewati Kasus Serupa di Kampanye Ini`, sistem menyimpan `CampaignDecisionRule` dan hanya berlaku untuk kampanye aktif tersebut.
+* Modal pertanyaan tambahan: Arah utama sekarang adalah semua pertanyaan normal ditangani di halaman kampanye dengan pilihan sederhana seperti Accept, Reject, Yes, No, Edit Answer, dan Skip Job.
+* Modal captcha/verifikasi: Tetap dipakai untuk captcha, OTP, login, dan security verification. Ini satu-satunya jalur yang masih sah untuk meminta user menyelesaikan sesuatu langsung di browser.
+* Review page: Tetap ada sebagai fallback/manual path, tetapi bukan jalur utama submit Autopilot.
+* Approve and submit: Route manual [`POST /api/applications/[id]/submit`](app/api/applications/[id]/submit/route.ts:1) tetap dipertahankan sebagai fallback.
+* Edit answer: Tombol dan copy mulai diarahkan ke flow kampanye, tetapi penyimpanan edit jawaban end-to-end masih belum selesai.
+* Skip job: Sudah menjadi salah satu keputusan user utama di UI kampanye.
+* Pause campaign: API ada dan terintegrasi dengan panel Autopilot.
+* Resume campaign: Jalur utama sekarang lewat [`autopilot/continue`](app/api/campaigns/[id]/autopilot/continue/route.ts:1) yang bounded per request.
+* Decision memory per campaign: Sudah ada lewat `CampaignDecisionRule` untuk kasus seperti low score/skip similar. Penyimpanan keputusan pertanyaan tambahan masih perlu diperdalam untuk MVP penuh.
 
 ## 13. Log Aktivitas
 
@@ -317,14 +306,10 @@ Status log:
 * Log tampil di UI: Ya, dashboard dan halaman `/logs` membaca data DB nyata.
 * Log per campaign: Didukung oleh relasi dan field `campaignId`.
 * Log per job: Didukung oleh relasi dan field `jobListingId`.
-* Log error: Ya, start/pause/resume/stop dan worker stub menulis log nyata.
-* Log Jobstreet search: Lengkap dengan event `jobstreet.search_started`, `jobstreet.search_page_loaded`, `jobstreet.search_manual_intervention`, `jobstreet.job_card_found`, `jobstreet.job_detail_opened`, `jobstreet.job_saved`, `jobstreet.job_skipped_duplicate`, `jobstreet.job_scoring_started`, `jobstreet.job_scored`, `jobstreet.job_shortlisted`, `jobstreet.job_skipped_score`, `jobstreet.job_scoring_failed`, `jobstreet.search_completed`, `jobstreet.search_failed`.
-* Log assisted apply: Lengkap dengan event `application.started`, `application.job_opened`, `application.searching_apply_button`, `application.apply_button_clicked`, `application.apply_button_not_found`, `application.form_detected`, `application.field_filled`, `application.question_detected`, `application.question_answered`, `application.question_needs_user_input`, `application.manual_intervention_required`, `application.review_required`, `application.failed`, dan event timeline baru seperti `application.final_submit_detected`, `application.auto_submit_safe_started`, `application.submit_clicked`, `application.submit_post_click_diagnostics`, `application.submit_unverified`.
-* Log submit: Lengkap dengan event `application.submit_requested`, `application.before_submit_review`, `application.submitted`, `application.submit_failed`, `application.submit_manual_intervention`. Untuk Auto Submit Aman, event timeline user-facing yang diharapkan adalah `Final submit terdeteksi`, `Auto submit aman dijalankan`, `Submit diklik`, `Submit berhasil diverifikasi`, atau `Submit belum dapat diverifikasi`.
-* Log campaign loop: Lengkap dengan event `campaign.loop_started`, `campaign.loop_next_job`, `campaign.loop_paused`, `campaign.loop_completed`, `campaign.target_reached`, `campaign.applied_count_incremented`, plus kelanjutan Autopilot sesudah submit terverifikasi.
-* Log skip: Event `application.skipped`.
-* Log calibration: Lengkap dengan event `application.calibration_started`, `application.calibration_job_opened`, `application.calibration_apply_button_found`, `application.calibration_apply_button_clicked`, `application.calibration_apply_button_not_found`, `application.calibration_flow_classified`, `application.calibration_form_snapshot_saved`, `application.calibration_external_redirect`, `application.calibration_manual_intervention`, `application.calibration_failed`.
-* Screenshot path tersimpan: Screenshot sebelum submit, setelah submit, dan saat error/intervensi disimpan ke `storage/screenshots` dan ditautkan ke `Application.screenshotPath`. Screenshot kalibrasi juga disimpan dan ditautkan ke `ApplicationCalibration.screenshotPath`.
+* Log campaign loop baru: Target event utama sekarang mencakup `campaign.autopilot_searching_next_job`, `campaign.autopilot_processing_job`, dan `campaign.autopilot_next_job`.
+* Log AI form: Target event utama sekarang mencakup `ai_form.reading_page`, `ai_form.action_selected`, `ai_form.action_executed`, `ai_form.question_needs_user`, `ai_form.yes_no_answered`, `ai_form.submit_ready`, `ai_form.auto_submit_clicked`, dan `ai_form.submit_verified`.
+* Log calibration: Tetap ada untuk tool debug/manual, tetapi bukan pusat alur Autopilot.
+* Screenshot path tersimpan: Screenshot submit/error/intervensi tetap ditautkan ke `Application.screenshotPath`.
 
 Contoh event log yang digunakan:
 
@@ -394,7 +379,7 @@ campaign.applied_count_incremented
 
 Tuliskan hasil testing manual terakhir:
 
-Tanggal: 2026-06-02 (update dokumentasi sebelum verifikasi final)
+Tanggal: 2026-06-02 (update dokumentasi setelah refactor AI-first, sebelum verifikasi final)
 Command yang dijalankan:
 
 ```bash
@@ -403,41 +388,35 @@ npx tsc --noEmit
 npx prisma generate
 ```
 
-Hasil:
+Hasil target verifikasi manual:
 
-* [ ] Menunggu verifikasi final command pada task ini.
-* [x] Status `apply_unavailable` ditambahkan untuk lowongan yang tidak memiliki tombol lamar.
-* [x] `pickNextJob()` tidak lagi memasukkan job `failed` atau `apply_unavailable` ke seleksi normal autopilot.
-* [x] Autopilot memakai bounded skip loop dengan batas 5 lowongan unusable per run.
-* [x] Jika kalibrasi gagal karena tombol lamar tidak ditemukan, job ditandai `apply_unavailable` dan autopilot lanjut ke lowongan berikutnya.
-* [x] Timeline menambahkan event `campaign.autopilot_job_apply_unavailable` dengan pesan Bahasa Indonesia.
-* [x] Halaman `/jobs` menambahkan aksi manual `Coba Lagi`, `Buka Jobstreet`, dan `Lewati` untuk job `apply_unavailable` atau `failed`.
-* [ ] Belum diverifikasi manual terhadap Jobstreet nyata pada task ini.
+* [ ] Buat kampanye baru dengan default `auto_submit_safe_only` dan `ai_first`.
+* [ ] Klik `Jalankan Kampanye Autopilot` sekali dari halaman kampanye.
+* [ ] Konfirmasi sistem mencari Jobstreet lalu langsung memproses lowongan berikutnya satu per satu.
+* [ ] Konfirmasi sistem membuka lowongan dan melamar tanpa kalibrasi manual di jalur utama.
+* [ ] Konfirmasi AI membaca visible form dan mengisi field dari CV/profile/default kampanye.
+* [ ] Konfirmasi pertanyaan Yes/No dijawab otomatis bila diketahui, atau muncul sebagai keputusan in-app bila tidak yakin.
+* [ ] Konfirmasi user bisa memilih Accept/Reject/Yes/No/Edit Answer/Skip Job dari halaman kampanye.
+* [ ] Konfirmasi final submit diklik otomatis bila aman dan status `submitted` hanya muncul setelah verifikasi sukses.
+* [ ] Konfirmasi Autopilot lanjut ke lowongan berikutnya otomatis.
+* [ ] Konfirmasi tidak ada bahasa normal-flow seperti "cek browser" selain kasus captcha/login/OTP/security.
 
 Catatan:
-* Lowongan dengan status `apply_unavailable` tidak di-retry otomatis oleh autopilot.
-* Retry hanya terjadi jika user menekan `Coba Lagi` dari halaman `/jobs`.
-* Jika 5 lowongan berturut-turut tidak bisa dilamar, kampanye dijeda dengan langkah `too_many_unusable_jobs`.
+* Kalibrasi tidak lagi menjadi blocker jalur utama Autopilot.
+* Browser tetap visible.
 * Tidak ada bypass captcha, stealth automation, atau proxy rotation.
 
 ## 15. Error / Bug Saat Ini
 
 | Tanggal | Error | Penyebab Dugaan | Status | File Terkait |
 | ------- | ----- | --------------- | ------ | ------------ |
-| 2026-06-02 | `sourceType` does not exist in Prisma type for `CandidateProfileCreateInput` and `UploadedCVUpdateInput` | Schema Prisma belum memiliki field source tracking | Resolved | `prisma/schema.prisma`, `app/api/cv/analyze/route.ts` |
 | 2026-06-02 | Resume campaign belum melanjutkan browser automation yang sebelumnya terhenti | Route resume masih hanya mengubah status dan menulis log | Open | `app/api/campaigns/[id]/resume/route.ts` |
-| 2026-06-02 | Campaign Autopilot sempat memilih ulang job `failed` dan mengulang log `Tombol lamar tidak ditemukan` | `pickNextJob()` memasukkan status `failed` dan kegagalan tombol lamar diperlakukan sebagai blocker kampanye | Resolved | `lib/campaign/autopilot-runner.ts`, `components/campaign-actions.tsx`, `app/api/campaigns/[id]/status/route.ts`, `app/jobs/page.tsx` |
-| 2026-06-02 | Screenshot submit sudah ditautkan ke record aplikasi | Screenshot sebelum/submit/error disimpan dan ditautkan ke `Application.screenshotPath` | Resolved | `lib/browser/jobstreet-apply-agent.ts` |
-| 2026-06-02 | Menjalankan `npm run dev` kedua menghasilkan error server duplikat | Sudah ada dev server aktif di port `3000` | Resolved/Informational | `package.json` |
-| 2026-06-02 | Health check dan model discovery 9router belum diverifikasi end-to-end ke server eksternal pada task ini | Perubahan fokus pada wiring, route, dan UI; belum ada uji manual terhadap instance 9router target | Open | `app/api/settings/9router/health/route.ts`, `app/api/settings/9router/models/route.ts` |
+| 2026-06-02 | AI-first Autopilot belum diverifikasi end-to-end terhadap Jobstreet nyata | Refactor baru selesai di level wiring, belum diuji pada flow real browser | Open | `lib/browser/ai-first-apply-runner.ts`, `lib/campaign/autopilot-runner.ts`, `components/campaign-actions.tsx` |
+| 2026-06-02 | Mapping keputusan in-app ke jawaban final backend belum sepenuhnya matang | UI sudah diarahkan ke Accept/Reject/Yes/No, tetapi penyimpanan jawaban/edit answer/remember masih perlu pendalaman | Open | `components/campaign-actions.tsx`, `app/api/campaigns/[id]/autopilot/decision/route.ts` |
 | 2026-06-02 | Selector Jobstreet bisa rusak jika UI berubah | Jobstreet UI dapat berubah sewaktu-waktu | Open/Risk | `lib/browser/jobstreet-agent.ts` |
-| 2026-06-02 | Browser tidak ditutup saat manual intervention terdeteksi | Browser tetap terbuka untuk memungkinkan user menyelesaikan login/captcha/OTP, tetapi session tidak dapat dilanjutkan otomatis setelah intervensi selesai | Open/Limitation | `lib/browser/jobstreet-agent.ts` |
-| 2026-06-02 | Assisted apply belum menangani form multi-step/accordion | Jobstreet form lamaran mungkin memerlukan navigasi multi-step yang belum diimplementasikan | Open/Limitation | `lib/browser/jobstreet-apply-agent.ts` |
-| 2026-06-02 | Edit jawaban belum berfungsi dari UI | Tombol "Edit Jawaban" ada tetapi dinonaktifkan | Open | `app/applications/[id]/review/page.tsx` |
-| 2026-06-02 | Submit flow belum diverifikasi end-to-end terhadap Jobstreet nyata | Memerlukan testing manual dengan browser visible | Open | `lib/browser/jobstreet-apply-agent.ts`, `app/api/applications/[id]/submit/route.ts` |
-| 2026-06-02 | Campaign loop belum diverifikasi end-to-end | Memerlukan testing manual dengan browser visible | Open | `lib/campaign/loop-runner.ts`, `app/api/campaigns/[id]/loop/route.ts` |
-| 2026-06-02 | Apply calibration belum diverifikasi end-to-end | Memerlukan testing manual dengan browser visible terhadap Jobstreet nyata | Open | `lib/browser/jobstreet-apply-calibrator.ts`, `app/api/jobs/[id]/apply/calibrate/route.ts` |
-| 2026-06-02 | External redirect flow belum diverifikasi | Flow external redirect hanya menyimpan metadata, perlu mode pengisian eksternal | Open/Limitation | `lib/browser/jobstreet-apply-calibrator.ts` |
+| 2026-06-02 | Browser tetap terbuka saat manual intervention | Ini sesuai kebijakan keamanan, tetapi resume session sesudah intervensi belum penuh | Open/Limitation | `lib/browser/jobstreet-agent.ts` |
+| 2026-06-02 | External redirect flow belum selesai untuk submit akhir | Default arah produk adalah pause keputusan in-app untuk website eksternal | Open/Limitation | `lib/browser/ai-first-apply-runner.ts`, `lib/browser/jobstreet-apply-calibrator.ts` |
+| 2026-06-02 | Submit flow belum diverifikasi end-to-end terhadap Jobstreet nyata | Memerlukan testing manual dengan browser visible | Open | `lib/browser/ai-first-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts` |
 
 ## 16. Risiko / Batasan
 
@@ -479,11 +458,11 @@ Checklist fitur yang belum selesai:
 
 Tuliskan 3–5 langkah paling masuk akal berikutnya.
 
-1. Verifikasi manual end-to-end stateful wizard pada Jobstreet nyata: pastikan state berpindah benar antar slide, watchdog mendeteksi no-progress, dan fallback AI hanya aktif saat perlu.
-2. Verifikasi manual end-to-end submit pada browser visible terhadap Jobstreet nyata, khususnya kasus mencapai `Submit application` tetapi belum terverifikasi sukses.
-3. Verifikasi manual end-to-end apply calibration pada shortlisted job normal, pastikan flow type dan platform terdeteksi dengan benar, form fields tersnapshot, dan browser tidak melakukan submit.
-4. Implementasikan mode pengisian eksternal untuk flow external redirect (google_form, greenhouse, lever, workday, company_site).
-5. Implementasikan edit jawaban dari halaman review.
+1. Verifikasi manual end-to-end AI-first campaign loop pada Jobstreet nyata dari satu klik `Jalankan Kampanye Autopilot` sampai lanjut ke lowongan berikutnya.
+2. Matangkan keputusan in-app agar Accept/Reject/Yes/No/Edit Answer benar-benar tersimpan, bisa diingat per kampanye, dan melanjutkan loop otomatis.
+3. Matangkan status `submit_unverified` dan keputusan `Accept as Submitted` / `Retry Verification` / `Skip Job` / `Open Browser`.
+4. Implementasikan mode pengisian dan keputusan in-app untuk external redirect sampai batas aman.
+5. Rapikan sisa copy/UI lama yang masih berorientasi review page atau browser-check di normal flow.
 
 ## 19. Prompt Lanjutan yang Direkomendasikan
 

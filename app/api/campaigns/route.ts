@@ -50,8 +50,8 @@ export async function POST(request: Request) {
             ? "assisted_auto_apply"
             : (body.submitMode ?? "manual_review_only"),
         status: "ready",
-        automationMode: body.automationMode ?? "review_each_application",
-        formAutomationMode: body.formAutomationMode ?? "ai_fallback",
+        automationMode: body.automationMode ?? "auto_submit_safe_only",
+        formAutomationMode: body.formAutomationMode ?? "ai_first",
         lowScoreMode: body.lowScoreMode ?? "ask",
         autoSubmitSafeOnly: body.autoSubmitSafeOnly ?? body.automationMode === "auto_submit_safe_only",
       } as {

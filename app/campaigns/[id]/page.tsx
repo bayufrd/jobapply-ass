@@ -176,6 +176,22 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
             </div>
           </div>
 
+          {campaign.decisionPayloadJson && (
+            <div className="mt-6 rounded-2xl border border-sky-500/30 bg-sky-500/10 p-5 text-sm text-sky-100">
+              <p className="text-xs uppercase tracking-[0.3em] text-sky-300">Keputusan Kampanye</p>
+              <h4 className="mt-2 text-lg font-semibold text-white">Sistem membutuhkan keputusan Anda.</h4>
+              <p className="mt-2 text-slate-200">
+                {campaign.currentQuestion || "Pilih jawaban untuk melanjutkan."}
+              </p>
+              <p className="mt-3 text-slate-300">
+                Gunakan tombol keputusan di panel Autopilot untuk memilih Accept, Reject, Yes, No, Edit Answer, atau Skip Job.
+              </p>
+              <p className="mt-2 text-xs text-slate-400">
+                Browser manual hanya diperlukan untuk captcha, OTP, login, atau verifikasi keamanan.
+              </p>
+            </div>
+          )}
+ 
           {jobsCount > 0 && (
             <div className="mt-4 flex flex-wrap gap-3">
               <Link

@@ -28,6 +28,12 @@ const uiActionSchema = z.discriminatedUnion("type", [
     checked: z.boolean(),
     reason: z.string(),
   }),
+  z.object({
+    type: z.literal("choose_radio"),
+    elementId: z.string(),
+    value: z.string().optional(),
+    reason: z.string(),
+  }),
 ]);
 
 export const uiActionPlanSchema = z.object({
@@ -50,6 +56,9 @@ export const uiActionPlanSchema = z.object({
   safeToSubmit: z.boolean(),
   needsUserInput: z.boolean(),
   userQuestion: z.string().optional(),
+  suggestedAnswer: z.string().optional(),
+  answerOptions: z.array(z.string()).optional(),
+  reason: z.string().optional(),
   actions: z.array(uiActionSchema).default([]),
 });
 
@@ -93,6 +102,11 @@ type PlannerState = {
   previousReason?: string | null;
   repeatedFingerprintCount?: number;
   externalRedirect?: boolean;
+  wizardHistory?: Array<{
+    step: number;
+    goal: string;
+    reason?: string | null;
+  }>;
 };
 
 type UiPlannerInput = {
@@ -139,7 +153,7 @@ function sanitizeSnapshotForPrompt(snapshot: DomSnapshot) {
   };
 }
 
-function fallbackAskUser(reason: string, userQuestion?: string): UiActionPlan {
+function fallbackAskUser(reason: string, userQuestion?: string, answerOptions?: string[]): UiActionPlan {
   return {
     goal: "ask_user",
     confidence: 0,
@@ -149,6 +163,9 @@ function fallbackAskUser(reason: string, userQuestion?: string): UiActionPlan {
     safeToSubmit: false,
     needsUserInput: true,
     userQuestion,
+    suggestedAnswer: undefined,
+    answerOptions,
+    reason,
     actions: [],
   };
 }
@@ -194,14 +211,16 @@ function applySafetyValidation(plan: UiActionPlan, snapshot: DomSnapshot): UiAct
   if (blockedAction) {
     return fallbackAskUser(
       "AI mengarah ke elemen yang diblokir oleh guardrail keamanan.",
-      "Sistem menghentikan aksi karena terdeteksi elemen login, verifikasi, atau keamanan.",
+      "Sistem membutuhkan keputusan Anda untuk kasus verifikasi atau keamanan.",
+      ["Ya", "Tidak"],
     );
   }
 
   if (plan.goal === "final_submit" && (!plan.safeToSubmit || plan.confidence < 0.9)) {
     return fallbackAskUser(
       "AI belum cukup yakin untuk melakukan submit final secara aman.",
-      "Silakan review manual sebelum submit final dilakukan.",
+      "Submit belum bisa diverifikasi aman. Pilih keputusan untuk melanjutkan.",
+      ["Accept", "Retry Verification", "Skip Job", "Open Browser"],
     );
   }
 
@@ -219,20 +238,25 @@ export async function planUiNextActions(input: UiPlannerInput): Promise<UiAction
       {
         role: "system",
         content: [
-          "You are controlling a job application assistant.",
+          "You are controlling an AI-first job application assistant.",
           "Return only valid JSON.",
           "You must only choose from visible element IDs in the provided snapshot.",
           "Never invent selectors.",
           "Never click captcha, login security, OTP, verification, password, payment, browser permission, or browser extension elements.",
+          "Never fill password fields.",
+          "Never access cookies, tokens, or localStorage.",
           "Never submit if required fields are empty.",
           "Never submit if confidence < 0.9.",
-          "If unsure, return ask_user.",
+          "Allowed actions are click, fill, select, check, choose_radio.",
+          "Use ask_user for unknown Yes/No, text, select, salary, external redirect, or submit verification decisions.",
+          "Do not tell the user to check the browser for normal form questions.",
+          "Only pause for manual_intervention on captcha, OTP, login, or security verification.",
           "If final submit is visible and all required fields are filled, set goal=final_submit and safeToSubmit=true.",
-          "If there is a recruiter question not answerable from CV/defaults/memory, return ask_user.",
-          "Prefer continuing through wizard steps if button text is Continue/Next/Lanjut/Selanjutnya/Review.",
+          "If there is a recruiter question not answerable from CV, campaign defaults, memory, or prior decisions, return ask_user.",
+          "Prefer Apply/Lamar, then Continue/Next/Lanjut/Selanjutnya, then final submit when safe.",
           "Do not treat Continue as final submit.",
           "Do not treat Submit Application as Continue.",
-          "All userFacingReason and userQuestion must be in Bahasa Indonesia.",
+          "All userFacingReason, userQuestion, suggestedAnswer, reason, and answerOptions must be in Bahasa Indonesia when applicable.",
         ].join(" "),
       },
       {
@@ -249,11 +273,15 @@ export async function planUiNextActions(input: UiPlannerInput): Promise<UiAction
               safeToSubmit: "boolean",
               needsUserInput: "boolean",
               userQuestion: "optional string Bahasa Indonesia",
+              suggestedAnswer: "optional string Bahasa Indonesia",
+              answerOptions: ["optional pilihan Bahasa Indonesia"],
+              reason: "optional string Bahasa Indonesia",
               actions: [
                 '{"type":"click","elementId":"ai-1","reason":"string"}',
                 '{"type":"fill","elementId":"ai-2","value":"string","reason":"string"}',
                 '{"type":"select","elementId":"ai-3","value":"string","reason":"string"}',
                 '{"type":"check","elementId":"ai-4","checked":true,"reason":"string"}',
+                '{"type":"choose_radio","elementId":"ai-5","value":"Ya","reason":"string"}',
               ],
             },
             safetyMode: input.safetyMode,

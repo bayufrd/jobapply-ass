@@ -88,19 +88,21 @@ function stepLabel(step: string | null | undefined) {
     case "scoring_job":
       return "Sedang menilai kecocokan lowongan";
     case "decision_required":
-      return "Menunggu keputusan low score";
-    case "calibrating_apply_flow":
-      return "Sedang kalibrasi alur lamar";
+      return "Menunggu keputusan user";
+    case "opening_job":
+      return "Membuka lowongan";
     case "starting_apply":
-      return "Sedang memulai proses lamar";
+      return "AI membaca form";
     case "question_required":
-      return "Menunggu jawaban Anda";
-    case "review_required":
-      return "Menunggu review submit";
+      return "Menunggu keputusan user";
+    case "submit_unverified":
+      return "Submit belum bisa diverifikasi";
     case "external_redirect":
-      return "Butuh tindakan manual pada lowongan eksternal";
+      return "Lowongan membuka website eksternal";
+    case "next_job":
+      return "Lanjut lowongan berikutnya";
     case "apply_unavailable_skipped":
-      return "Lowongan dilewati karena tombol lamar tidak ditemukan";
+      return "Lowongan dilewati dan lanjut ke lowongan berikutnya";
     case "too_many_unusable_jobs":
       return "Terlalu banyak lowongan tidak bisa dilamar";
     case "manual_intervention":
@@ -207,11 +209,15 @@ export function CampaignActions({
       }
       setResultMessage(data.message || "Autopilot diperbarui.");
       setResultTone(
-        data.status === "error" ? "error" : data.status === "paused" || data.status === "decision_required" || data.status === "question_required" || data.status === "review_required" ? "warning" : "success",
+        data.status === "error"
+          ? "error"
+          : data.status === "decision_required" || data.status === "question_required" || data.status === "manual_intervention_required" || data.status === "submit_unverified"
+            ? "warning"
+            : "success",
       );
       await fetchStatus();
 
-      const shouldAutoContinue = ["safe_continue", "submitted", "job_skipped_continue", "apply_unavailable_continue"].includes(data.status);
+      const shouldAutoContinue = ["submitted_continue", "skipped_continue", "search_continue", "safe_continue"].includes(data.status);
       if (options?.autoSequence && shouldAutoContinue && autoContinueCountRef.current < 50) {
         autoContinueCountRef.current += 1;
         const delay = 500 + Math.floor(Math.random() * 1000);
@@ -239,7 +245,7 @@ export function CampaignActions({
     }
   }
 
-  async function submitDecision(action: "apply" | "skip" | "skip_similar" | "ask_later") {
+  async function submitDecision(action: "apply" | "skip" | "skip_similar" | "ask_later" | "accept" | "reject" | "yes" | "no" | "edit_answer") {
     setLoadingAction(action);
     setResultMessage(null);
     try {
@@ -255,7 +261,17 @@ export function CampaignActions({
                 ? "User memilih selalu melewati kasus serupa di kampanye ini."
                 : action === "skip"
                   ? "User memilih melewati lowongan ini."
-                  : "User ingin memutuskan nanti.",
+                  : action === "accept"
+                    ? "User menerima saran AI."
+                    : action === "reject"
+                      ? "User menolak saran AI."
+                      : action === "yes"
+                        ? "User memilih Ya."
+                        : action === "no"
+                          ? "User memilih Tidak."
+                          : action === "edit_answer"
+                            ? "User ingin mengubah jawaban."
+                            : "User ingin memutuskan nanti.",
         }),
       });
       const data = await res.json();
@@ -315,7 +331,7 @@ export function CampaignActions({
             <p className="mt-2 text-2xl font-bold text-amber-300">{statusData?.counts.waitingForUserAnswer ?? 0}</p>
           </div>
           <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-            <p className="text-slate-400">Menunggu review submit</p>
+            <p className="text-slate-400">Submit belum diverifikasi</p>
             <p className="mt-2 text-2xl font-bold text-amber-300">{statusData?.counts.waitingForReviewSubmit ?? statusCounts.pendingReview}</p>
           </div>
           <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
@@ -409,48 +425,52 @@ export function CampaignActions({
 
       {latestDecision?.type === "low_score" && (
         <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6">
-          <h3 className="text-lg font-semibold text-amber-300">AI menyarankan lowongan ini dilewati</h3>
+          <h3 className="text-lg font-semibold text-amber-300">AI menyarankan lowongan ini kurang cocok.</h3>
           <div className="mt-3 space-y-2 text-sm text-slate-300">
             <p><span className="text-slate-400">Posisi:</span> {latestDecision.title}</p>
             <p><span className="text-slate-400">Perusahaan:</span> {latestDecision.company}</p>
             <p><span className="text-slate-400">Skor:</span> {latestDecision.score ?? "-"}</p>
             <p><span className="text-slate-400">Threshold:</span> {latestDecision.threshold ?? "-"}</p>
-            <p><span className="text-slate-400">Alasan AI:</span> {latestDecision.reason ?? "AI menyarankan lowongan ini dilewati."}</p>
+            <p><span className="text-slate-400">Alasan AI:</span> {latestDecision.reason ?? "AI menyarankan lowongan ini kurang cocok."}</p>
           </div>
           <div className="mt-4 flex flex-wrap gap-3">
-            <button onClick={() => submitDecision("apply")} disabled={loadingAction !== null} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50">Tetap Lamar</button>
-            <button onClick={() => submitDecision("skip")} disabled={loadingAction !== null} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50">Lewati</button>
-            <button onClick={() => submitDecision("skip_similar")} disabled={loadingAction !== null} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">Selalu Lewati Kasus Serupa di Kampanye Ini</button>
-            <button onClick={() => submitDecision("ask_later")} disabled={loadingAction !== null} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50">Tanya Lagi Nanti</button>
+            <button onClick={() => submitDecision("apply")} disabled={loadingAction !== null} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50">Apply Anyway</button>
+            <button onClick={() => submitDecision("skip")} disabled={loadingAction !== null} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50">Skip</button>
+            <button onClick={() => submitDecision("skip_similar")} disabled={loadingAction !== null} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">Always Skip Similar in This Campaign</button>
           </div>
         </section>
       )}
 
       {latestDecision?.type === "question_required" && (
-        <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6">
-          <h3 className="text-lg font-semibold text-amber-300">Pertanyaan memerlukan jawaban Anda</h3>
-          <p className="mt-2 text-sm text-slate-300">{latestDecision.question ?? latestDecision.message ?? "Autopilot menunggu jawaban user sebelum melanjutkan."}</p>
-          {latestDecision.applicationId && (
-            <div className="mt-4">
-              <Link href={`/applications/${latestDecision.applicationId}/review`} className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20">
-                Buka Review untuk Menjawab
-              </Link>
-            </div>
-          )}
+        <section className="rounded-2xl border border-cyan-500/30 bg-cyan-500/5 p-6">
+          <h3 className="text-lg font-semibold text-cyan-300">Pertanyaan tambahan ditemukan</h3>
+          <p className="mt-2 text-sm text-slate-300">{latestDecision.question ?? latestDecision.message ?? "Pilih jawaban untuk melanjutkan."}</p>
+          <p className="mt-2 text-sm text-slate-400">AI tidak yakin dengan jawaban ini. Terima atau ubah jawaban.</p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button onClick={() => submitDecision("accept")} disabled={loadingAction !== null} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50">Accept</button>
+            <button onClick={() => submitDecision("reject")} disabled={loadingAction !== null} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50">Reject</button>
+            <button onClick={() => submitDecision("yes")} disabled={loadingAction !== null} className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-50">Yes</button>
+            <button onClick={() => submitDecision("no")} disabled={loadingAction !== null} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50">No</button>
+            <button onClick={() => submitDecision("edit_answer")} disabled={loadingAction !== null} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">Edit Answer</button>
+            <button onClick={() => submitDecision("skip")} disabled={loadingAction !== null} className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50">Skip Job</button>
+          </div>
         </section>
       )}
 
-      {latestDecision?.type === "review_required" && (
-        <section className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-6">
-          <h3 className="text-lg font-semibold text-cyan-300">Menunggu review submit</h3>
-          <p className="mt-2 text-sm text-slate-300">Lamaran sudah siap direview. Submit hanya dilakukan saat aman dan sesuai mode kampanye.</p>
-          {latestDecision.applicationId && (
-            <div className="mt-4">
-              <Link href={`/applications/${latestDecision.applicationId}/review`} className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20">
-                Buka Review Submit
+      {latestDecision?.type === "submit_unverified" && (
+        <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6">
+          <h3 className="text-lg font-semibold text-amber-300">Submit belum bisa diverifikasi</h3>
+          <p className="mt-2 text-sm text-slate-300">{latestDecision.message ?? "Submit belum bisa diverifikasi."}</p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button onClick={() => submitDecision("accept")} disabled={loadingAction !== null} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50">Accept as Submitted</button>
+            <button onClick={() => runAutopilot("continue", { autoSequence: true, resetCounter: true })} disabled={loadingAction !== null} className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-50">Retry Verification</button>
+            <button onClick={() => submitDecision("skip")} disabled={loadingAction !== null} className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50">Skip Job</button>
+            {latestDecision.applicationId && (
+              <Link href={`/applications/${latestDecision.applicationId}/review`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
+                Open Browser
               </Link>
-            </div>
-          )}
+            )}
+          </div>
         </section>
       )}
 

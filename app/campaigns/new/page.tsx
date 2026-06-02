@@ -18,7 +18,7 @@ const defaults = [
   ["Gaji Saat Ini", "Dari ENV bila kosong"],
   ["Waktu Mulai Kerja", "Dari ENV bila kosong"],
   ["Ketersediaan", "Dari ENV bila kosong"],
-  ["Mode Pengiriman Lamaran", "Review manual atau Auto Submit Aman"],
+  ["Mode Pengiriman Lamaran", "Auto Submit Aman"],
 ];
 
 export default function NewCampaignPage() {
@@ -58,7 +58,7 @@ export default function NewCampaignPage() {
       automationMode: String(formData.get("automationMode") || "auto_submit_safe_only") as
         | "review_each_application"
         | "auto_submit_safe_only",
-      formAutomationMode: String(formData.get("formAutomationMode") || "ai_fallback") as
+      formAutomationMode: String(formData.get("formAutomationMode") || "ai_first") as
         | "deterministic_first"
         | "ai_fallback"
         | "ai_first",
@@ -95,7 +95,7 @@ export default function NewCampaignPage() {
   return (
     <AppShell
       title="Buat Kampanye"
-      description="Simpan kampanye baru ke SQLite. Field default yang dikosongkan akan memakai nilai dari ENV."
+      description="Simpan kampanye baru ke SQLite. Autopilot akan mencari lowongan, melamar, mengisi form, dan submit otomatis jika aman. Jika ada pertanyaan yang tidak pasti, sistem hanya akan meminta Anda memilih Accept/Reject/Yes/No dari halaman kampanye."
       actions={
         <Link
           href="/campaigns"
@@ -155,8 +155,8 @@ export default function NewCampaignPage() {
                 <div className="flex items-start gap-3">
                   <input type="radio" name="automationMode" value="auto_submit_safe_only" defaultChecked className="mt-1" />
                   <div>
-                    <p className="font-medium text-cyan-200">Auto Submit Aman</p>
-                    <p className="mt-1 text-sm text-slate-300">Sistem langsung klik Submit Application jika tidak ada captcha, pertanyaan baru, external redirect, atau kondisi yang meragukan.</p>
+                    <p className="font-medium text-cyan-200">Jalankan Kampanye Autopilot</p>
+                    <p className="mt-1 text-sm text-slate-300">Sistem akan mencari lowongan, membuka lowongan, melamar, mengisi form, menekan lanjut, lalu submit otomatis jika aman tanpa kalibrasi manual.</p>
                   </div>
                 </div>
               </label>
@@ -165,23 +165,23 @@ export default function NewCampaignPage() {
                   <input type="radio" name="automationMode" value="review_each_application" className="mt-1" />
                   <div>
                     <p className="font-medium text-white">Review Setiap Lamaran</p>
-                    <p className="mt-1 text-sm text-slate-400">Sistem mengisi form, lalu berhenti sebelum submit untuk dicek manual.</p>
+                    <p className="mt-1 text-sm text-slate-400">Sistem tetap bisa berhenti sebelum submit final untuk mode manual, tetapi ini bukan jalur utama Autopilot.</p>
                   </div>
                 </div>
               </label>
               <input type="hidden" name="submitMode" value="assisted_auto_apply" />
               <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
-                Mode ini akan submit otomatis hanya jika aman. Jika ada captcha, pertanyaan baru, external redirect, atau submit tidak bisa diverifikasi, kampanye akan dijeda.
+                Browser tetap terlihat. Sistem hanya akan meminta interaksi manual untuk captcha, OTP, login, atau verifikasi keamanan. Pertanyaan form normal akan muncul di halaman kampanye.
               </p>
             </div>
             <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">
               <span>Mode Pengisian Form</span>
-              <select name="formAutomationMode" defaultValue="ai_fallback" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3">
-                <option value="deterministic_first">Cepat & Stabil</option>
+              <select name="formAutomationMode" defaultValue="ai_first" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3">
+                <option value="ai_first">AI First - paling fleksibel untuk Jobstreet</option>
                 <option value="ai_fallback">AI Fallback</option>
-                <option value="ai_first">AI First</option>
+                <option value="deterministic_first">Deterministic First</option>
               </select>
-              <p className="text-xs text-slate-400">AI Fallback: Sistem memakai rule cepat dulu, lalu AI membaca tampilan jika stuck. AI First: AI membaca tampilan form dari awal. Lebih fleksibel tapi lebih lambat dan memakai lebih banyak token.</p>
+              <p className="text-xs text-slate-400">Default kampanye baru memakai AI First agar form Jobstreet dibaca dan diisi langsung oleh AI sejak awal.</p>
             </label>
             <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">
               <span>Perilaku untuk Skor Rendah</span>
@@ -217,7 +217,7 @@ export default function NewCampaignPage() {
             ))}
           </div>
           <div className="mt-4 rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-4 text-sm text-cyan-100">
-            Pencarian Jobstreet, AI scoring, dan Auto Submit Aman kini tersedia dengan browser tetap terlihat dan tanpa bypass captcha.
+            Pencarian Jobstreet, AI scoring, AI First form filling, dan Auto Submit Aman tersedia dengan browser tetap terlihat, tanpa bypass captcha, tanpa stealth automation, dan tanpa proxy rotation.
           </div>
         </section>
       </div>

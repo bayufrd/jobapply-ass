@@ -11,8 +11,13 @@ import {
 
 export type AutopilotAction =
   | "safe_continue"
+  | "search_continue"
+  | "submitted_continue"
+  | "skipped_continue"
   | "decision_required"
   | "question_required"
+  | "manual_intervention_required"
+  | "submit_unverified"
   | "review_required"
   | "paused"
   | "completed"
@@ -29,7 +34,7 @@ export type AutopilotRunResult = {
 };
 
 type DecisionInput = {
-  action: "apply" | "skip" | "skip_similar" | "ask_later";
+  action: "apply" | "skip" | "skip_similar" | "ask_later" | "accept" | "reject" | "yes" | "no" | "edit_answer";
   reason?: string;
 };
 
@@ -302,7 +307,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
   const searchState = await ensureJobsExist(campaignId);
   if (searchState.paused) {
     return {
-      status: "paused",
+      status: "manual_intervention_required",
       message: searchState.message ?? "Autopilot dijeda.",
       campaignId,
       currentStep: "manual_intervention",
@@ -323,7 +328,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         currentJobId: null,
       });
       return {
-        status: "paused",
+        status: "completed",
         message: "Tidak ada lowongan lagi yang bisa diproses saat ini.",
         campaignId,
         currentStep: "no_jobs_remaining",
@@ -396,7 +401,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
 
         return {
           status: "decision_required",
-          message: "AI menyarankan lowongan ini dilewati. Menunggu keputusan Anda.",
+          message: "AI menyarankan lowongan ini kurang cocok.",
           campaignId,
           currentStep: "decision_required",
           currentJobId: job.id,
@@ -411,8 +416,16 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     });
 
     await setCampaignRuntimeState(campaignId, {
-      currentStep: "starting_apply",
+      currentStep: "opening_job",
       currentJobId: job.id,
+    });
+
+    await writeAutomationLog({
+      campaignId,
+      jobListingId: job.id,
+      event: "campaign.autopilot_processing_job",
+      message: `Memproses lowongan ${job.title} di ${job.company}.`,
+      metadata: { jobId: job.id },
     });
 
     const profile = await getLatestProfile();
@@ -469,8 +482,8 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       await writeAutomationLog({
         campaignId,
         jobListingId: job.id,
-        event: "campaign.autopilot_job_submitted",
-        message: "Lamaran berhasil dikirim dan diverifikasi. Autopilot melanjutkan ke lowongan berikutnya.",
+        event: "campaign.autopilot_next_job",
+        message: "Submit berhasil diverifikasi. Lanjut lowongan berikutnya.",
         metadata: { applicationId: applyResult.applicationId ?? null },
       });
 
@@ -500,7 +513,21 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         };
       }
 
-      continue;
+      await setCampaignRuntimeState(campaignId, {
+        status: "running",
+        currentStep: "next_job",
+        decisionStatus: null,
+        decisionPayloadJson: null,
+      });
+
+      return {
+        status: "submitted_continue",
+        message: "Lamaran berhasil dikirim. Lanjut lowongan berikutnya.",
+        campaignId,
+        currentStep: "next_job",
+        currentJobId: job.id,
+        applicationId: applyResult.applicationId,
+      };
     }
 
     if (applyResult.status === "paused") {
@@ -541,10 +568,12 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       });
 
       return {
-        status: pendingQuestion ? "question_required" : "paused",
+        status: pendingQuestion ? "question_required" : inferredDecisionStatus === "manual_intervention"
+          ? "manual_intervention_required"
+          : "submit_unverified",
         message: applyResult.message,
         campaignId,
-        currentStep: pendingQuestion ? "question_required" : "apply_paused",
+        currentStep: pendingQuestion ? "question_required" : inferredDecisionStatus === "manual_intervention" ? "manual_intervention" : "submit_unverified",
         currentJobId: job.id,
         applicationId: application?.id,
       };
@@ -569,29 +598,35 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       await writeAutomationLog({
         campaignId,
         jobListingId: job.id,
-        event: "campaign.autopilot_continue_next_job",
-        message: "Autopilot melanjutkan ke lowongan berikutnya setelah lowongan ini tidak bisa dilamar.",
+        event: "campaign.autopilot_next_job",
+        message: "Lowongan dilewati. Lanjut lowongan berikutnya.",
       });
 
       await setCampaignRuntimeState(campaignId, {
         status: "running",
-        currentStep: "apply_unavailable_skipped",
+        currentStep: "next_job",
         currentJobId: job.id,
         decisionStatus: null,
         decisionPayloadJson: null,
       });
 
       consecutiveUnavailableJobs += 1;
-      continue;
+      return {
+        status: "skipped_continue",
+        message: "Lowongan dilewati. Lanjut lowongan berikutnya.",
+        campaignId,
+        currentStep: "next_job",
+        currentJobId: job.id,
+      };
     }
 
     if (applyResult.status === "pending_review") {
       await setCampaignRuntimeState(campaignId, {
         status: "paused",
-        currentStep: "review_required",
-        decisionStatus: "review_required",
+        currentStep: "submit_unverified",
+        decisionStatus: "submit_unverified",
         decisionPayloadJson: JSON.stringify({
-          type: "review_required",
+          type: "submit_unverified",
           applicationId: applyResult.applicationId ?? null,
           message: applyResult.message,
         }),
@@ -599,10 +634,10 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       });
 
       return {
-        status: "review_required",
+        status: "submit_unverified",
         message: applyResult.message,
         campaignId,
-        currentStep: "review_required",
+        currentStep: "submit_unverified",
         currentJobId: job.id,
         applicationId: applyResult.applicationId,
       };
@@ -610,7 +645,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
 
     await prisma.jobListing.update({ where: { id: job.id }, data: { status: "failed" } });
     return {
-      status: "paused",
+      status: "error",
       message: applyResult.message,
       campaignId,
       currentStep: "apply_failed",
@@ -627,8 +662,8 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
   });
 
   return {
-    status: "paused",
-    message: `Autopilot dijeda setelah ${maxConsecutiveUnavailableJobs} lowongan beruntun tidak bisa dilamar otomatis. Periksa browser atau jalankan pencarian baru.`,
+    status: "completed",
+    message: `Autopilot berhenti setelah ${maxConsecutiveUnavailableJobs} lowongan beruntun tidak bisa dilamar otomatis.`,
     campaignId,
     currentStep: "too_many_unusable_jobs",
   };
