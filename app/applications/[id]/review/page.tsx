@@ -336,6 +336,13 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
             </div>
           )}
 
+          {application.status === "submitted" && application.notes?.includes("Auto Submit Aman") && (
+            <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
+              <p className="font-medium">Lamaran dikirim otomatis oleh mode Auto Submit Aman.</p>
+              <p className="mt-1 text-emerald-100">Screenshot setelah submit ditampilkan di bawah untuk verifikasi manual bila diperlukan.</p>
+            </div>
+          )}
+
           {/* Warning for paused/manual intervention */}
           {application.status === "paused" && (
             <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
@@ -348,7 +355,9 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
           {/* Screenshot preview */}
           {application.screenshotPath && (
             <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950 p-3">
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Screenshot</p>
+              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                {application.status === "submitted" ? "Screenshot Setelah Submit" : "Screenshot"}
+              </p>
               <p className="mt-1 text-sm text-slate-400 break-all">{application.screenshotPath}</p>
             </div>
           )}
@@ -477,7 +486,9 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
             {canSubmit
               ? 'Klik "Setujui dan Kirim" untuk mengirim lamaran. Browser akan terbuka dan tombol submit final hanya akan dianggap berhasil jika sistem bisa memverifikasi konfirmasi terkirim.'
               : application.status === "submitted"
-                ? "Lamaran sudah berhasil dikirim."
+                ? application.notes?.includes("Auto Submit Aman")
+                  ? "Lamaran sudah berhasil dikirim otomatis dan diverifikasi oleh Auto Submit Aman."
+                  : "Lamaran sudah berhasil dikirim."
                 : application.status === "paused"
                   ? "Submit belum terverifikasi penuh. Periksa browser dan review ulang sebelum melanjutkan."
                   : application.status === "failed"

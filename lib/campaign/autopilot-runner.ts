@@ -219,13 +219,17 @@ async function hasRecentApplyUnavailableLog(campaignId: string, jobId: string) {
 }
 
 async function findMatchingLowScoreRule(campaignId: string, jobTitle: string) {
-  const rules = await prisma.campaignDecisionRule.findMany({
+  const rules = await (prisma as unknown as {
+    campaignDecisionRule: {
+      findMany: (args: unknown) => Promise<Array<{ patternText: string; action: string }>>;
+    };
+  }).campaignDecisionRule.findMany({
     where: { campaignId, type: "low_score" },
     orderBy: { createdAt: "desc" },
   });
 
   const normalizedTitle = normalizePattern(jobTitle);
-  return rules.find((rule) => normalizedTitle.includes(normalizePattern(rule.patternText)));
+  return rules.find((rule: { patternText: string }) => normalizedTitle.includes(normalizePattern(rule.patternText)));
 }
 
 export async function runCampaignAutopilot(campaignId: string): Promise<AutopilotRunResult> {
@@ -320,13 +324,21 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         continue;
       }
 
-      if (campaign.lowScoreMode === "auto_skip") {
+      if (job.campaign.lowScoreMode === "auto_skip") {
         await prisma.jobListing.update({ where: { id: job.id }, data: { status: "skipped" } });
         consecutiveSkippableFailures += 1;
         continue;
       }
 
-      const decisionPayload = {
+      if (job.campaign.lowScoreMode === "auto_apply") {
+        await writeAutomationLog({
+          campaignId,
+          jobListingId: job.id,
+          event: "campaign.autopilot_low_score_auto_apply",
+          message: `Lowongan tetap diproses walau skor ${score} di bawah threshold ${threshold} sesuai mode kampanye.`,
+        });
+      } else {
+        const decisionPayload = {
         type: "low_score",
         campaignId,
         jobId: job.id,
@@ -337,24 +349,25 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         reason: job.matchReason ?? "AI menyarankan lowongan ini dilewati.",
       };
 
-      await setCampaignRuntimeState(campaignId, {
-        status: "paused",
-        currentStep: "decision_required",
-        decisionStatus: "low_score",
-        decisionPayloadJson: JSON.stringify(decisionPayload),
-        currentJobId: job.id,
-        currentJobTitle: job.title,
-        currentJobCompany: job.company,
-      });
+        await setCampaignRuntimeState(campaignId, {
+          status: "paused",
+          currentStep: "decision_required",
+          decisionStatus: "low_score",
+          decisionPayloadJson: JSON.stringify(decisionPayload),
+          currentJobId: job.id,
+          currentJobTitle: job.title,
+          currentJobCompany: job.company,
+        });
 
-      return {
-        status: "decision_required",
-        message: "AI menyarankan lowongan ini dilewati. Menunggu keputusan Anda.",
-        campaignId,
-        currentStep: "decision_required",
-        currentJobId: job.id,
-        decisionRequired: decisionPayload,
-      };
+        return {
+          status: "decision_required",
+          message: "AI menyarankan lowongan ini dilewati. Menunggu keputusan Anda.",
+          campaignId,
+          currentStep: "decision_required",
+          currentJobId: job.id,
+          decisionRequired: decisionPayload,
+        };
+      }
     }
 
     await setCampaignRuntimeState(campaignId, {
@@ -362,7 +375,11 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       currentJobId: job.id,
     });
 
-    const calibration = await prisma.applicationCalibration.findFirst({
+    const calibration = await (prisma as unknown as {
+      applicationCalibration: {
+        findFirst: (args: unknown) => Promise<{ status: string } | null>;
+      };
+    }).applicationCalibration.findFirst({
       where: { jobListingId: job.id },
       orderBy: { createdAt: "desc" },
     });
@@ -392,7 +409,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
 
       if (calibrationResult.status === "failed") {
         if (calibrationResult.message.includes("Tombol lamar tidak ditemukan")) {
-          await prisma.jobListing.update({ where: { id: job.id }, data: { status: "apply_unavailable" } });
+          await prisma.jobListing.update({ where: { id: job.id }, data: { status: "apply_unavailable" as never } });
 
           const alreadyLogged = await hasRecentApplyUnavailableLog(campaignId, job.id);
           if (!alreadyLogged) {
@@ -477,6 +494,9 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         id: job.campaign.id,
         name: job.campaign.name,
         submitMode: job.campaign.submitMode,
+        automationMode: (job.campaign as typeof job.campaign & { automationMode?: string }).automationMode,
+        autoSubmitSafeOnly: (job.campaign as typeof job.campaign & { autoSubmitSafeOnly?: boolean }).autoSubmitSafeOnly,
+        lowScoreMode: (job.campaign as typeof job.campaign & { lowScoreMode?: string }).lowScoreMode,
         defaultCurrentSalary: job.campaign.defaultCurrentSalary,
         defaultExpectedSalary: job.campaign.defaultExpectedSalary,
         defaultNoticePeriod: job.campaign.defaultNoticePeriod,
@@ -495,7 +515,50 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         projectsJson: profile.projectsJson ?? "[]",
         certificationsJson: profile.certificationsJson ?? "[]",
       },
+      submitMode:
+        (job.campaign as typeof job.campaign & { autoSubmitSafeOnly?: boolean; automationMode?: string }).autoSubmitSafeOnly
+        || (job.campaign as typeof job.campaign & { autoSubmitSafeOnly?: boolean; automationMode?: string }).automationMode === "auto_submit_safe_only"
+          ? "auto_submit_safe_only"
+          : "review_each_application",
     });
+
+    if (applyResult.status === "submitted") {
+      await writeAutomationLog({
+        campaignId,
+        jobListingId: job.id,
+        event: "campaign.autopilot_job_submitted",
+        message: "Lamaran berhasil dikirim dan diverifikasi. Autopilot melanjutkan ke lowongan berikutnya.",
+        metadata: { applicationId: applyResult.applicationId ?? null },
+      });
+
+      consecutiveSkippableFailures = 0;
+
+      const refreshedCampaign = await prisma.campaign.findUnique({
+        where: { id: campaignId },
+        select: { appliedCount: true, targetApplyCount: true },
+      });
+
+      if (refreshedCampaign && refreshedCampaign.appliedCount >= refreshedCampaign.targetApplyCount) {
+        await setCampaignRuntimeState(campaignId, {
+          status: "completed",
+          currentStep: "target_reached",
+          decisionStatus: null,
+          decisionPayloadJson: null,
+          currentJobId: null,
+          currentQuestion: null,
+        });
+        return {
+          status: "completed",
+          message: "Target lamaran tercapai.",
+          campaignId,
+          currentStep: "target_reached",
+          currentJobId: job.id,
+          applicationId: applyResult.applicationId,
+        };
+      }
+
+      continue;
+    }
 
     if (applyResult.status === "paused") {
       const application = applyResult.applicationId
@@ -580,7 +643,7 @@ export async function applyAutopilotDecision(campaignId: string, input: Decision
     throw new Error("Kampanye tidak ditemukan.");
   }
 
-  const payload = parseJson<Record<string, unknown> | null>(campaign.decisionPayloadJson, null);
+  const payload = parseJson<Record<string, unknown> | null>((campaign as typeof campaign & { decisionPayloadJson?: string | null }).decisionPayloadJson, null);
   const jobId = typeof payload?.jobId === "string" ? payload.jobId : null;
 
   if (!jobId) {
@@ -593,7 +656,11 @@ export async function applyAutopilotDecision(campaignId: string, input: Decision
     if (input.action === "skip_similar") {
       const job = await prisma.jobListing.findUnique({ where: { id: jobId } });
       if (job) {
-        await prisma.campaignDecisionRule.create({
+        await (prisma as unknown as {
+          campaignDecisionRule: {
+            create: (args: unknown) => Promise<unknown>;
+          };
+        }).campaignDecisionRule.create({
           data: {
             campaignId,
             type: "low_score",

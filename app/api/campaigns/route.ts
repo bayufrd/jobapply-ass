@@ -24,7 +24,7 @@ export async function POST(request: Request) {
       defaultAvailability?: string;
       submitMode?: "assisted_auto_apply" | "manual_review_only";
       automationMode?: "review_each_application" | "auto_submit_safe_only";
-      lowScoreMode?: "ask" | "auto_skip";
+      lowScoreMode?: "ask" | "auto_skip" | "auto_apply";
       autoSubmitSafeOnly?: boolean;
     };
 
@@ -44,11 +44,30 @@ export async function POST(request: Request) {
         defaultExpectedSalary: body.defaultExpectedSalary ?? Number(process.env.DEFAULT_EXPECTED_SALARY ?? 6000000),
         defaultNoticePeriod: body.defaultNoticePeriod ?? process.env.DEFAULT_NOTICE_PERIOD ?? "ASAP",
         defaultAvailability: body.defaultAvailability ?? process.env.DEFAULT_AVAILABILITY ?? "Immediate",
-        submitMode: body.submitMode ?? "assisted_auto_apply",
+        submitMode:
+          body.automationMode === "auto_submit_safe_only"
+            ? "assisted_auto_apply"
+            : (body.submitMode ?? "manual_review_only"),
+        status: "ready",
         automationMode: body.automationMode ?? "review_each_application",
         lowScoreMode: body.lowScoreMode ?? "ask",
-        autoSubmitSafeOnly: body.autoSubmitSafeOnly ?? false,
-        status: "ready",
+        autoSubmitSafeOnly: body.autoSubmitSafeOnly ?? body.automationMode === "auto_submit_safe_only",
+      } as {
+        name: string;
+        keyword: string;
+        location: string | null;
+        targetApplyCount: number;
+        matchThreshold: number;
+        workModePreference: string | null;
+        defaultCurrentSalary: number;
+        defaultExpectedSalary: number;
+        defaultNoticePeriod: string;
+        defaultAvailability: string;
+        submitMode: "assisted_auto_apply" | "manual_review_only";
+        status: "ready";
+        automationMode: string;
+        lowScoreMode: string;
+        autoSubmitSafeOnly: boolean;
       },
     });
 

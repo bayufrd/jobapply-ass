@@ -153,6 +153,27 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
               <p className="text-slate-400">Batas Skor Match</p>
               <p className="mt-2 text-white">{campaign.matchThreshold}%</p>
             </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+              <p className="text-slate-400">Mode</p>
+              <p className="mt-2 text-white">
+                {campaign.automationMode === "auto_submit_safe_only" ? "Auto Submit Aman" : "Review Setiap Lamaran"}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {campaign.automationMode === "auto_submit_safe_only"
+                  ? "Sistem akan submit otomatis hanya jika aman."
+                  : "Sistem berhenti sebelum submit untuk dicek manual."}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+              <p className="text-slate-400">Skor Rendah</p>
+              <p className="mt-2 text-white">
+                {campaign.lowScoreMode === "auto_skip"
+                  ? "Lewati otomatis"
+                  : campaign.lowScoreMode === "auto_apply"
+                    ? "Tetap lamar otomatis"
+                    : "Tanya saya dulu"}
+              </p>
+            </div>
           </div>
 
           {jobsCount > 0 && (

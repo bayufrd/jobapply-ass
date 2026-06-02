@@ -31,10 +31,15 @@ type JobListingData = {
   status: string;
 };
 
+type SubmitModeStrategy = "review_each_application" | "auto_submit_safe_only";
+
 type CampaignData = {
   id: string;
   name: string;
   submitMode: string;
+  automationMode?: string;
+  autoSubmitSafeOnly?: boolean;
+  lowScoreMode?: string;
   defaultCurrentSalary: number;
   defaultExpectedSalary: number;
   defaultNoticePeriod: string;
@@ -56,10 +61,11 @@ type ProfileData = {
 };
 
 type ApplyResult = {
-  status: "pending_review" | "paused" | "failed";
+  status: "submitted" | "pending_review" | "paused" | "failed" | "apply_unavailable";
   message: string;
   applicationId?: string;
   error?: string;
+  screenshotPath?: string;
 };
 
 type SubmitResult = {
@@ -73,11 +79,8 @@ type SubmitResult = {
 const ALLOWED_SUBMIT_LABELS = [
   "submit application",
   "kirim lamaran",
-  "application submit",
   "send application",
   "submit",
-  "kirim",
-  "lamar",
 ];
 
 // Labels that should NOT be clicked as submit (navigation/search/save)
@@ -134,6 +137,13 @@ type AnswersJson = {
     question: string;
     reason: string;
   }>;
+};
+
+type FinalSubmitCandidate = {
+  locator: string;
+  text: string;
+  confidence: "high" | "medium" | "low";
+  reason: string;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -225,19 +235,155 @@ async function checkAndHandleIntervention(
   return null;
 }
 
-// ── Main ───────────────────────────────────────────────────────────────
+function resolveSubmitMode(campaign: CampaignData, submitMode?: SubmitModeStrategy): SubmitModeStrategy {
+  if (submitMode) return submitMode;
+  if (campaign.autoSubmitSafeOnly || campaign.automationMode === "auto_submit_safe_only") {
+    return "auto_submit_safe_only";
+  }
+  return "review_each_application";
+}
 
-export async function startJobApplication({
+async function verifySubmitSuccess(page: Page) {
+  await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
+  await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+  await page.waitForTimeout(2500);
+
+  const pageText = (await page.textContent("body").catch(() => ""))?.toLowerCase() ?? "";
+  const submitSuccessDetected = SUBMIT_SUCCESS_MARKERS.some((marker) => pageText.includes(marker));
+  const submitButtonStillVisible = await page
+    .locator("button, input[type='submit'], input[type='button'], a[role='button']")
+    .evaluateAll((elements, labels) =>
+      elements.some((el) => {
+        const text = ((el.textContent || (el as HTMLInputElement).value || "").trim().toLowerCase());
+        const visible = !(el as HTMLElement).hasAttribute("disabled")
+          && ((el as HTMLElement).offsetParent !== null || getComputedStyle(el as HTMLElement).position === "fixed");
+        return visible && (labels as string[]).some((label) => text === label || text.includes(label));
+      }),
+      ALLOWED_SUBMIT_LABELS,
+    )
+    .catch(() => false);
+
+  return {
+    submitSuccessDetected,
+    submitButtonStillVisible,
+    visibleConfirmationText: pageText.slice(0, 2000),
+    currentUrl: page.url(),
+  };
+}
+
+async function findFinalSubmitButton(page: Page): Promise<FinalSubmitCandidate | null> {
+  const reviewAreaSelectors = [
+    "form",
+    "main form",
+    "[role='form']",
+    "[data-automation*='review' i]",
+    "[data-automation*='application' i]",
+    "[class*='review' i]",
+    "[class*='application' i]",
+  ];
+
+  const candidates: FinalSubmitCandidate[] = [];
+
+  for (const area of reviewAreaSelectors) {
+    for (const selector of ["button", "button[type='submit']", "input[type='submit']", "input[type='button']", "a[role='button']"]) {
+      const scopedSelector = `${area} ${selector}`;
+      try {
+        const elements = page.locator(scopedSelector);
+        const count = await elements.count();
+        for (let i = 0; i < Math.min(count, 20); i++) {
+          const el = elements.nth(i);
+          if (!(await el.isVisible()).valueOf()) continue;
+          if ((await el.isDisabled().catch(() => false)).valueOf()) continue;
+
+          const text = (((await el.textContent()) ?? (await el.getAttribute("value")) ?? "").trim());
+          const normalizedText = text.toLowerCase();
+          if (!text) continue;
+          if (BLOCKED_SUBMIT_LABELS.some((label) => normalizedText === label || normalizedText.includes(label))) continue;
+
+          const isExactAllowed = ALLOWED_SUBMIT_LABELS.some((label) => normalizedText === label);
+          const containsAllowed = ALLOWED_SUBMIT_LABELS.some((label) => normalizedText.includes(label));
+          const isSubmitType = (await el.getAttribute("type").catch(() => null))?.toLowerCase() === "submit";
+
+          if (isExactAllowed && ["submit application", "kirim lamaran", "submit", "send application"].includes(normalizedText)) {
+            return {
+              locator: scopedSelector,
+              text,
+              confidence: "high",
+              reason: "Label submit final cocok persis di area review/form.",
+            };
+          }
+
+          if (isSubmitType && containsAllowed) {
+            candidates.push({
+              locator: scopedSelector,
+              text,
+              confidence: "high",
+              reason: "Button type submit ditemukan di area review/application dengan label submit yang sesuai.",
+            });
+            continue;
+          }
+
+          if (containsAllowed) {
+            candidates.push({
+              locator: scopedSelector,
+              text,
+              confidence: "medium",
+              reason: "Label mengandung kata submit tetapi tidak cukup spesifik untuk auto-submit.",
+            });
+          }
+        }
+      } catch {
+        // ignore candidate read errors
+      }
+    }
+  }
+
+  return candidates.find((candidate) => candidate.confidence === "high")
+    ?? candidates[0]
+    ?? null;
+}
+
+async function hasUnresolvedRequiredFields(page: Page, filledFields: FilledField[]) {
+  const filledValueSet = new Set(
+    filledFields
+      .filter((field) => field.filled && field.value.trim())
+      .map((field) => normalizeQuestion(field.label)),
+  );
+
+  const empties = await page.locator("input, textarea, select").evaluateAll((elements) =>
+    elements
+      .map((el) => {
+        const input = el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+        const required = input.required || input.getAttribute("aria-required") === "true";
+        const disabled = input.hasAttribute("disabled");
+        const hidden = (input as HTMLElement).offsetParent === null;
+        const value = (input.value || "").trim();
+        const label = input.getAttribute("aria-label")
+          || input.getAttribute("placeholder")
+          || input.getAttribute("name")
+          || input.id
+          || input.tagName.toLowerCase();
+        return { required, disabled, hidden, value, label };
+      })
+      .filter((item) => item.required && !item.disabled && !item.hidden && !item.value),
+  ).catch(() => [] as Array<{ label: string }>);
+
+  return empties.filter((item) => !filledValueSet.has(normalizeQuestion(item.label)));
+}
+
+async function runJobstreetApplyWizard({
+  page,
   jobListing,
   campaign,
   profile,
+  submitMode,
 }: {
+  page: Page;
   jobListing: JobListingData;
   campaign: CampaignData;
   profile: ProfileData;
+  submitMode: SubmitModeStrategy;
 }): Promise<ApplyResult> {
-  const session = await launchManagedBrowser();
-  const page = session.page;
   let applicationId: string | null = null;
 
   try {
@@ -486,80 +632,277 @@ export async function startJobApplication({
       }
     }
 
-    // Step 10: Detect submit button and STOP before clicking
-    const submitSelector = await detectSubmitButton(page);
+    // Step 10: Detect final submit state
+    const genericSubmitSelector = await detectSubmitButton(page);
+    const finalSubmitCandidate = await findFinalSubmitButton(page);
     const hasPendingQuestions = pendingQuestions.length > 0;
-    const reachedFinalReview = Boolean(submitSelector);
-
-    // Step 11: Determine status
+    const reachedFinalReview = Boolean(genericSubmitSelector || finalSubmitCandidate);
     const answersJson: AnswersJson = {
       fieldsFilled: filledFields,
       questionAnswers,
       pendingQuestions,
     };
 
-    let appStatus: "pending_review" | "paused";
-    let notes: string;
+    if (!jobListing.url.includes("jobstreet") && !jobListing.url.includes("jobsdb")) {
+      const app = await prisma.application.create({
+        data: {
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          status: "paused",
+          submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
+          notes: "Flow eksternal terdeteksi. Auto Submit Aman hanya berlaku untuk flow internal Jobstreet.",
+          answersJson: JSON.stringify(answersJson),
+        },
+      });
+      applicationId = app.id;
+      await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "applying" } });
+      return {
+        status: "paused",
+        message: "Flow eksternal terdeteksi. Kampanye dijeda dan tidak melakukan submit otomatis.",
+        applicationId: app.id,
+      };
+    }
 
     if (hasPendingQuestions) {
-      appStatus = "paused";
-      notes = `Ada ${pendingQuestions.length} pertanyaan yang memerlukan input user. ${filledCount} field berhasil diisi.`;
-    } else if (!reachedFinalReview) {
-      appStatus = "paused";
-      notes = `Form lamaran belum mencapai halaman review final Jobstreet. ${filledCount} field diisi, ${questionAnswers.length} pertanyaan dijawab. Lanjutkan sampai tombol Submit application terlihat.`;
-    } else {
-      appStatus = "pending_review";
-      notes = `Form lamaran sudah mencapai halaman review final. ${filledCount} field diisi, ${questionAnswers.length} pertanyaan dijawab. Menunggu review user.`;
+      const app = await prisma.application.create({
+        data: {
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          status: "paused",
+          submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
+          notes: `Ada ${pendingQuestions.length} pertanyaan yang memerlukan input user. ${filledCount} field berhasil diisi.`,
+          answersJson: JSON.stringify(answersJson),
+        },
+      });
+      applicationId = app.id;
+      await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "applying" } });
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "application.question_needs_user_input",
+        message: `Autopilot dijeda karena ada ${pendingQuestions.length} pertanyaan yang belum terjawab.`,
+        metadata: { applicationId: app.id, pendingQuestions },
+      });
+      return {
+        status: "paused",
+        message: `Ada ${pendingQuestions.length} pertanyaan yang memerlukan jawaban Anda. ${filledCount} field sudah diisi otomatis.`,
+        applicationId: app.id,
+      };
     }
 
-    if (submitSelector) {
-      notes += " Tombol submit terdeteksi tetapi TIDAK diklik (menunggu approval user).";
+    if (!reachedFinalReview) {
+      const app = await prisma.application.create({
+        data: {
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          status: "paused",
+          submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
+          notes: `Form lamaran belum mencapai halaman review final Jobstreet. ${filledCount} field diisi, ${questionAnswers.length} pertanyaan dijawab. Lanjutkan sampai tombol Submit application terlihat.`,
+          answersJson: JSON.stringify(answersJson),
+        },
+      });
+      applicationId = app.id;
+      await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "applying" } });
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "application.form_not_ready",
+        message: "Form lamaran belum mencapai review final Jobstreet.",
+        metadata: { applicationId: app.id },
+      });
+      return {
+        status: "paused",
+        message: "Form lamaran belum mencapai review final Jobstreet. Lanjutkan sampai tombol Submit application terlihat.",
+        applicationId: app.id,
+      };
     }
 
-    // Step 12: Create Application record
     const app = await prisma.application.create({
       data: {
         campaignId: campaign.id,
         jobListingId: jobListing.id,
-        status: appStatus,
+        status: submitMode === "review_each_application" ? "pending_review" : "paused",
         submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
-        notes,
+        notes:
+          submitMode === "review_each_application"
+            ? `Form lamaran sudah mencapai review final. ${filledCount} field diisi, ${questionAnswers.length} pertanyaan dijawab. Menunggu review user.`
+            : `Final submit terdeteksi. Menjalankan Auto Submit Aman di halaman yang sama.`,
         answersJson: JSON.stringify(answersJson),
       },
     });
     applicationId = app.id;
 
-    // Update JobListing status
-    await prisma.jobListing.update({
-      where: { id: jobListing.id },
-      data: { status: "applying" },
-    });
+    await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "applying" } });
 
     await writeAutomationLog({
       campaignId: campaign.id,
       jobListingId: jobListing.id,
-      event: reachedFinalReview ? "application.review_required" : "application.form_not_ready",
-      message: reachedFinalReview
-        ? `Form lamaran sudah mencapai review final dan menunggu review user. Status: ${appStatus}`
-        : `Form lamaran belum mencapai review final Jobstreet. Status: ${appStatus}`,
+      event: "application.final_submit_detected",
+      message: "Final submit terdeteksi pada halaman review yang sama.",
       metadata: {
         applicationId: app.id,
+        submitCandidate: finalSubmitCandidate,
         fieldsFilled: filledCount,
         questionsAnswered: questionAnswers.length,
-        pendingQuestions: pendingQuestions.length,
-        submitDetected: !!submitSelector,
-        reachedFinalReview,
       },
     });
 
+    if (submitMode === "review_each_application") {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "application.review_required",
+        message: "Form lamaran mencapai review final dan menunggu review user.",
+        metadata: { applicationId: app.id },
+      });
+      return {
+        status: "pending_review",
+        message: "Form lamaran sudah mencapai review final dan menunggu review user.",
+        applicationId: app.id,
+      };
+    }
+
+    if (!finalSubmitCandidate || finalSubmitCandidate.confidence !== "high") {
+      await prisma.application.update({
+        where: { id: app.id },
+        data: {
+          status: "paused",
+          notes: `Final submit ditemukan tetapi confidence belum cukup tinggi untuk Auto Submit Aman. ${finalSubmitCandidate?.reason ?? "Tidak ada kandidat final submit yang aman."}`,
+        },
+      });
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        level: "warn",
+        event: "application.submit_unverified",
+        message: "Auto Submit Aman dibatalkan karena tombol submit final tidak cukup meyakinkan.",
+        metadata: { applicationId: app.id, submitCandidate: finalSubmitCandidate },
+      });
+      return {
+        status: "paused",
+        message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+        applicationId: app.id,
+      };
+    }
+
+    const unresolvedRequiredFields = await hasUnresolvedRequiredFields(page, filledFields);
+    if (unresolvedRequiredFields.length > 0) {
+      await prisma.application.update({
+        where: { id: app.id },
+        data: {
+          status: "paused",
+          notes: `Auto Submit Aman dihentikan karena masih ada field wajib kosong: ${unresolvedRequiredFields.map((item) => item.label).join(", ")}`,
+        },
+      });
+      return {
+        status: "paused",
+        message: "Masih ada field wajib yang belum terisi. Kampanye dijeda untuk pemeriksaan manual.",
+        applicationId: app.id,
+      };
+    }
+
+    const beforeSubmitScreenshot = await saveScreenshot(page, "before_submit", app.id);
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      event: "application.auto_submit_safe_started",
+      message: "Auto Submit Aman dijalankan pada halaman yang sama.",
+      metadata: { applicationId: app.id, screenshotPath: beforeSubmitScreenshot, submitCandidate: finalSubmitCandidate },
+    });
+
+    const finalButton = page.locator(finalSubmitCandidate.locator).filter({ hasText: new RegExp(finalSubmitCandidate.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") }).first();
+    await finalButton.click();
+
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      event: "application.submit_clicked",
+      message: "Tombol submit final berhasil diklik oleh Auto Submit Aman.",
+      metadata: { applicationId: app.id, submitCandidate: finalSubmitCandidate },
+    });
+
+    const afterClickScreenshot = await saveScreenshot(page, "after_submit_click", app.id);
+    const verification = await verifySubmitSuccess(page);
+
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      event: "application.submit_post_click_diagnostics",
+      message: "Diagnostik setelah klik submit berhasil dikumpulkan.",
+      metadata: {
+        applicationId: app.id,
+        screenshotPath: afterClickScreenshot,
+        currentUrl: verification.currentUrl,
+        submitSuccessDetected: verification.submitSuccessDetected,
+        submitButtonStillVisible: verification.submitButtonStillVisible,
+        visibleConfirmationText: verification.visibleConfirmationText,
+      },
+    });
+
+    const postSubmitIntervention = await detectManualIntervention(page);
+    if (postSubmitIntervention.detected) {
+      const screenshotPath = await saveScreenshot(page, "post_submit_intervention", app.id);
+      await prisma.application.update({ where: { id: app.id }, data: { status: "paused", screenshotPath } });
+      return {
+        status: "paused",
+        message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+        applicationId: app.id,
+        screenshotPath: screenshotPath ?? undefined,
+      };
+    }
+
+    if (!verification.submitSuccessDetected || verification.submitButtonStillVisible) {
+      const screenshotPath = await saveScreenshot(page, "submit_unverified", app.id);
+      await prisma.application.update({
+        where: { id: app.id },
+        data: {
+          status: "paused",
+          screenshotPath,
+          notes: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+        },
+      });
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        level: "warn",
+        event: "application.submit_unverified",
+        message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+        metadata: { applicationId: app.id, screenshotPath },
+      });
+      return {
+        status: "paused",
+        message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+        applicationId: app.id,
+        screenshotPath: screenshotPath ?? undefined,
+      };
+    }
+
+    const successScreenshot = await saveScreenshot(page, "after_submit", app.id);
+    await prisma.application.update({
+      where: { id: app.id },
+      data: {
+        status: "submitted",
+        submittedAt: new Date(),
+        userApproved: true,
+        screenshotPath: successScreenshot,
+        notes: "Lamaran dikirim otomatis oleh mode Auto Submit Aman.",
+      },
+    });
+    await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "submitted" } });
+    await prisma.campaign.update({ where: { id: campaign.id }, data: { appliedCount: { increment: 1 } } });
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      event: "application.submitted",
+      message: "Submit berhasil diverifikasi dan lamaran ditandai terkirim.",
+      metadata: { applicationId: app.id, screenshotPath: successScreenshot },
+    });
+
     return {
-      status: appStatus,
-      message: hasPendingQuestions
-        ? `Ada ${pendingQuestions.length} pertanyaan yang memerlukan jawaban Anda. ${filledCount} field sudah diisi otomatis.`
-        : reachedFinalReview
-          ? "Form lamaran sudah mencapai review final dan menunggu review user."
-          : "Form lamaran belum mencapai review final Jobstreet. Lanjutkan sampai tombol Submit application terlihat.",
+      status: "submitted",
+      message: "Lamaran berhasil dikirim.",
       applicationId: app.id,
+      screenshotPath: successScreenshot ?? undefined,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -596,7 +939,31 @@ export async function startJobApplication({
       applicationId: applicationId ?? undefined,
     };
   }
-  // Browser intentionally left open for manual review
+}
+
+export async function startJobApplication({
+  jobListing,
+  campaign,
+  profile,
+  submitMode,
+}: {
+  jobListing: JobListingData;
+  campaign: CampaignData;
+  profile: ProfileData;
+  submitMode?: SubmitModeStrategy;
+}): Promise<ApplyResult> {
+  const session = await launchManagedBrowser();
+  try {
+    return await runJobstreetApplyWizard({
+      page: session.page,
+      jobListing,
+      campaign,
+      profile,
+      submitMode: resolveSubmitMode(campaign, submitMode),
+    });
+  } finally {
+    // Browser intentionally remains visible for safety policy and manual inspection.
+  }
 }
 
 // ── Submit Application ────────────────────────────────────────────────

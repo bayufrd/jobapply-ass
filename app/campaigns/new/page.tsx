@@ -18,7 +18,7 @@ const defaults = [
   ["Gaji Saat Ini", "Dari ENV bila kosong"],
   ["Waktu Mulai Kerja", "Dari ENV bila kosong"],
   ["Ketersediaan", "Dari ENV bila kosong"],
-  ["Mode Pengiriman", "Auto apply dibantu / review manual"],
+  ["Mode Pengiriman Lamaran", "Review manual atau Auto Submit Aman"],
 ];
 
 export default function NewCampaignPage() {
@@ -52,9 +52,17 @@ export default function NewCampaignPage() {
       defaultExpectedSalary: parseOptionalNumber(formData.get("defaultExpectedSalary")),
       defaultNoticePeriod: parseOptionalString(formData.get("defaultNoticePeriod")),
       defaultAvailability: parseOptionalString(formData.get("defaultAvailability")),
-      submitMode: String(formData.get("submitMode") || "assisted_auto_apply") as
+      submitMode: String(formData.get("submitMode") || "manual_review_only") as
         | "assisted_auto_apply"
         | "manual_review_only",
+      automationMode: String(formData.get("automationMode") || "review_each_application") as
+        | "review_each_application"
+        | "auto_submit_safe_only",
+      lowScoreMode: String(formData.get("lowScoreMode") || "ask") as
+        | "ask"
+        | "auto_skip"
+        | "auto_apply",
+      autoSubmitSafeOnly: String(formData.get("automationMode") || "review_each_application") === "auto_submit_safe_only",
     };
 
     try {
@@ -137,11 +145,37 @@ export default function NewCampaignPage() {
               <span>Ketersediaan</span>
               <input name="defaultAvailability" placeholder="Kosongkan untuk pakai ENV" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3" />
             </label>
+            <div className="grid gap-3 text-sm text-slate-300 md:col-span-2">
+              <span className="font-medium text-white">Mode Pengiriman Lamaran</span>
+              <label className="rounded-xl border border-slate-700 bg-slate-950 p-4">
+                <div className="flex items-start gap-3">
+                  <input type="radio" name="automationMode" value="review_each_application" defaultChecked className="mt-1" />
+                  <div>
+                    <p className="font-medium text-white">Review Setiap Lamaran</p>
+                    <p className="mt-1 text-sm text-slate-400">Sistem mengisi form, lalu berhenti sebelum submit untuk dicek manual.</p>
+                  </div>
+                </div>
+              </label>
+              <label className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+                <div className="flex items-start gap-3">
+                  <input type="radio" name="automationMode" value="auto_submit_safe_only" className="mt-1" />
+                  <div>
+                    <p className="font-medium text-cyan-200">Auto Submit Aman</p>
+                    <p className="mt-1 text-sm text-slate-300">Sistem langsung klik Submit Application jika tidak ada captcha, pertanyaan baru, external redirect, atau kondisi yang meragukan.</p>
+                  </div>
+                </div>
+              </label>
+              <input type="hidden" name="submitMode" value="assisted_auto_apply" />
+              <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+                Auto Submit Aman hanya berjalan jika sistem yakin form sudah lengkap dan submit berhasil bisa diverifikasi. Jika ragu, kampanye akan dijeda dan meminta keputusan Anda.
+              </p>
+            </div>
             <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">
-              <span>Mode Pengiriman</span>
-              <select name="submitMode" defaultValue="assisted_auto_apply" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3">
-                <option value="assisted_auto_apply">Auto apply dibantu dengan pengawasan user</option>
-                <option value="manual_review_only">Review manual saja</option>
+              <span>Perilaku untuk Skor Rendah</span>
+              <select name="lowScoreMode" defaultValue="ask" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3">
+                <option value="ask">Tanya saya dulu</option>
+                <option value="auto_skip">Lewati otomatis</option>
+                <option value="auto_apply">Tetap lamar otomatis</option>
               </select>
             </label>
           </div>
@@ -170,7 +204,7 @@ export default function NewCampaignPage() {
             ))}
           </div>
           <div className="mt-4 rounded-xl border border-cyan-500/20 bg-cyan-500/10 p-4 text-sm text-cyan-100">
-            Pencarian Jobstreet dan AI scoring sudah aktif. Final submit belum diimplementasikan.
+            Pencarian Jobstreet, AI scoring, dan Auto Submit Aman kini tersedia dengan browser tetap terlihat dan tanpa bypass captcha.
           </div>
         </section>
       </div>
