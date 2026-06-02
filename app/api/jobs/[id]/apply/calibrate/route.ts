@@ -3,11 +3,15 @@ import { prisma } from "@/lib/db/prisma";
 import { calibrateJobApply } from "@/lib/browser/jobstreet-apply-calibrator";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: jobId } = await params;
+    const body = (await request.json().catch(() => ({}))) as {
+      overrideScore?: boolean;
+      reason?: string;
+    };
 
     // Load JobListing
     const job = await prisma.jobListing.findUnique({
@@ -22,12 +26,34 @@ export async function POST(
       );
     }
 
-    // Check if job is shortlisted
-    if (job.status !== "shortlisted") {
+    const score = job.matchScore ?? 0;
+    const threshold = job.campaign?.matchThreshold ?? 70;
+    const requiresOverride = score < threshold;
+
+    if (requiresOverride && !body.overrideScore) {
       return NextResponse.json(
-        { error: "Lowongan belum masuk shortlist, tidak bisa dikalibrasi." },
-        { status: 400 }
+        {
+          status: "decision_required",
+          message: "AI menyarankan lowongan ini dilewati, tetapi Anda tetap bisa menjalankan kalibrasi.",
+          decision: {
+            type: "low_score",
+            jobId: job.id,
+            title: job.title,
+            company: job.company,
+            score,
+            threshold,
+            reason: job.matchReason ?? "AI menyarankan lowongan ini dilewati.",
+          },
+        },
+        { status: 200 }
       );
+    }
+
+    if (body.overrideScore && job.campaign) {
+      await prisma.jobListing.update({
+        where: { id: jobId },
+        data: { status: "shortlisted" },
+      });
     }
 
     // Need a campaign association

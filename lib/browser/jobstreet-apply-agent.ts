@@ -71,13 +71,13 @@ type SubmitResult = {
 
 // Allowed submit button labels (safe matching)
 const ALLOWED_SUBMIT_LABELS = [
-  "kirim",
-  "submit",
   "submit application",
   "kirim lamaran",
-  "lamar sekarang",
-  "apply",
-  "apply now",
+  "application submit",
+  "send application",
+  "submit",
+  "kirim",
+  "lamar",
 ];
 
 // Labels that should NOT be clicked as submit (navigation/search/save)
@@ -90,6 +90,8 @@ const BLOCKED_SUBMIT_LABELS = [
   "selanjutnya",
   "next",
   "lanjut",
+  "continue",
+  "review",
   "back",
   "kembali",
   "cancel",
@@ -107,11 +109,17 @@ const CONTINUE_LABELS = [
 ];
 
 const SUBMIT_SUCCESS_MARKERS = [
-  "keep it up",
+  "application submitted",
+  "your application has been submitted",
   "your application has been sent",
-  "application has been sent",
+  "you applied",
+  "applied",
+  "lamaran terkirim",
   "lamaran berhasil dikirim",
-  "application sent",
+  "anda telah melamar",
+  "application received",
+  "terima kasih telah melamar",
+  "thank you for applying",
 ];
 
 type AnswersJson = {
@@ -763,6 +771,32 @@ export async function submitApplication({
     });
 
     // Step 9: Find and click submit button (safe matching)
+    const submitCandidatesBefore = await page
+      .locator("button, input[type='submit'], input[type='button'], a[role='button']")
+      .evaluateAll((elements) =>
+        elements
+          .map((el) => ({
+            text: ((el.textContent || (el as HTMLInputElement).value || "").trim()),
+            type: (el.getAttribute("type") || "").trim(),
+            tag: el.tagName.toLowerCase(),
+          }))
+          .filter((item) => item.text.length > 0)
+          .slice(0, 20),
+      )
+      .catch(() => [] as Array<{ text: string; type: string; tag: string }>);
+
+    await writeAutomationLog({
+      campaignId,
+      jobListingId,
+      event: "application.submit_candidates_detected",
+      message: `Kandidat tombol submit terdeteksi sebelum klik: ${submitCandidatesBefore.length}`,
+      metadata: {
+        applicationId,
+        currentUrl: page.url(),
+        submitCandidates: submitCandidatesBefore,
+      },
+    });
+
     const submitClicked = await findAndClickSafeSubmitButton(page);
 
     if (!submitClicked) {
@@ -773,8 +807,8 @@ export async function submitApplication({
         jobListingId,
         level: "error",
         event: "application.submit_failed",
-        message: "Tombol submit yang aman tidak ditemukan di halaman.",
-        metadata: { screenshotPath },
+        message: "Tombol submit final yang aman tidak ditemukan di halaman.",
+        metadata: { screenshotPath, currentUrl: page.url(), submitCandidates: submitCandidatesBefore },
       });
 
       await prisma.application.update({
@@ -794,7 +828,10 @@ export async function submitApplication({
     await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
     await page.waitForTimeout(2500);
 
+    const afterClickScreenshot = await saveScreenshot(page, "after_submit_click", applicationId);
     const pageText = (await page.textContent("body").catch(() => ""))?.toLowerCase() ?? "";
+    const currentUrlAfterClick = page.url();
+    const visibleConfirmationText = pageText.slice(0, 2000);
     const submitSuccessDetected = SUBMIT_SUCCESS_MARKERS.some((marker) => pageText.includes(marker));
     const submitButtonStillVisible = await page
       .locator("button, input[type='submit'], input[type='button'], a[role='button']")
@@ -803,11 +840,26 @@ export async function submitApplication({
           const text = ((el.textContent || (el as HTMLInputElement).value || "").trim().toLowerCase());
           const visible = !(el as HTMLElement).hasAttribute("disabled")
             && ((el as HTMLElement).offsetParent !== null || getComputedStyle(el as HTMLElement).position === "fixed");
-          return visible && (labels as string[]).some((label) => text.includes(label));
+          return visible && (labels as string[]).some((label) => text === label || text.includes(label));
         }),
         ALLOWED_SUBMIT_LABELS,
       )
       .catch(() => false);
+
+    await writeAutomationLog({
+      campaignId,
+      jobListingId,
+      event: "application.submit_post_click_diagnostics",
+      message: "Diagnostik setelah klik submit berhasil dikumpulkan.",
+      metadata: {
+        applicationId,
+        screenshotPath: afterClickScreenshot,
+        currentUrl: currentUrlAfterClick,
+        submitSuccessDetected,
+        submitButtonStillVisible,
+        visibleConfirmationText,
+      },
+    });
 
     // Check for post-submit intervention
     const postSubmitIntervention = await detectManualIntervention(page);
@@ -843,8 +895,14 @@ export async function submitApplication({
         jobListingId,
         level: "warn",
         event: "application.submit_unverified",
-        message: "Klik submit sudah dilakukan, tetapi halaman konfirmasi sukses Jobstreet belum terverifikasi atau tombol submit masih terlihat.",
-        metadata: { applicationId, screenshotPath, currentUrl: page.url(), submitButtonStillVisible },
+        message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+        metadata: {
+          applicationId,
+          screenshotPath,
+          currentUrl: currentUrlAfterClick,
+          submitButtonStillVisible,
+          visibleConfirmationText,
+        },
       });
 
       await prisma.application.update({
@@ -852,13 +910,13 @@ export async function submitApplication({
         data: {
           status: "paused",
           screenshotPath,
-          notes: "Submit belum diverifikasi oleh sistem. Periksa halaman browser yang terbuka.",
+          notes: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
         },
       });
 
       return {
         status: "paused",
-        message: "Submit belum dapat diverifikasi dari halaman konfirmasi Jobstreet atau tombol submit masih terlihat. Periksa browser visible.",
+        message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
         screenshotPath: screenshotPath ?? undefined,
       };
     }
@@ -903,78 +961,94 @@ export async function submitApplication({
 // ── Safe Submit Button Finder ─────────────────────────────────────────
 
 async function findAndClickSafeSubmitButton(page: Page): Promise<boolean> {
-  // Strategy 1: Submit type buttons
-  const typeSubmitSelectors = [
-    "button[type='submit']",
-    "input[type='submit']",
+  const reviewAreaSelectors = [
+    "form",
+    "main form",
+    "[role='form']",
+    "[data-automation*='review' i]",
+    "[data-automation*='application' i]",
+    "[class*='review' i]",
+    "[class*='application' i]",
   ];
 
-  for (const selector of typeSubmitSelectors) {
-    try {
-      const el = page.locator(selector).first();
-      if ((await el.count()) > 0 && (await el.isVisible())) {
-        const text = ((await el.textContent()) ?? (await el.getAttribute("value")) ?? "").toLowerCase().trim();
-        // Verify it's not a blocked label
-        const isBlocked = BLOCKED_SUBMIT_LABELS.some((b) => text.includes(b));
-        if (!isBlocked) {
-          await el.click();
+  const exactPriorityLabels = ["submit application", "kirim lamaran"];
+  const genericSelectors = [
+    "button",
+    "button[type='submit']",
+    "input[type='submit']",
+    "input[type='button']",
+    "a[role='button']",
+    "[data-automation*='submit' i]",
+  ];
+
+  async function tryClickCandidate(rootSelector?: string) {
+    for (const selector of genericSelectors) {
+      const scopedSelector = rootSelector ? `${rootSelector} ${selector}` : selector;
+      try {
+        const elements = page.locator(scopedSelector);
+        const count = await elements.count();
+
+        for (let i = 0; i < Math.min(count, 20); i++) {
+          const el = elements.nth(i);
+          try {
+            if (!(await el.isVisible()) || (await el.isDisabled())) continue;
+
+            const text = (((await el.textContent()) ?? (await el.getAttribute("value")) ?? "").toLowerCase().trim());
+            if (!text) continue;
+
+            const isAllowed = ALLOWED_SUBMIT_LABELS.some((label) => text === label || text.includes(label));
+            const isBlocked = BLOCKED_SUBMIT_LABELS.some((label) => text.includes(label));
+            if (!isAllowed || isBlocked) continue;
+
+            const roleHint = await el.evaluate((node) => {
+              const parentText = (node.parentElement?.textContent || "").toLowerCase();
+              const ancestorText = (node.closest("form, main, section, article")?.textContent || "").toLowerCase();
+              return `${parentText} ${ancestorText}`;
+            }).catch(() => "");
+
+            if (rootSelector) {
+              await el.click();
+              return true;
+            }
+
+            if (roleHint.includes("submit") || roleHint.includes("review") || roleHint.includes("application") || roleHint.includes("lamaran")) {
+              await el.click();
+              return true;
+            }
+          } catch {
+            // Try next candidate
+          }
+        }
+      } catch {
+        // Try next selector
+      }
+    }
+
+    return false;
+  }
+
+  for (const label of exactPriorityLabels) {
+    for (const area of reviewAreaSelectors) {
+      try {
+        const exactButton = page.locator(`${area} button`).filter({ hasText: new RegExp(`^\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i") }).first();
+        if ((await exactButton.count()) > 0 && (await exactButton.isVisible()) && !(await exactButton.isDisabled())) {
+          await exactButton.click();
           return true;
         }
+      } catch {
+        // Try next area
       }
-    } catch {
-      // Try next
     }
   }
 
-  // Strategy 2: Text-based matching with allowed labels
-  for (const label of ALLOWED_SUBMIT_LABELS) {
-    try {
-      const el = page.locator(`button:has-text('${label}')`).first();
-      if ((await el.count()) > 0 && (await el.isVisible())) {
-        const text = ((await el.textContent()) ?? "").toLowerCase().trim();
-        const isBlocked = BLOCKED_SUBMIT_LABELS.some((b) => text.includes(b));
-        if (!isBlocked) {
-          await el.click();
-          return true;
-        }
-      }
-    } catch {
-      // Try next
+  for (const area of reviewAreaSelectors) {
+    if (await tryClickCandidate(area)) {
+      return true;
     }
   }
 
-  // Strategy 3: data-automation submit
-  try {
-    const el = page.locator("[data-automation*='submit' i]").first();
-    if ((await el.count()) > 0 && (await el.isVisible())) {
-      const text = ((await el.textContent()) ?? "").toLowerCase().trim();
-      const isBlocked = BLOCKED_SUBMIT_LABELS.some((b) => text.includes(b));
-      if (!isBlocked) {
-        await el.click();
-        return true;
-      }
-    }
-  } catch {
-    // Continue
-  }
-
-  // Strategy 4: Generic submit button in form context
-  try {
-    const formButtons = page.locator("form button[type='submit'], form [role='button'][type='submit']");
-    const count = await formButtons.count();
-    for (let i = 0; i < count; i++) {
-      const btn = formButtons.nth(i);
-      if (await btn.isVisible()) {
-        const text = ((await btn.textContent()) ?? "").toLowerCase().trim();
-        const isBlocked = BLOCKED_SUBMIT_LABELS.some((b) => text.includes(b));
-        if (!isBlocked) {
-          await btn.click();
-          return true;
-        }
-      }
-    }
-  } catch {
-    // Continue
+  if (await tryClickCandidate()) {
+    return true;
   }
 
   return false;

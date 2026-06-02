@@ -203,6 +203,7 @@ export default function JobsPage() {
   const [loading, setLoading] = useState(true);
   const [applyingJobId, setApplyingJobId] = useState<string | null>(null);
   const [calibratingJobId, setCalibratingJobId] = useState<string | null>(null);
+  const [skippingJobId, setSkippingJobId] = useState<string | null>(null);
 
   const refreshJobs = useCallback(async () => {
     const response = await fetch("/api/jobs");
@@ -223,22 +224,39 @@ export default function JobsPage() {
     return () => { cancelled = true; };
   }, []);
 
-  async function handleApply(jobId: string) {
+  async function handleApply(jobId: string, overrideScore = false) {
     if (applyingJobId) return;
-    
+
     setApplyingJobId(jobId);
     try {
       const response = await fetch(`/api/jobs/${jobId}/apply/start`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          overrideScore
+            ? { overrideScore: true, reason: "User memilih tetap melamar." }
+            : {},
+        ),
       });
-      
+
       const result = await response.json();
-      
+
       if (!response.ok) {
         alert(result.error || "Gagal memulai proses lamaran");
         return;
       }
-      
+
+      if (result.status === "decision_required") {
+        const confirmed = window.confirm(
+          `${result.message}\n\nSkor: ${result.decision?.score ?? "-"} / Threshold: ${result.decision?.threshold ?? "-"}\n\nAlasan AI:\n${result.decision?.reason ?? "AI menyarankan lowongan ini dilewati."}\n\nKlik OK untuk Paksa Lamar, atau Cancel untuk batal.`,
+        );
+
+        if (confirmed) {
+          await handleApply(jobId, true);
+        }
+        return;
+      }
+
       alert(result.message || "Proses lamaran dimulai");
       await refreshJobs();
     } catch {
@@ -248,13 +266,19 @@ export default function JobsPage() {
     }
   }
 
-  async function handleCalibrate(jobId: string) {
+  async function handleCalibrate(jobId: string, overrideScore = false) {
     if (calibratingJobId) return;
 
     setCalibratingJobId(jobId);
     try {
       const response = await fetch(`/api/jobs/${jobId}/apply/calibrate`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          overrideScore
+            ? { overrideScore: true, reason: "User memilih tetap melamar." }
+            : {},
+        ),
       });
 
       const result = await response.json();
@@ -264,12 +288,51 @@ export default function JobsPage() {
         return;
       }
 
+      if (result.status === "decision_required") {
+        const confirmed = window.confirm(
+          `${result.message}\n\nSkor: ${result.decision?.score ?? "-"} / Threshold: ${result.decision?.threshold ?? "-"}\n\nAlasan AI:\n${result.decision?.reason ?? "AI menyarankan lowongan ini dilewati."}\n\nKlik OK untuk tetap kalibrasi, atau Cancel untuk batal.`,
+        );
+
+        if (confirmed) {
+          await handleCalibrate(jobId, true);
+        }
+        return;
+      }
+
       alert(result.message || "Kalibrasi selesai");
       await refreshJobs();
     } catch {
       alert("Terjadi kesalahan saat menjalankan kalibrasi");
     } finally {
       setCalibratingJobId(null);
+    }
+  }
+
+  async function handleSkip(jobId: string) {
+    if (skippingJobId) return;
+
+    const confirmed = window.confirm("Lewati lowongan ini dari proses manual?");
+    if (!confirmed) return;
+
+    setSkippingJobId(jobId);
+    try {
+      const response = await fetch(`/api/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "skipped" }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        alert(result.error || "Gagal melewati lowongan");
+        return;
+      }
+
+      await refreshJobs();
+    } catch {
+      alert("Terjadi kesalahan saat melewati lowongan");
+    } finally {
+      setSkippingJobId(null);
     }
   }
 
@@ -385,7 +448,7 @@ export default function JobsPage() {
                     )}
 
                     {/* Calibration status badge */}
-                    {job.status === "shortlisted" && (
+                    {(job.status === "shortlisted" || job.status === "skipped" || job.status === "discovered" || job.status === "applying" || job.status === "failed") && (
                       <div className="flex items-center gap-2">
                         <span
                           className={`inline-block rounded-lg border px-2.5 py-1 text-[11px] font-medium ${calibrationStatusColor(calStatus, calFlowType)}`}
@@ -404,30 +467,43 @@ export default function JobsPage() {
                     )}
 
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs text-slate-500">{formatDate(job.createdAt)}</p>
-                      <div className="flex gap-2">
-                        {job.status === "shortlisted" ? (
-                          <>
-                            <button
-                              onClick={() => handleCalibrate(job.id)}
-                              disabled={calibratingJobId !== null}
-                              className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {calibratingJobId === job.id ? "Mengkalibrasi..." : "Kalibrasi Apply"}
-                            </button>
-                            <button
-                              onClick={() => handleApply(job.id)}
-                              disabled={applyingJobId !== null}
-                              className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {applyingJobId === job.id ? "Memproses..." : "Bantu Lamar"}
-                            </button>
-                          </>
-                        ) : (
-                          <div className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-500">
-                            {job.status === "skipped" ? "Tidak bisa dilamar karena skor di bawah ambang kampanye" : "Belum masuk shortlist"}
+                      <div className="space-y-2">
+                        <p className="text-xs text-slate-500">{formatDate(job.createdAt)}</p>
+                        {job.status === "skipped" && (
+                          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                            AI menyarankan dilewati, tetapi Anda tetap bisa melamar.
                           </div>
                         )}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => handleApply(job.id)}
+                          disabled={applyingJobId !== null}
+                          className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {applyingJobId === job.id ? "Memproses..." : "Lamar"}
+                        </button>
+                        <button
+                          onClick={() => handleCalibrate(job.id)}
+                          disabled={calibratingJobId !== null}
+                          className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {calibratingJobId === job.id ? "Mengkalibrasi..." : "Kalibrasi"}
+                        </button>
+                        <button
+                          onClick={() => handleApply(job.id, true)}
+                          disabled={applyingJobId !== null}
+                          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {applyingJobId === job.id ? "Memproses..." : "Paksa Lamar"}
+                        </button>
+                        <button
+                          onClick={() => handleSkip(job.id)}
+                          disabled={skippingJobId !== null}
+                          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {skippingJobId === job.id ? "Melewati..." : "Lewati"}
+                        </button>
                         <a
                           href={job.url}
                           target="_blank"

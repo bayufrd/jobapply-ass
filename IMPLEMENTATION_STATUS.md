@@ -31,7 +31,7 @@ Status saat ini:
 * [ ] MVP selesai
 
 Catatan singkat:
-Project sekarang sudah bisa dijalankan sebagai fondasi MVP lokal yang jujur: upload CV, analisis CV, create campaign, dan start campaign yang membuka browser visible lalu melakukan pencarian lowongan Jobstreet secara nyata. Pencarian lowongan, ekstraksi detail, penyimpanan ke `JobListing`, AI scoring, assisted apply flow, final submit dengan approval user, campaign loop, dan apply calibration dry run sudah diimplementasikan. Submit final memerlukan persetujuan eksplisit user dan berhenti otomatis jika captcha/login/OTP/pertanyaan baru terdeteksi. Apply calibration memungkinkan dry run untuk mendeteksi flow type, platform, form fields, dan submit candidates sebelum melakukan apply sesungguhnya.
+Project sekarang sudah berjalan sebagai fondasi MVP lokal yang jujur dengan Campaign Autopilot v2. User dapat membuat kampanye sekali lalu menjalankan alur autopilot terkontrol dari halaman kampanye: mencari lowongan, scoring, meminta keputusan user saat low score, mengingat keputusan serupa per kampanye, menjalankan kalibrasi internal bila perlu, memulai assisted apply, berhenti saat ada pertanyaan yang belum pasti, dan hanya menganggap submit berhasil jika final submit benar-benar terverifikasi. Browser tetap visible, tidak ada captcha bypass, tidak ada stealth automation, dan tidak ada proxy rotation.
 
 ## 4. Progress Fitur Utama
 
@@ -66,7 +66,7 @@ Project sekarang sudah bisa dijalankan sebagai fondasi MVP lokal yang jujur: upl
 | Review Lamaran Sebelum Submit      | Selesai | Halaman `/applications/[id]/review` menampilkan detail lengkap: info lowongan, skor AI, field yang diisi, pertanyaan dijawab, pertanyaan pending, dan catatan. Tombol "Setujui dan Kirim" aktif, tombol "Lewati Lamaran" aktif. | `app/applications/[id]/review/page.tsx`, `app/api/applications/[id]/route.ts` |
 | Submit Lamaran                     | Selesai (Perlu Verifikasi Manual) | Final submit diimplementasikan dengan approval user eksplisit. Browser visible membuka halaman, re-fill field, deteksi captcha/login/OTP/pertanyaan baru, screenshot sebelum submit, safe submit button matching. Berhenti otomatis jika intervensi terdeteksi. | `lib/browser/jobstreet-apply-agent.ts`, `app/api/applications/[id]/submit/route.ts` |
 | Skip Lamaran                       | Selesai | Tombol "Lewati Lamaran" di halaman review mengubah status ke `skipped` dan mengembalikan job ke `shortlisted`. | `app/applications/[id]/review/page.tsx`, `app/api/applications/[id]/skip/route.ts` |
-| Campaign Loop                      | Selesai (Perlu Verifikasi Manual) | Loop kampanye menyiapkan lamaran berikutnya dari shortlisted jobs. Membuat Application `pending_review` dan menunggu approval user sebelum submit. Berhenti saat target tercapai, tidak ada job, atau intervensi manual. | `lib/campaign/loop-runner.ts`, `app/api/campaigns/[id]/loop/route.ts`, `components/campaign-actions.tsx` |
+| Campaign Loop / Autopilot v2       | Selesai (Perlu Verifikasi Manual) | Loop satu-per-satu lama digantikan oleh Autopilot v2. Kampanye kini dapat mencari lowongan, scoring, meminta keputusan low score, mengingat rule per kampanye, kalibrasi internal, assisted apply, pause saat question/review/manual intervention, lalu lanjut lagi lewat endpoint bounded per request. | `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/autopilot/start/route.ts`, `app/api/campaigns/[id]/autopilot/continue/route.ts`, `app/api/campaigns/[id]/autopilot/decision/route.ts`, `app/api/campaigns/[id]/status/route.ts`, `components/campaign-actions.tsx` |
 | Apply Calibration / Dry Run        | Selesai (Perlu Verifikasi Manual) | One-time dry run apply untuk mendeteksi flow type, platform, form fields, buttons, questions, dan submit candidates tanpa melakukan submit. Mendukung deteksi internal Jobstreet, external redirect, email apply, WhatsApp apply. Manual intervention (login/captcha/OTP) menghentikan flow dan membiarkan browser terbuka. | `lib/browser/jobstreet-apply-calibrator.ts`, `app/api/jobs/[id]/apply/calibrate/route.ts`, `app/api/jobs/[id]/calibration/route.ts`, `app/jobs/[id]/calibration/page.tsx` |
 | Log Aktivitas                      | Selesai | Dashboard dan halaman `/logs` kini membaca `AutomationLog` nyata dari database. Log search Jobstreet, assisted apply, dan kalibrasi lengkap dengan semua event. | `lib/logging/automation-log.ts`, `prisma/schema.prisma`, `app/logs/page.tsx`, `app/dashboard/page.tsx` |
 | Pause/Resume/Stop Campaign         | Partial | API route status update dan log nyata sudah ada, tetapi resume belum melanjutkan automation session sesungguhnya. Kontrol kampanye di halaman detail kini terintegrasi dengan campaign loop. | `app/api/campaigns/[id]/pause/route.ts`, `app/api/campaigns/[id]/resume/route.ts`, `app/api/campaigns/[id]/stop/route.ts`, `components/campaign-actions.tsx` |
@@ -144,6 +144,7 @@ storage/
 * [x] Campaign (updated: `jobListings` relation)
 * [x] JobListing (updated: `campaignId`, `snippet`, `campaign` relation)
 * [x] Application
+* [x] CampaignDecisionRule
 * [x] QuestionMemory
 * [x] AutomationLog
 * [x] BrowserSession
@@ -159,10 +160,10 @@ npx prisma migrate dev
 ```
 
 Catatan:
-Migration `add_application_calibration` berhasil dijalankan. Perubahan schema:
-* `ApplicationCalibration` model baru dengan field: `id`, `jobListingId`, `campaignId`, `flowType`, `platform`, `currentUrl`, `pageTitle`, `detectedFieldsJson`, `detectedQuestionsJson`, `detectedButtonsJson`, `submitCandidatesJson`, `screenshotPath`, `status`, `notes`, `createdAt`, `updatedAt`
-* `JobListing` mendapat relasi `calibrations ApplicationCalibration[]`
-* `ApplicationCalibration` memiliki relasi ke `JobListing` dengan `onDelete: Cascade`
+Migration terbaru menambahkan dukungan Campaign Autopilot v2. Perubahan schema utama:
+* `Campaign` mendapat field automation state seperti `automationMode`, `lowScoreMode`, `autoSubmitSafeOnly`, `currentStep`, `decisionStatus`, `decisionPayloadJson`, `currentJobId`, `currentJobTitle`, `currentJobCompany`
+* `CampaignDecisionRule` model baru untuk mengingat keputusan user hanya dalam kampanye yang sama (`low_score`, `salary_mismatch`, `location_mismatch`, `external_redirect`, `unknown_question`)
+* `ApplicationCalibration` tetap dipakai sebagai kalibrasi internal sebelum assisted apply
 
 Migration sebelumnya:
 * `add_job_listing_campaign_tracking`: `JobListing.campaignId`, `JobListing.snippet`, relasi campaign/jobListings
@@ -203,8 +204,8 @@ Jangan tulis value rahasia asli di file ini.
 | /profile         | Selesai | Menampilkan `CandidateProfile` terbaru dalam layout Bahasa Indonesia yang bersih dan user-friendly. Skills sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize. Raw CV text tersembunyi dalam collapsible section. Tombol "Analisis Ulang CV" tersedia. |
 | /campaigns       | Selesai | List kampanye membaca SQLite, bukan mock data. |
 | /campaigns/new   | Selesai | Form submit nyata ke API create campaign dan mendukung fallback default dari ENV. |
-| /campaigns/[id]  | Selesai | Detail kampanye menampilkan ringkasan lengkap, jumlah lowongan ditemukan, status pencarian terbaru, riwayat lamaran, status lamaran (shortlisted/menunggu review/terkirim/gagal/dijeda/dilewati), progres bar, kontrol loop (Siapkan Lamaran Berikutnya/Jeda/Lanjutkan/Hentikan), dan tombol Review untuk pending applications. |
-| /jobs            | Selesai | Membaca `JobListing` nyata dari Prisma. Menampilkan title, company, location, salary, workType, match score, match reason, status, filter shortlist/dilewati/belum dinilai, tombol buka URL Jobstreet, tombol "Kalibrasi Apply" dan "Bantu Lamar" untuk shortlisted jobs. Status kalibrasi ditampilkan sebagai badge (Belum dikalibrasi/Internal Jobstreet/External/Butuh Login/Gagal). Tombol non-shortlist menampilkan pesan bantuan. Empty state Bahasa Indonesia. |
+| /campaigns/[id]  | Selesai | Detail kampanye kini memakai panel Autopilot v2: tombol `Jalankan Kampanye Autopilot`/`Jeda`/`Lanjutkan`/`Hentikan`/`Buka Log`/`Lihat Lowongan`, polling status 3 detik, status panel realtime-like, timeline event Bahasa Indonesia, kartu keputusan low score, kartu question/review required, dan progres target apply. |
+| /jobs            | Selesai | Membaca `JobListing` nyata dari Prisma. Semua lowongan tetap bisa diinteraksikan walau skor rendah. Tombol yang tersedia: `Lamar`, `Kalibrasi`, `Paksa Lamar`, `Lewati`, plus warning bahwa AI menyarankan dilewati tetapi user tetap boleh melamar. Alasan AI ditampilkan dalam Bahasa Indonesia. |
 | /jobs/[id]/calibration | Selesai | Halaman hasil kalibrasi dry run. Menampilkan tipe flow, platform, URL saat ini, field terdeteksi (input/textarea/select), pertanyaan terdeteksi, tombol terdeteksi, kandidat tombol submit, risiko submit, dan rekomendasi. Label Bahasa Indonesia. |
 | /applications    | Selesai | Membaca `Application` nyata dari Prisma. Menampilkan campaign, job listing, status, notes, match score, tombol "Review" dan "Buka Jobstreet". Empty state Bahasa Indonesia. |
 | /applications/[id]/review | Selesai | Halaman review lamaran menampilkan info lowongan, skor AI, kampanye, field yang diisi, pertanyaan dijawab (dengan confidence dan sumber), pertanyaan pending, catatan, screenshot, dan aksi aktif (Lewati Lamaran/Setujui dan Kirim/Buka Jobstreet). Tombol "Setujui dan Kirim" aktif untuk status `pending_review` tanpa pending questions. Tombol "Lewati Lamaran" aktif untuk status `pending_review` dan `paused`. Konfirmasi dialog sebelum submit/skip. Menampilkan hasil submit (success/error/paused). |
@@ -227,12 +228,17 @@ Jangan tulis value rahasia asli di file ini.
 | app/api/browser/session/route.ts       | Selesai | Mengembalikan metadata session browser, mode visible, configured path, dan pesan status jujur. |
 | app/api/settings/9router/health/route.ts  | Selesai | Health check 9router ke `${rootUrl}/api/health` dengan respons Bahasa Indonesia tanpa membocorkan secret. |
 | app/api/settings/9router/models/route.ts  | Selesai | Discovery model chat dan embedding via `${apiBaseUrl}/models` dan `${apiBaseUrl}/models/embedding`, memakai `data[].id`. |
-| app/api/jobs/[id]/apply/start/route.ts | Selesai | Memulai assisted apply untuk shortlisted job. Validasi profil, campaign, status shortlist. Meluncurkan browser, membuka halaman lowongan, mendeteksi intervensi manual, mengklik tombol apply, mengisi field, mendeteksi pertanyaan, membuat Application record. |
+| app/api/jobs/[id]/apply/start/route.ts | Selesai | Assisted apply kini bisa dipanggil untuk low score melalui override. Jika skor di bawah threshold tanpa override, API mengembalikan `decision_required` alih-alih menyembunyikan aksi. |
+| app/api/jobs/[id]/route.ts | Selesai | PATCH status lowongan untuk aksi manual seperti `Lewati` dari halaman lowongan. |
 | app/api/applications/[id]/route.ts     | Selesai | GET single application dengan relasi campaign dan jobListing untuk halaman review. |
-| app/api/applications/[id]/submit/route.ts | Selesai (Perlu Verifikasi Manual) | POST submit lamaran dengan approval user eksplisit (`{ approved: true }`). Verifikasi status `pending_review`, load profile, jalankan `submitApplication()`, update status/JobListing/campaign berdasarkan hasil. |
+| app/api/applications/[id]/submit/route.ts | Selesai (Perlu Verifikasi Manual) | POST submit lamaran dengan approval user eksplisit (`{ approved: true }`). Submit hanya dianggap sukses bila final click dan marker keberhasilan benar-benar terverifikasi. Jika belum bisa diverifikasi, status dipause dan UI memberi warning, bukan false success. |
 | app/api/applications/[id]/skip/route.ts | Selesai | POST skip lamaran. Update status ke `skipped`, kembalikan JobListing ke `shortlisted`, tulis log. |
-| app/api/campaigns/[id]/loop/route.ts   | Selesai (Perlu Verifikasi Manual) | POST campaign loop. Siapkan lamaran berikutnya dari shortlisted jobs, jalankan assisted apply, buat Application `pending_review`. Berhenti saat target tercapai atau tidak ada job. |
-| app/api/jobs/[id]/apply/calibrate/route.ts | Selesai (Perlu Verifikasi Manual) | POST kalibrasi dry run. Validasi job shortlisted, launch visible browser, buka halaman lowongan, deteksi intervensi manual, temukan dan klik tombol apply, klasifikasi flow type dan platform, snapshot form fields/questions/buttons, simpan hasil ke `ApplicationCalibration`. Tidak melakukan submit. |
+| app/api/campaigns/[id]/loop/route.ts   | Digantikan | Loop lama tetap ada untuk kompatibilitas, tetapi flow utama sekarang memakai Autopilot v2. |
+| app/api/campaigns/[id]/status/route.ts | Selesai | GET status kampanye realtime-like untuk polling UI. Mengembalikan `campaign`, `counts`, `currentStep`, `currentJob`, `lastDecisionRequired`, `latestLogs`, `canContinue`, dan `nextRecommendedAction`. |
+| app/api/campaigns/[id]/autopilot/start/route.ts | Selesai | Menjalankan satu langkah bounded Autopilot v2 dari awal flow kampanye. |
+| app/api/campaigns/[id]/autopilot/continue/route.ts | Selesai | Melanjutkan satu langkah bounded berikutnya saat aman untuk lanjut. |
+| app/api/campaigns/[id]/autopilot/decision/route.ts | Selesai | Menyimpan keputusan user untuk low score/decision state kampanye, termasuk opsi skip serupa untuk kampanye ini saja. |
+| app/api/jobs/[id]/apply/calibrate/route.ts | Selesai (Perlu Verifikasi Manual) | POST kalibrasi dry run. Tetap tersedia untuk debugging manual, tetapi pada Autopilot v2 kalibrasi dijalankan internal bila diperlukan. |
 | app/api/jobs/[id]/calibration/route.ts | Selesai | GET hasil kalibrasi terbaru untuk job listing. Mengembalikan data `ApplicationCalibration` terbaru dengan relasi job listing. |
 
 ## 10. Automation / Playwright Status
@@ -256,8 +262,8 @@ Jelaskan status browser automation:
 * Pending questions: Pertanyaan dengan confidence rendah atau requiresHumanReview disimpan ke Application.answersJson sebagai pending questions. Status Application menjadi `paused`.
 * Captcha/manual intervention pause: Sudah ada deteksi dan hasil `requiresManualIntervention(...)`. Deteksi login page ditambahkan. Pesan Indonesia yang jelas dikembalikan.
 * Apply button detection: Sudah diimplementasikan dengan 4 strategy: text-based, data-automation, href matching, dan generic fallback.
-* Submit button detection: Sudah diimplementasikan. Mendeteksi tombol submit dengan safe label matching (allowed vs blocked labels). Pre-submit screenshot diambil dan log `application.before_submit_review` ditulis sebelum klik.
-* Final submit: Sudah diimplementasikan. `submitApplication()` di `jobstreet-apply-agent.ts` membuka browser visible, navigasi ke halaman lowongan, re-fill field, deteksi intervensi (captcha/login/OTP), deteksi pertanyaan baru yang tidak diketahui, safe submit button click, verifikasi hasil. Berhenti otomatis jika intervensi terdeteksi.
+* Submit button detection: Diperketat. Prioritas selector kini fokus ke area review/form final, label submit final yang diizinkan, dan menghindari tombol navigasi seperti `Continue`, `Next`, `Review`, `Back`, `Cancel`, atau `Save`.
+* Final submit: Diperketat. `submitApplication()` di `jobstreet-apply-agent.ts` hanya menganggap berhasil bila klik submit final terjadi dan sistem menemukan marker verifikasi seperti `Application submitted`, `Lamaran terkirim`, `Terima kasih telah melamar`, atau indikator sukses setara. Jika klik terjadi tetapi verifikasi gagal, status harus `paused`, bukan `submitted`.
 * Skip application: Sudah diimplementasikan. Mengubah status ke `skipped`, mengembalikan JobListing ke `shortlisted`.
 * Campaign loop: Sudah diimplementasikan. `prepareNextApplication()` di `lib/campaign/loop-runner.ts` mencari shortlisted job berikutnya tanpa submitted application, menjalankan assisted apply, membuat Application `pending_review`. Setiap submit tetap butuh approval user.
 * Application record creation: Sudah diimplementasikan. Membuat Application dengan status `pending_review`, `paused`, atau `failed` tergantung hasil flow.
@@ -273,7 +279,9 @@ Jelaskan status integrasi 9router:
 * Chat completions: Sudah ada melalui OpenAI-compatible client dengan base URL resmi `/v1` dari helper bersama.
 * CV analysis: Sudah ada dan terhubung ke API route.
 * Job scoring: Sudah terintegrasi ke flow campaign utama. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold.
+* Job scoring reasoning bahasa Indonesia: Diperketat. Prompt sekarang mewajibkan JSON-only dan semua reasoning user-facing dalam Bahasa Indonesia. Ada fallback sanitasi ringan bila model masih mengembalikan frasa Inggris.
 * Question answering: Sudah ada, menyimpan memory, dan kini ikut memakai helper config 9router melalui client bersama. Terintegrasi ke assisted apply flow.
+* Question answering reasoning bahasa Indonesia: Diperketat. Reasoning dan evidence user-facing dipaksa Bahasa Indonesia dengan prompt dan fallback sanitasi.
 * Structured JSON output: Sudah ada parsing JSON + schema validation.
 * Config helper 9router: Sudah ada di `lib/ai/9router-config.ts` dan mengembalikan `rootUrl`, `apiBaseUrl`, `apiKey`, `chatModel`, `embeddingModel`, `isConfigured`, dan `missingFields`.
 * Health check: Sudah ada di `app/api/settings/9router/health/route.ts` dan memakai `${rootUrl}/api/health`.
@@ -287,13 +295,14 @@ Jelaskan fitur yang melibatkan keputusan user:
 
 * Modal pertanyaan tambahan: Deteksi pertanyaan form terimplementasi. Pertanyaan dijawab dari memory atau AI. Pertanyaan pending disimpan ke Application.answersJson. Status `paused` untuk pertanyaan yang memerlukan input user.
 * Modal captcha/verifikasi: Deteksi login page, captcha, OTP, dan security check terimplementasi. Flow berhenti dan membuat Application status `paused` saat intervensi terdeteksi. Screenshot disimpan.
-* Modal review lamaran: Halaman `/applications/[id]/review` menampilkan detail lengkap. Tombol "Setujui dan Kirim" aktif dengan konfirmasi dialog. Tombol "Lewati Lamaran" aktif. Status hasil submit ditampilkan (success/error/paused).
-* Approve and submit: Sudah diimplementasikan. Tombol "Setujui dan Kirim" mengirim `{ approved: true }` ke API. Browser visible membuka halaman, safe submit button diklik. Berhenti otomatis jika captcha/login/OTP/pertanyaan baru terdeteksi.
+* Modal review lamaran: Halaman `/applications/[id]/review` menampilkan detail lengkap. Tombol "Setujui dan Kirim" aktif dengan konfirmasi dialog. Tombol "Lewati Lamaran" aktif. Status hasil submit kini hanya menampilkan sukses jika API dan refresh data sama-sama menunjukkan status `submitted`; jika belum terverifikasi maka tampil warning `paused`.
+* Approve and submit: Sudah diimplementasikan. Tombol "Setujui dan Kirim" mengirim `{ approved: true }` ke API. Browser visible membuka halaman, safe submit button diklik, lalu diverifikasi. Jika klik submit belum bisa diverifikasi, user diberi pesan untuk memeriksa browser.
 * Edit answer: Tombol "Edit Jawaban" ada di halaman review tetapi dinonaktifkan (belum diimplementasikan).
 * Skip job: Tombol "Lewati Lamaran" aktif di halaman review. Mengubah status ke `skipped` dan mengembalikan JobListing ke `shortlisted`.
-* Pause campaign: API ada dan menulis log nyata. Terintegrasi dengan campaign loop controls.
-* Resume campaign: API ada dan menulis log nyata, tetapi baru status-level.
-* Campaign loop: Sudah diimplementasikan. Tombol "Siapkan Lamaran Berikutnya" di halaman detail kampanye menjalankan loop. Menyiapkan lamaran berikutnya, menunggu approval user. Berhenti saat target tercapai.
+* Pause campaign: API ada dan menulis log nyata. Terintegrasi dengan panel Autopilot v2.
+* Resume campaign: Flow utama sekarang lewat `autopilot/continue` yang bounded per request dan aman untuk dipoll/di-trigger ulang dari UI.
+* Campaign loop lama: Digantikan oleh Campaign Autopilot v2 sebagai flow utama user-facing.
+* Decision memory per campaign: Sudah ada. Jika user memilih `Selalu Lewati Kasus Serupa di Kampanye Ini`, sistem menyimpan `CampaignDecisionRule` dan hanya berlaku untuk kampanye aktif tersebut.
 
 ## 13. Log Aktivitas
 

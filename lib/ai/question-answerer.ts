@@ -6,6 +6,36 @@ import {
   type QuestionAnswerResult,
 } from "@/lib/ai/schemas";
 
+const ENGLISH_REASON_HINTS = [
+  "candidate",
+  "profile",
+  "experience",
+  "overall",
+  "sensitive",
+  "confidence",
+  "insufficient",
+  "ambiguous",
+];
+
+function sanitizeTextToIndonesian(text: string) {
+  return text
+    .replace(/\bcandidate\b/gi, "kandidat")
+    .replace(/\bprofile\b/gi, "profil")
+    .replace(/\bexperience\b/gi, "pengalaman")
+    .replace(/\boverall\b/gi, "secara keseluruhan")
+    .replace(/\bsensitive\b/gi, "sensitif")
+    .replace(/\bconfidence\b/gi, "keyakinan")
+    .replace(/\binsufficient\b/gi, "belum cukup")
+    .replace(/\bambiguous\b/gi, "ambigu")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksEnglish(text: string) {
+  const lower = text.toLowerCase();
+  return ENGLISH_REASON_HINTS.some((hint) => lower.includes(hint));
+}
+
 type AnswerQuestionInput = {
   question: string;
   candidateProfile: CandidateProfileResult;
@@ -34,7 +64,7 @@ export async function answerApplicationQuestion({
       {
         role: "system",
         content:
-          "You answer a job application question using only provided data. Return only valid JSON. Mark requiresHumanReview=true when the question is sensitive, ambiguous, unsupported, asks for judgment, or confidence should be low.",
+          "You answer a job application question using only provided data. Return JSON only. Semua reasoning, explanation, evidence, dan teks yang ditampilkan ke user wajib dalam Bahasa Indonesia. Mark requiresHumanReview=true when the question is sensitive, ambiguous, unsupported, asks for judgment, or confidence should be low.",
       },
       {
         role: "user",
@@ -66,5 +96,11 @@ export async function answerApplicationQuestion({
     throw new Error("9router returned an empty response during question answering.");
   }
 
-  return questionAnswerSchema.parse(extractJsonObject(content));
+  const parsed = questionAnswerSchema.parse(extractJsonObject(content));
+
+  return {
+    ...parsed,
+    reasoning: looksEnglish(parsed.reasoning) ? sanitizeTextToIndonesian(parsed.reasoning) : parsed.reasoning,
+    evidence: parsed.evidence.map((item) => (looksEnglish(item) ? sanitizeTextToIndonesian(item) : item)),
+  };
 }

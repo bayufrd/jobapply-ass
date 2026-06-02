@@ -9,6 +9,10 @@ export async function POST(
 ) {
   try {
     const { id: jobId } = await params;
+    const body = (await request.json().catch(() => ({}))) as {
+      overrideScore?: boolean;
+      reason?: string;
+    };
 
     // Load JobListing
     const job = await prisma.jobListing.findUnique({
@@ -23,19 +27,34 @@ export async function POST(
       );
     }
 
-    // Check if job is shortlisted
-    if (job.status !== "shortlisted") {
-      return NextResponse.json(
-        { error: "Lowongan belum masuk shortlist, tidak dilanjutkan ke proses lamaran." },
-        { status: 400 }
-      );
-    }
-
     // Load related Campaign
     if (!job.campaign) {
       return NextResponse.json(
         { error: "Kampanye terkait tidak ditemukan." },
         { status: 404 }
+      );
+    }
+
+    const score = job.matchScore ?? 0;
+    const threshold = job.campaign.matchThreshold;
+    const requiresOverride = score < threshold;
+
+    if (requiresOverride && !body.overrideScore) {
+      return NextResponse.json(
+        {
+          status: "decision_required",
+          message: "AI menyarankan lowongan ini dilewati, tetapi Anda tetap bisa melamar.",
+          decision: {
+            type: "low_score",
+            jobId: job.id,
+            title: job.title,
+            company: job.company,
+            score,
+            threshold,
+            reason: job.matchReason ?? "AI menyarankan lowongan ini dilewati.",
+          },
+        },
+        { status: 200 }
       );
     }
 
@@ -70,6 +89,24 @@ export async function POST(
       );
     }
 
+    if (body.overrideScore) {
+      await prisma.jobListing.update({
+        where: { id: jobId },
+        data: { status: "shortlisted" },
+      });
+
+      await writeAutomationLog({
+        campaignId: job.campaign.id,
+        jobListingId: jobId,
+        event: "campaign.decision.force_apply",
+        message: body.reason ?? "User memilih tetap melamar walau skor di bawah threshold.",
+        metadata: {
+          score,
+          threshold,
+        },
+      });
+    }
+
     // Log start
     await writeAutomationLog({
       campaignId: job.campaign.id,
@@ -80,6 +117,7 @@ export async function POST(
         jobUrl: job.url,
         jobTitle: job.title,
         company: job.company,
+        overrideScore: body.overrideScore ?? false,
       },
     });
 

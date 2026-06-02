@@ -78,27 +78,36 @@ model UploadedCV {
 }
 
 model Campaign {
-  id                    String          @id @default(cuid())
+  id                    String                 @id @default(cuid())
   name                  String
   keyword               String
   location              String?
-  targetApplyCount      Int             @default(1)
-  appliedCount          Int             @default(0)
-  status                CampaignStatus  @default(draft)
-  submitMode            SubmitMode      @default(assisted_auto_apply)
-  matchThreshold        Int             @default(70)
-  defaultCurrentSalary  Int             @default(6000000)
-  defaultExpectedSalary Int             @default(6000000)
-  defaultNoticePeriod   String          @default("ASAP")
-  defaultAvailability   String          @default("Immediate")
+  targetApplyCount      Int                    @default(1)
+  appliedCount          Int                    @default(0)
+  status                CampaignStatus         @default(draft)
+  submitMode            SubmitMode             @default(assisted_auto_apply)
+  matchThreshold        Int                    @default(70)
+  defaultCurrentSalary  Int                    @default(6000000)
+  defaultExpectedSalary Int                    @default(6000000)
+  defaultNoticePeriod   String                 @default("ASAP")
+  defaultAvailability   String                 @default("Immediate")
   workModePreference    String?
   currentJobTitle       String?
   currentJobCompany     String?
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
+  automationMode        String                 @default("review_each_application")
+  lowScoreMode          String                 @default("ask")
+  autoSubmitSafeOnly    Boolean                @default(false)
+  currentStep           String?
+  currentJobId          String?
+  currentQuestion       String?
+  decisionStatus        String?
+  decisionPayloadJson   String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
   applications          Application[]
   jobListings           JobListing[]
   logs                  AutomationLog[]
+  decisionRules         CampaignDecisionRule[]
 }
 
 model JobListing {
@@ -189,23 +198,37 @@ model UserSetting {
 }
 
 model ApplicationCalibration {
-  id                   String   @id @default(cuid())
-  jobListingId         String
-  campaignId           String?
-  flowType             String?  @default("unknown")
-  platform             String?  @default("unknown")
-  currentUrl           String?
-  pageTitle            String?
-  detectedFieldsJson   String?
+  id                    String     @id @default(cuid())
+  jobListingId          String
+  campaignId            String?
+  flowType              String?    @default("unknown")
+  platform              String?    @default("unknown")
+  currentUrl            String?
+  pageTitle             String?
+  detectedFieldsJson    String?
   detectedQuestionsJson String?
-  detectedButtonsJson  String?
-  submitCandidatesJson String?
-  screenshotPath       String?
-  status               String   @default("pending")
-  notes                String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-  jobListing           JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+  detectedButtonsJson   String?
+  submitCandidatesJson  String?
+  screenshotPath        String?
+  status                String     @default("pending")
+  notes                 String?
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+  jobListing            JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
 
   @@index([jobListingId, createdAt])
+}
+
+model CampaignDecisionRule {
+  id          String   @id @default(cuid())
+  campaignId  String
+  type        String
+  patternText String
+  action      String
+  reason      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, type])
 }

@@ -23,6 +23,9 @@ export async function POST(request: Request) {
       defaultNoticePeriod?: string;
       defaultAvailability?: string;
       submitMode?: "assisted_auto_apply" | "manual_review_only";
+      automationMode?: "review_each_application" | "auto_submit_safe_only";
+      lowScoreMode?: "ask" | "auto_skip";
+      autoSubmitSafeOnly?: boolean;
     };
 
     if (!body.name || !body.keyword) {
@@ -42,13 +45,16 @@ export async function POST(request: Request) {
         defaultNoticePeriod: body.defaultNoticePeriod ?? process.env.DEFAULT_NOTICE_PERIOD ?? "ASAP",
         defaultAvailability: body.defaultAvailability ?? process.env.DEFAULT_AVAILABILITY ?? "Immediate",
         submitMode: body.submitMode ?? "assisted_auto_apply",
+        automationMode: body.automationMode ?? "review_each_application",
+        lowScoreMode: body.lowScoreMode ?? "ask",
+        autoSubmitSafeOnly: body.autoSubmitSafeOnly ?? false,
         status: "ready",
       },
     });
 
     return NextResponse.json({ success: true, campaign }, { status: 201 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to create campaign.";
+    const message = error instanceof Error ? error.message : "Gagal membuat kampanye.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

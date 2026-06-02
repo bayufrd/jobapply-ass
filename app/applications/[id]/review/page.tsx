@@ -158,7 +158,6 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
         setSubmitResult(data.error || "Gagal submit lamaran.");
         setSubmitStatus("error");
       } else {
-        setSubmitResult(data.message);
         setSubmitStatus(data.status === "submitted" ? "success" : data.status === "paused" ? "paused" : "error");
 
         // Refresh application data
@@ -173,6 +172,21 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
               // Ignore
             }
           }
+
+          if (appData.status === "submitted") {
+            setSubmitResult(data.message || "Lamaran berhasil dikirim.");
+            setSubmitStatus("success");
+          } else if (appData.status === "paused") {
+            setSubmitResult(
+              data.message || "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+            );
+            setSubmitStatus("paused");
+          } else {
+            setSubmitResult(data.message || "Submit lamaran belum berhasil diverifikasi.");
+            setSubmitStatus("error");
+          }
+        } else {
+          setSubmitResult(data.message || "Status submit diterima, tetapi data lamaran gagal dimuat ulang.");
         }
       }
     } catch (err) {
@@ -327,6 +341,7 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
             <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
               <p className="font-medium">⚠️ Perlu perhatian manual</p>
               <p className="mt-1">Lamaran ini memerlukan tindakan manual Anda sebelum dapat dilanjutkan.</p>
+              <p className="mt-1 text-amber-200">Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.</p>
             </div>
           )}
 
@@ -460,14 +475,16 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
           </div>
           <p className="mt-3 text-xs text-slate-500">
             {canSubmit
-              ? 'Klik "Setujui dan Kirim" untuk mengirim lamaran. Browser akan terbuka dan tombol submit akan diklik secara otomatis. Pastikan Anda sudah meninjau semua data.'
+              ? 'Klik "Setujui dan Kirim" untuk mengirim lamaran. Browser akan terbuka dan tombol submit final hanya akan dianggap berhasil jika sistem bisa memverifikasi konfirmasi terkirim.'
               : application.status === "submitted"
                 ? "Lamaran sudah berhasil dikirim."
-                : application.status === "failed"
-                  ? "Lamaran gagal dikirim. Periksa screenshot dan log untuk detail."
-                  : application.status === "skipped"
-                    ? "Lamaran ini dilewati."
-                    : "Status lamaran: " + statusLabel(application.status)}
+                : application.status === "paused"
+                  ? "Submit belum terverifikasi penuh. Periksa browser dan review ulang sebelum melanjutkan."
+                  : application.status === "failed"
+                    ? "Lamaran gagal dikirim. Periksa screenshot dan log untuk detail."
+                    : application.status === "skipped"
+                      ? "Lamaran ini dilewati."
+                      : "Status lamaran: " + statusLabel(application.status)}
           </p>
         </div>
       </div>
