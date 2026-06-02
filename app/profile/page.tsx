@@ -4,11 +4,14 @@ import { parseProfileJson } from "@/lib/profile/parse-profile-json";
 import { humanizeKey, renderFlexibleObject } from "@/lib/profile/humanize";
 import Link from "next/link";
 
-function formatDate(date: Date) {
+function formatDate(date: Date | string | null | undefined) {
+  if (!date) return "-";
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return "-";
   return new Intl.DateTimeFormat("id-ID", {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(date);
+  }).format(d);
 }
 
 function getTextValue(value: unknown) {

@@ -96,6 +96,24 @@ const BLOCKED_SUBMIT_LABELS = [
   "batal",
 ];
 
+const CONTINUE_LABELS = [
+  "continue",
+  "next",
+  "selanjutnya",
+  "lanjut",
+  "proceed",
+  "review",
+  "continue application",
+];
+
+const SUBMIT_SUCCESS_MARKERS = [
+  "keep it up",
+  "your application has been sent",
+  "application has been sent",
+  "lamaran berhasil dikirim",
+  "application sent",
+];
+
 type AnswersJson = {
   fieldsFilled: FilledField[];
   questionAnswers: Array<{
@@ -310,7 +328,10 @@ export async function startJobApplication({
       metadata: { fields: filledFields },
     });
 
-    // Step 8: Detect and answer questions
+    // Step 8: Safely continue internal multi-step flow before final review
+    await traverseInternalApplySteps(page);
+
+    // Step 9: Detect and answer questions on the final/current review step
     const questionTexts = await detectFormQuestions(page);
     const questionAnswers: AnswersJson["questionAnswers"] = [];
     const pendingQuestions: AnswersJson["pendingQuestions"] = [];
@@ -457,11 +478,12 @@ export async function startJobApplication({
       }
     }
 
-    // Step 9: Detect submit button and STOP before clicking
+    // Step 10: Detect submit button and STOP before clicking
     const submitSelector = await detectSubmitButton(page);
     const hasPendingQuestions = pendingQuestions.length > 0;
+    const reachedFinalReview = Boolean(submitSelector);
 
-    // Step 10: Determine status
+    // Step 11: Determine status
     const answersJson: AnswersJson = {
       fieldsFilled: filledFields,
       questionAnswers,
@@ -474,16 +496,19 @@ export async function startJobApplication({
     if (hasPendingQuestions) {
       appStatus = "paused";
       notes = `Ada ${pendingQuestions.length} pertanyaan yang memerlukan input user. ${filledCount} field berhasil diisi.`;
+    } else if (!reachedFinalReview) {
+      appStatus = "paused";
+      notes = `Form lamaran belum mencapai halaman review final Jobstreet. ${filledCount} field diisi, ${questionAnswers.length} pertanyaan dijawab. Lanjutkan sampai tombol Submit application terlihat.`;
     } else {
       appStatus = "pending_review";
-      notes = `Form lamaran sudah disiapkan. ${filledCount} field diisi, ${questionAnswers.length} pertanyaan dijawab. Menunggu review user.`;
+      notes = `Form lamaran sudah mencapai halaman review final. ${filledCount} field diisi, ${questionAnswers.length} pertanyaan dijawab. Menunggu review user.`;
     }
 
     if (submitSelector) {
       notes += " Tombol submit terdeteksi tetapi TIDAK diklik (menunggu approval user).";
     }
 
-    // Step 11: Create Application record
+    // Step 12: Create Application record
     const app = await prisma.application.create({
       data: {
         campaignId: campaign.id,
@@ -505,14 +530,17 @@ export async function startJobApplication({
     await writeAutomationLog({
       campaignId: campaign.id,
       jobListingId: jobListing.id,
-      event: "application.review_required",
-      message: `Form lamaran sudah disiapkan dan menunggu review user. Status: ${appStatus}`,
+      event: reachedFinalReview ? "application.review_required" : "application.form_not_ready",
+      message: reachedFinalReview
+        ? `Form lamaran sudah mencapai review final dan menunggu review user. Status: ${appStatus}`
+        : `Form lamaran belum mencapai review final Jobstreet. Status: ${appStatus}`,
       metadata: {
         applicationId: app.id,
         fieldsFilled: filledCount,
         questionsAnswered: questionAnswers.length,
         pendingQuestions: pendingQuestions.length,
         submitDetected: !!submitSelector,
+        reachedFinalReview,
       },
     });
 
@@ -520,7 +548,9 @@ export async function startJobApplication({
       status: appStatus,
       message: hasPendingQuestions
         ? `Ada ${pendingQuestions.length} pertanyaan yang memerlukan jawaban Anda. ${filledCount} field sudah diisi otomatis.`
-        : "Form lamaran sudah disiapkan dan menunggu review user.",
+        : reachedFinalReview
+          ? "Form lamaran sudah mencapai review final dan menunggu review user."
+          : "Form lamaran belum mencapai review final Jobstreet. Lanjutkan sampai tombol Submit application terlihat.",
       applicationId: app.id,
     };
   } catch (error) {
@@ -759,8 +789,25 @@ export async function submitApplication({
       };
     }
 
-    // Step 10: Wait for response and verify
-    await page.waitForTimeout(5000);
+    // Step 10: Wait for response and verify actual submit success
+    await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
+    await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+    await page.waitForTimeout(2500);
+
+    const pageText = (await page.textContent("body").catch(() => ""))?.toLowerCase() ?? "";
+    const submitSuccessDetected = SUBMIT_SUCCESS_MARKERS.some((marker) => pageText.includes(marker));
+    const submitButtonStillVisible = await page
+      .locator("button, input[type='submit'], input[type='button'], a[role='button']")
+      .evaluateAll((elements, labels) =>
+        elements.some((el) => {
+          const text = ((el.textContent || (el as HTMLInputElement).value || "").trim().toLowerCase());
+          const visible = !(el as HTMLElement).hasAttribute("disabled")
+            && ((el as HTMLElement).offsetParent !== null || getComputedStyle(el as HTMLElement).position === "fixed");
+          return visible && (labels as string[]).some((label) => text.includes(label));
+        }),
+        ALLOWED_SUBMIT_LABELS,
+      )
+      .catch(() => false);
 
     // Check for post-submit intervention
     const postSubmitIntervention = await detectManualIntervention(page);
@@ -788,6 +835,34 @@ export async function submitApplication({
       };
     }
 
+    if (!submitSuccessDetected || submitButtonStillVisible) {
+      screenshotPath = await saveScreenshot(page, "submit_unverified", applicationId);
+
+      await writeAutomationLog({
+        campaignId,
+        jobListingId,
+        level: "warn",
+        event: "application.submit_unverified",
+        message: "Klik submit sudah dilakukan, tetapi halaman konfirmasi sukses Jobstreet belum terverifikasi atau tombol submit masih terlihat.",
+        metadata: { applicationId, screenshotPath, currentUrl: page.url(), submitButtonStillVisible },
+      });
+
+      await prisma.application.update({
+        where: { id: applicationId },
+        data: {
+          status: "paused",
+          screenshotPath,
+          notes: "Submit belum diverifikasi oleh sistem. Periksa halaman browser yang terbuka.",
+        },
+      });
+
+      return {
+        status: "paused",
+        message: "Submit belum dapat diverifikasi dari halaman konfirmasi Jobstreet atau tombol submit masih terlihat. Periksa browser visible.",
+        screenshotPath: screenshotPath ?? undefined,
+      };
+    }
+
     // Step 11: Capture success screenshot
     screenshotPath = await saveScreenshot(page, "after_submit", applicationId);
 
@@ -796,7 +871,7 @@ export async function submitApplication({
       jobListingId,
       event: "application.submitted",
       message: `Lamaran berhasil dikirim untuk "${jobListingUrl}".`,
-      metadata: { applicationId, screenshotPath },
+      metadata: { applicationId, screenshotPath, currentUrl: page.url() },
     });
 
     return {
@@ -903,6 +978,81 @@ async function findAndClickSafeSubmitButton(page: Page): Promise<boolean> {
   }
 
   return false;
+}
+
+async function clickSafeContinueButton(page: Page): Promise<{ clicked: boolean; label?: string }> {
+  const selectors = [
+    "button",
+    "input[type='button']",
+    "input[type='submit']",
+    "a[role='button']",
+  ];
+
+  for (const selector of selectors) {
+    try {
+      const elements = page.locator(selector);
+      const count = await elements.count();
+      for (let i = 0; i < Math.min(count, 30); i++) {
+        const el = elements.nth(i);
+        try {
+          if (!(await el.isVisible()) || (await el.isDisabled())) continue;
+          const text = (((await el.textContent()) ?? (await el.getAttribute("value")) ?? "")).toLowerCase().trim();
+          if (!text) continue;
+
+          const isContinue = CONTINUE_LABELS.some((label) => text.includes(label));
+          const isBlockedSubmit = ALLOWED_SUBMIT_LABELS.some((label) => text.includes(label))
+            && !BLOCKED_SUBMIT_LABELS.some((label) => text.includes(label));
+          if (!isContinue || isBlockedSubmit) continue;
+
+          await el.click();
+          await page.waitForTimeout(2500);
+          return { clicked: true, label: text.substring(0, 200) };
+        } catch {
+          // Try next
+        }
+      }
+    } catch {
+      // Try next selector group
+    }
+  }
+
+  return { clicked: false };
+}
+
+async function traverseInternalApplySteps(page: Page): Promise<void> {
+  let lastFingerprint = "";
+  let lastUrl = page.url();
+
+  for (let step = 1; step <= 5; step++) {
+    const currentQuestions = await detectFormQuestions(page).catch(() => [] as string[]);
+    const currentButtons = await page
+      .locator("button, input[type='submit'], input[type='button'], a[role='button']")
+      .evaluateAll((elements) =>
+        elements
+          .map((el) => ((el.textContent || (el as HTMLInputElement).value || "").trim().toLowerCase()))
+          .filter(Boolean)
+          .slice(0, 20),
+      )
+      .catch(() => [] as string[]);
+
+    const fingerprint = JSON.stringify({
+      url: page.url(),
+      questions: currentQuestions.slice(0, 20),
+      buttons: currentButtons,
+    });
+
+    if (fingerprint === lastFingerprint) break;
+    lastFingerprint = fingerprint;
+
+    const nextResult = await clickSafeContinueButton(page);
+    if (!nextResult.clicked) break;
+
+    const currentUrl = page.url();
+    if (currentUrl !== lastUrl) {
+      await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
+      lastUrl = currentUrl;
+    }
+  }
 }
 
 // ── Apply Button Finder ────────────────────────────────────────────────

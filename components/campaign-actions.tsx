@@ -66,7 +66,24 @@ export function CampaignActions({
     }
   }
 
+  async function handleStart() {
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/start`, { method: "POST" });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        alert(data.error || "Gagal memulai kampanye");
+      } else {
+        alert(data.message || "Kampanye dimulai");
+        window.location.reload();
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Terjadi kesalahan");
+    }
+  }
+
   const isActive = campaignStatus === "running" || campaignStatus === "paused";
+  const canStart = ["ready", "stopped", "error", "completed"].includes(campaignStatus);
   const targetReached = appliedCount >= targetApplyCount;
 
   return (
@@ -122,6 +139,15 @@ export function CampaignActions({
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
         <h3 className="text-lg font-semibold">Kontrol Kampanye</h3>
         <div className="mt-4 flex flex-wrap gap-3">
+          {canStart && (
+            <button
+              onClick={handleStart}
+              className="rounded-xl bg-emerald-500 px-4 py-3 text-sm font-medium text-slate-950 hover:bg-emerald-400"
+            >
+              {campaignStatus === "ready" ? "Mulai Kampanye" : "Mulai Ulang Kampanye"}
+            </button>
+          )}
+
           <button
             onClick={handleLoop}
             disabled={loopLoading || !isActive || targetReached}

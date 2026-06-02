@@ -53,3 +53,6 @@ storage/jobstreet.auth.json
 # keep storage directories
 !storage/cv/.gitkeep
 !storage/screenshots/.gitkeep
+/storage/
+/storage/*
+storage/

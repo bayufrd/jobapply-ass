@@ -1,11 +1,14 @@
 import { AppShell } from "@/components/app-shell";
 import { prisma } from "@/lib/db/prisma";
 
-function formatDate(date: Date) {
+function formatDate(date: Date | string | null | undefined) {
+  if (!date) return "-";
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return "-";
   return new Intl.DateTimeFormat("id-ID", {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(date);
+  }).format(d);
 }
 
 function statusLabel(status: string) {

@@ -1,14 +1,18 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { CampaignActions } from "@/components/campaign-actions";
 import { getCampaignDetailData, getJobsCountForCampaign } from "@/lib/dashboard/data";
 
-function formatDate(date: Date) {
+function formatDate(date: Date | string | null | undefined) {
+  if (!date) return "-";
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return "-";
   return new Intl.DateTimeFormat("id-ID", {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(date);
+  }).format(d);
 }
 
 function statusLabel(status: string) {
@@ -103,6 +107,7 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
       title={campaign.name}
       description="Detail kampanye dari database lokal, termasuk progres pencarian, lowongan ditemukan, dan log otomatisasi terbaru."
     >
+      <AutoRefresh enabled={campaign.status === "running" || campaign.status === "paused"} intervalMs={5000} />
       {/* Status message after search */}
       {latestSearchLog && (
         <div
@@ -251,8 +256,8 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
             </div>
           ) : (
             campaign.logs.map((log) => (
-              <div key={log.id} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-400">
+              <div key={log.id} className="rounded-xl border border-slate-800 bg-slate-950 p-4 overflow-hidden">
+                <div className="flex flex-wrap items-center gap-2 break-all text-xs uppercase tracking-[0.2em] text-slate-400">
                   <span
                     className={
                       log.level === "error"
@@ -267,8 +272,8 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
                   <span>•</span>
                   <span>{log.event}</span>
                 </div>
-                <p className="mt-2 text-slate-200">{log.message}</p>
-                <p className="mt-2 text-xs text-slate-500">
+                <p className="mt-2 whitespace-pre-wrap break-words break-all text-slate-200">{log.message}</p>
+                <p className="mt-2 break-all text-xs text-slate-500">
                   {log.jobListing ? `Lowongan: ${log.jobListing.title} · ` : ""}
                   {formatDate(log.createdAt)}
                 </p>

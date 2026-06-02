@@ -1,7 +1,6 @@
 "use client";
 
 import { AppShell } from "@/components/app-shell";
-import { getJobsData } from "@/lib/dashboard/data";
 import { useState, useEffect, useCallback } from "react";
 
 type JobCalibration = {
@@ -36,11 +35,91 @@ type JobItem = {
   logs: { createdAt: Date }[];
 };
 
-function formatDate(date: Date) {
+function formatDate(date: Date | string | null | undefined) {
+  if (!date) return "-";
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return "-";
   return new Intl.DateTimeFormat("id-ID", {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(date);
+  }).format(d);
+}
+
+function translateAiReasonPoint(item: string) {
+  let text = item.trim();
+
+  const replacements: Array<[RegExp, string]> = [
+    [/^partial match only\.?/i, "Kecocokan hanya sebagian."],
+    [/^overall,?/i, "Kesimpulan:"],
+    [/^the job title aligns reasonably well with the candidate[’']?s recent /i, "Judul lowongan cukup selaras dengan pengalaman terbaru kandidat sebagai "],
+    [/ and the campaign keyword /i, " serta kata kunci kampanye "],
+    [/^candidate has /i, "Kandidat memiliki "],
+    [/^the candidate has /i, "Kandidat memiliki "],
+    [/relevant general fullstack skills such as/gi, "skill fullstack umum yang relevan seperti"],
+    [/relevant software development background/gi, "latar belakang pengembangan software yang relevan"],
+    [/plus over 1 year of software development experience/gi, "serta pengalaman pengembangan software lebih dari 1 tahun"],
+    [/plus over 1 year of software development pengalaman/gi, "serta pengalaman pengembangan software lebih dari 1 tahun"],
+    [/which gives some alignment to the engineering aspects of the role/gi, "sehingga ada kecocokan pada aspek engineering dari posisi ini"],
+    [/however, the visible job strongly requires/gi, "Namun, lowongan yang terlihat sangat menekankan kebutuhan pada"],
+    [/however, the job has several critical requirements not evidenced in the profile/gi, "Namun, lowongan ini memiliki beberapa persyaratan penting yang belum terlihat pada profil"],
+    [/none of which are clearly shown in the candidate profile/gi, "yang semuanya belum terlihat jelas pada profil kandidat"],
+    [/none of which are clearly shown in the kandidat profil/gi, "yang semuanya belum terlihat jelas pada profil kandidat"],
+    [/this creates a significant skill gap despite a decent title match/gi, "Hal ini menimbulkan kesenjangan skill yang cukup besar meskipun judul posisinya terlihat cukup cocok"],
+    [/location is a good match since/gi, "Lokasi cocok karena"],
+    [/location is reasonably compatible since/gi, "Lokasi cukup sesuai karena"],
+    [/salary is fully compatible because/gi, "Gaji sangat sesuai karena"],
+    [/salary exceeds the candidate[’']?s expected salary/gi, "Gaji melebihi ekspektasi kandidat"],
+    [/the job range is above the candidate[’']?s expected salary/gi, "rentang gaji lowongan berada di atas ekspektasi gaji kandidat"],
+    [/the lowongan range is above the kandidat[’']?s expected gaji/gi, "rentang gaji lowongan berada di atas ekspektasi gaji kandidat"],
+    [/so compensation is compatible/gi, "sehingga kompensasinya sesuai"],
+    [/overall, this falls below the campaign match threshold due to/gi, "Secara keseluruhan, lowongan ini berada di bawah ambang kecocokan kampanye karena"],
+    [/this is a moderate-to-weak fit due to/gi, "Kecocokan lowongan ini berada pada tingkat sedang ke lemah karena"],
+    [/the missing japanese language requirement/gi, "syarat bahasa Jepang yang belum terpenuhi"],
+    [/limited direct match to the role[’']?s seniority and stack/gi, "kecocokan langsung yang masih terbatas terhadap senioritas dan stack posisi ini"],
+    [/missing core domain-specific requirements/gi, "adanya persyaratan inti yang spesifik pada domain ini namun belum terpenuhi"],
+    [/fluent Japanese with minimum JLPT N3/gi, "kemampuan bahasa Jepang aktif minimal JLPT N3"],
+    [/strong Java\/Spring or VB\.NET focus/gi, "fokus kuat pada Java/Spring atau VB.NET"],
+    [/deeper system design leadership/gi, "kemampuan desain sistem dan leadership yang lebih mendalam"],
+    [/infrastructure administration/gi, "administrasi infrastruktur"],
+    [/mentoring at the level described/gi, "pengalaman mentoring sesuai level yang diminta"],
+    [/the candidate appears to have around/gi, "Kandidat terlihat memiliki sekitar"],
+    [/years of professional experience/gi, "tahun pengalaman profesional"],
+    [/but the role asks for over/gi, "namun posisi ini meminta lebih dari"],
+    [/plus at least/gi, "serta minimal"],
+    [/in system design and development/gi, "dalam desain dan pengembangan sistem"],
+    [/which is not clearly supported/gi, "yang belum terlihat jelas pada profil"],
+    [/candidate/gi, "kandidat"],
+    [/kandidat’s/gi, "kandidat"],
+    [/profile/gi, "profil"],
+    [/role/gi, "posisi"],
+    [/requirements/gi, "persyaratan"],
+    [/requirement/gi, "persyaratan"],
+    [/experience/gi, "pengalaman"],
+    [/location/gi, "lokasi"],
+    [/salary/gi, "gaji"],
+    [/job title/gi, "judul lowongan"],
+    [/job range/gi, "rentang gaji lowongan"],
+    [/job/gi, "lowongan"],
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    text = text.replace(pattern, replacement);
+  }
+
+  text = text
+    .replace(/\s+/g, " ")
+    .replace(/\s+([.,:;])/g, "$1")
+    .trim();
+
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function formatMatchReason(reason: string) {
+  return reason
+    .split(/\n+|(?<=[.!?])\s+(?=[A-Z])/)
+    .map((item) => item.replace(/^[-•\s]+/, "").trim())
+    .filter((item) => item.length > 0)
+    .map(translateAiReasonPoint);
 }
 
 function statusLabel(status: string) {
@@ -126,18 +205,21 @@ export default function JobsPage() {
   const [calibratingJobId, setCalibratingJobId] = useState<string | null>(null);
 
   const refreshJobs = useCallback(async () => {
-    const data = (await getJobsData()) as unknown as JobItem[];
-    setJobs(data);
+    const response = await fetch("/api/jobs");
+    const data = await response.json();
+    setJobs(data.jobs || []);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    (getJobsData() as Promise<unknown>).then((data) => {
-      if (!cancelled) {
-        setJobs(data as JobItem[]);
-        setLoading(false);
-      }
-    });
+    fetch("/api/jobs")
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) {
+          setJobs(data.jobs || []);
+          setLoading(false);
+        }
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -294,7 +376,11 @@ export default function JobsPage() {
                         <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
                           Alasan AI
                         </p>
-                        <p className="mt-1">{job.matchReason}</p>
+                        <ul className="mt-2 list-disc space-y-1 pl-5">
+                          {formatMatchReason(job.matchReason).map((point, index) => (
+                            <li key={`${job.id}-reason-${index}`}>{point}</li>
+                          ))}
+                        </ul>
                       </div>
                     )}
 
@@ -339,7 +425,7 @@ export default function JobsPage() {
                           </>
                         ) : (
                           <div className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-500">
-                            {job.status === "skipped" ? "Lowongan dilewati" : "Belum masuk shortlist"}
+                            {job.status === "skipped" ? "Tidak bisa dilamar karena skor di bawah ambang kampanye" : "Belum masuk shortlist"}
                           </div>
                         )}
                         <a

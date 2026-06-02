@@ -67,6 +67,9 @@ const MAX_JOBS_HARD_LIMIT = 20;
 const DEFAULT_MAX_JOBS = 10;
 const PAGE_LOAD_TIMEOUT = 30_000;
 const JOB_DETAIL_TIMEOUT = 20_000;
+const SEARCH_SETTLE_DELAY_MS = 1200;
+const DETAIL_SETTLE_DELAY_MS = 700;
+const BETWEEN_JOBS_DELAY_MS = 250;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -534,7 +537,7 @@ export async function runJobstreetCampaign(
       waitUntil: "domcontentloaded",
       timeout: PAGE_LOAD_TIMEOUT,
     });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(SEARCH_SETTLE_DELAY_MS);
 
     // 3. Check for manual intervention on homepage
     const homeIntervention = await checkIntervention(
@@ -557,7 +560,7 @@ export async function runJobstreetCampaign(
       waitUntil: "domcontentloaded",
       timeout: PAGE_LOAD_TIMEOUT,
     });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(SEARCH_SETTLE_DELAY_MS);
 
     // 5. Check for manual intervention on search page
     const searchIntervention = await checkIntervention(
@@ -594,6 +597,7 @@ export async function runJobstreetCampaign(
 
     // 7. Process each job card (up to maxJobs)
     const cardsToProcess = jobCards.slice(0, maxJobs);
+    const detailPage = await context.newPage();
 
     for (let i = 0; i < cardsToProcess.length; i++) {
       const card = cardsToProcess[i];
@@ -614,13 +618,13 @@ export async function runJobstreetCampaign(
       });
 
       try {
-        // Open job detail page
-        const detailPage = await context.newPage();
+        // Open job detail page in a reused tab for faster traversal
         await detailPage.goto(card.url, {
           waitUntil: "domcontentloaded",
           timeout: JOB_DETAIL_TIMEOUT,
         });
-        await detailPage.waitForTimeout(2000);
+        await detailPage.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => undefined);
+        await detailPage.waitForTimeout(DETAIL_SETTLE_DELAY_MS);
 
         // Check for intervention on detail page
         const detailIntervention = await detectManualIntervention(detailPage);
@@ -636,14 +640,11 @@ export async function runJobstreetCampaign(
               details: detailIntervention.details,
             },
           });
-          await detailPage.close();
           continue;
         }
 
         // Extract job detail
         const detail = await extractJobDetail(detailPage, card.url);
-        await detailPage.close();
-
         await writeAutomationLog({
           campaignId: input.campaignId,
           event: "jobstreet.job_detail_opened",
@@ -690,8 +691,8 @@ export async function runJobstreetCampaign(
 
         await scoreAndUpdateJobListing(jobListingId, detail, input);
 
-        // Small delay between jobs to be respectful
-        await page.waitForTimeout(1500);
+        // Small delay between jobs to be respectful, but keep search responsive
+        await page.waitForTimeout(BETWEEN_JOBS_DELAY_MS);
       } catch (jobError) {
         await writeAutomationLog({
           campaignId: input.campaignId,
@@ -702,6 +703,8 @@ export async function runJobstreetCampaign(
         });
       }
     }
+
+    await detailPage.close().catch(() => undefined);
 
     // 8. Final result
     const resultMessage = `Pencarian selesai. ${jobsSaved} lowongan berhasil disimpan dari ${jobsFound} yang ditemukan.`;

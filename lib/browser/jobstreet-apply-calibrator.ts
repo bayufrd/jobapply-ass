@@ -135,6 +135,16 @@ const BLOCKED_LABELS = [
   "batal",
 ];
 
+const CONTINUE_LABELS = [
+  "continue",
+  "next",
+  "selanjutnya",
+  "lanjut",
+  "proceed",
+  "review",
+  "continue application",
+];
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 async function saveCalibrationScreenshot(
@@ -250,6 +260,8 @@ type ApplyButtonMatch = {
   found: boolean;
   strategy: string;
   selector: string;
+  text?: string;
+  role?: "button" | "link";
 };
 
 async function detectApplyButton(page: Page): Promise<ApplyButtonMatch> {
@@ -258,7 +270,13 @@ async function detectApplyButton(page: Page): Promise<ApplyButtonMatch> {
     try {
       const btn = page.getByRole("button", { name: new RegExp(text, "i") }).first();
       if ((await btn.count()) > 0 && (await btn.isVisible())) {
-        return { found: true, strategy: "role-button-text", selector: `getByRole("button", { name: /${text}/i })` };
+        return {
+          found: true,
+          strategy: "role-button-text",
+          selector: `getByRole("button", { name: /${text}/i })`,
+          text,
+          role: "button",
+        };
       }
     } catch {
       // Continue
@@ -270,7 +288,13 @@ async function detectApplyButton(page: Page): Promise<ApplyButtonMatch> {
     try {
       const link = page.getByRole("link", { name: new RegExp(text, "i") }).first();
       if ((await link.count()) > 0 && (await link.isVisible())) {
-        return { found: true, strategy: "role-link-text", selector: `getByRole("link", { name: /${text}/i })` };
+        return {
+          found: true,
+          strategy: "role-link-text",
+          selector: `getByRole("link", { name: /${text}/i })`,
+          text,
+          role: "link",
+        };
       }
     } catch {
       // Continue
@@ -346,6 +370,82 @@ async function detectApplyButton(page: Page): Promise<ApplyButtonMatch> {
   }
 
   return { found: false, strategy: "none", selector: "" };
+}
+
+async function clickSafeContinueButton(page: Page): Promise<{ clicked: boolean; label?: string }> {
+  const selectors = [
+    "button",
+    "input[type='button']",
+    "input[type='submit']",
+    "a[role='button']",
+  ];
+
+  for (const selector of selectors) {
+    try {
+      const elements = page.locator(selector);
+      const count = await elements.count();
+      for (let i = 0; i < Math.min(count, 30); i++) {
+        const el = elements.nth(i);
+        try {
+          if (!(await el.isVisible()) || (await el.isDisabled())) continue;
+          const text = (((await el.textContent()) ?? (await el.getAttribute("value")) ?? "")).toLowerCase().trim();
+          if (!text) continue;
+
+          const isContinue = CONTINUE_LABELS.some((label) => text.includes(label));
+          const isBlocked = SUBMIT_LABELS.some((label) => text.includes(label)) && !BLOCKED_LABELS.some((label) => text.includes(label));
+          if (!isContinue || isBlocked) continue;
+
+          await el.click();
+          await page.waitForTimeout(2500);
+          return { clicked: true, label: text.substring(0, 200) };
+        } catch {
+          // Try next
+        }
+      }
+    } catch {
+      // Try next selector group
+    }
+  }
+
+  return { clicked: false };
+}
+
+async function collectMultiStepSnapshot(
+  page: Page,
+  calibrationId: string,
+): Promise<{ snapshot: FormSnapshot; screenshotPath: string | null; traversedSteps: string[] }> {
+  const traversedSteps: string[] = [];
+  let lastUrl = page.url();
+  let lastFingerprint = "";
+  let screenshotPath = await saveCalibrationScreenshot(page, "form_step_0", calibrationId);
+  let snapshot = await snapshotForm(page, screenshotPath);
+
+  for (let step = 1; step <= 5; step++) {
+    const fingerprint = JSON.stringify({
+      url: snapshot.currentUrl,
+      inputs: snapshot.detectedInputs.map((item) => `${item.name}|${item.label}|${item.type}`).slice(0, 20),
+      questions: snapshot.detectedQuestions.map((item) => item.text).slice(0, 20),
+      buttons: snapshot.detectedButtons.map((item) => item.text).slice(0, 20),
+    });
+
+    if (fingerprint === lastFingerprint) break;
+    lastFingerprint = fingerprint;
+
+    const nextResult = await clickSafeContinueButton(page);
+    if (!nextResult.clicked) break;
+
+    traversedSteps.push(nextResult.label ?? `step-${step}`);
+    const currentUrl = page.url();
+    if (currentUrl !== lastUrl) {
+      await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
+      lastUrl = currentUrl;
+    }
+
+    screenshotPath = await saveCalibrationScreenshot(page, `form_step_${step}`, calibrationId);
+    snapshot = await snapshotForm(page, screenshotPath);
+  }
+
+  return { snapshot, screenshotPath, traversedSteps };
 }
 
 // ── Form Snapshot ──────────────────────────────────────────────────────
@@ -738,13 +838,27 @@ export async function calibrateJobApply({
     // Step 4: Click apply button for calibration
     try {
       // Re-find and click the button
-      const btn = page.locator(applyMatch.selector).first();
-      if ((await btn.count()) > 0 && (await btn.isVisible())) {
-        await btn.click();
-      } else {
+      let clicked = false;
+
+      if (applyMatch.role && applyMatch.text) {
+        const roleLocator = page.getByRole(applyMatch.role, { name: new RegExp(applyMatch.text, "i") }).first();
+        if ((await roleLocator.count()) > 0 && (await roleLocator.isVisible())) {
+          await roleLocator.click();
+          clicked = true;
+        }
+      }
+
+      if (!clicked) {
+        const btn = page.locator(applyMatch.selector).first();
+        if ((await btn.count()) > 0 && (await btn.isVisible())) {
+          await btn.click();
+          clicked = true;
+        }
+      }
+
+      if (!clicked) {
         // Fallback: try generic detection again
         const fallbackTexts = ["Lamar", "Apply", "Lamar sekarang", "Apply now"];
-        let clicked = false;
         for (const text of fallbackTexts) {
           try {
             const el = page.locator(`button:has-text('${text}'), a:has-text('${text}')`).first();
@@ -757,9 +871,10 @@ export async function calibrateJobApply({
             // Continue
           }
         }
-        if (!clicked) {
-          throw new Error("Tidak bisa mengklik tombol lamar.");
-        }
+      }
+
+      if (!clicked) {
+        throw new Error("Tidak bisa mengklik tombol lamar.");
       }
     } catch (clickError) {
       const screenshotPath = await saveCalibrationScreenshot(page, "click_failed", calibrationId);
@@ -845,8 +960,7 @@ export async function calibrateJobApply({
       pageContent.toLowerCase().includes("kirim cv ke");
 
     // Step 8: Snapshot the form
-    const screenshotPath = await saveCalibrationScreenshot(page, "form_snapshot", calibrationId);
-    const snapshot = await snapshotForm(page, screenshotPath);
+    const { snapshot, screenshotPath, traversedSteps } = await collectMultiStepSnapshot(page, calibrationId);
 
     // Override flow type if email instructions detected
     if (hasEmailInstructions && snapshot.flowType !== "email_apply") {
@@ -866,6 +980,7 @@ export async function calibrateJobApply({
         questionsCount: snapshot.detectedQuestions.length,
         buttonsCount: snapshot.detectedButtons.length,
         submitCandidates: snapshot.submitButtonCandidates.length,
+        traversedSteps,
       },
     });
 
@@ -902,7 +1017,7 @@ export async function calibrateJobApply({
         detectedButtonsJson: JSON.stringify(snapshot.detectedButtons),
         submitCandidatesJson: JSON.stringify(snapshot.submitButtonCandidates),
         screenshotPath: snapshot.screenshotPath,
-        notes,
+        notes: traversedSteps.length > 0 ? `${notes} Langkah lanjutan terdeteksi: ${traversedSteps.join(" → ")}` : notes,
       },
     });
 
