@@ -56,3 +56,5 @@ storage/jobstreet.auth.json
 /storage/
 /storage/*
 storage/
+.mcp-browser-profile/
+.mcp-output/

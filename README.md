@@ -18,6 +18,33 @@ Local-first private MVP for assisted job applications with human oversight. The 
 npm install
 ```
 
+## Playwright MCP setup
+
+Install MCP for Codex:
+
+```bash
+codex mcp add playwright npx "@playwright/mcp@latest"
+```
+
+Local sidecar command:
+
+```bash
+npx @playwright/mcp@latest --port 8931 --user-data-dir .mcp-browser-profile --viewport-size 1366x900 --timeout-action 5000 --timeout-navigation 60000
+```
+
+Atau jalankan script berikut:
+
+```bash
+npm run mcp:playwright
+```
+
+Catatan MCP:
+
+- MCP dipakai untuk pembacaan form live berbasis AI-first.
+- Runtime app tetap memakai aturan automasi aman.
+- MCP tidak dipakai untuk bypass captcha.
+- Profil browser MCP menyimpan session login lokal dan tidak boleh di-commit.
+
 ## Environment configuration
 
 Create or edit [`.env`](.env) with values like these:
@@ -41,6 +68,10 @@ JOBSTREET_EMAIL=""
 JOBSTREET_PASSWORD=""
 PLAYWRIGHT_HEADLESS="false"
 PLAYWRIGHT_SESSION_PATH="./storage/jobstreet.auth.json"
+PLAYWRIGHT_MCP_ENABLED="true"
+PLAYWRIGHT_MCP_URL="http://localhost:8931/mcp"
+PLAYWRIGHT_MCP_USER_DATA_DIR=".mcp-browser-profile"
+FORM_AUTOMATION_DEFAULT="mcp_ai_first"
 DEFAULT_EXPECTED_SALARY="6000000"
 DEFAULT_CURRENT_SALARY="6000000"
 DEFAULT_NOTICE_PERIOD="ASAP"

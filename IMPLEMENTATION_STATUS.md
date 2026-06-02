@@ -31,7 +31,7 @@ Status saat ini:
 * [ ] MVP selesai
 
 Catatan singkat:
-Project sekarang sudah berjalan sebagai fondasi MVP lokal yang jujur dengan Campaign Autopilot v2. User dapat membuat kampanye sekali lalu menjalankan alur autopilot terkontrol dari halaman kampanye: mencari lowongan, scoring, memproses lowongan satu per satu dengan hard job lock, tidak mengambil ulang lowongan terminal/gagal/apply_unavailable, menjalankan assisted apply stateful terlebih dahulu, memanggil AI UI fallback sekali saat tombol lamar tidak ditemukan, menandai lowongan `apply_unavailable` bila fallback tetap gagal, berhenti saat ada pertanyaan yang belum pasti, dan hanya menganggap submit berhasil jika final submit benar-benar terverifikasi. Default mode kampanye sekarang `auto_submit_safe_only`, UI kampanye juga bisa auto-continue bounded tanpa user harus menekan `Lanjutkan` untuk setiap lowongan. Browser tetap visible, tidak ada captcha bypass, tidak ada stealth automation, dan tidak ada proxy rotation.
+Project sekarang berjalan dengan arah baru MCP AI First untuk Campaign Autopilot. Jalur apply utama Jobstreet tidak lagi bertumpu pada kalibrasi, selector kaku, atau tebakan state internal sebagai sumber kebenaran utama. Snapshot Playwright MCP accessibility menjadi sumber kebenaran untuk membaca state form yang benar-benar terlihat, planner AI 9router memilih aksi aman hanya dari elemen visible, executor MCP menjalankan aksi dengan safety gate, dan status `review`/`final submit`/`submitted` hanya boleh muncul bila didukung snapshot MCP atau marker sukses MCP. Browser tetap visible, tidak ada captcha bypass, tidak ada stealth automation, tidak ada proxy rotation, dan intervensi browser hanya untuk captcha, OTP, login, atau verifikasi keamanan.
 
 ## 4. Progress Fitur Utama
 
@@ -59,19 +59,20 @@ Project sekarang sudah berjalan sebagai fondasi MVP lokal yang jujur dengan Camp
 | Extract Info Lowongan              | Selesai | Agent membuka halaman detail setiap lowongan dan mengekstrak title, company, location, salary, workType, description. Mendukung multiple selector strategies dengan fallback. | `lib/browser/jobstreet-agent.ts` |
 | Simpan JobListing                  | Selesai | Setiap lowongan disimpan ke Prisma `JobListing` dengan deduplication berdasarkan URL (`@unique`). Lowongan duplikat diupdate, bukan dibuat ulang. Relasi `campaignId` ditambahkan. | `lib/browser/jobstreet-agent.ts`, `prisma/schema.prisma` |
 | AI Job Scoring                     | Selesai | Fungsi scoring AI sudah terintegrasi ke flow campaign automation. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold. | `lib/ai/job-scorer.ts`, `lib/browser/jobstreet-agent.ts` |
-| Assisted Form Filling              | Partial | Flow apply Jobstreet kini memakai watchdog ketat: step timeout 8 detik, no-progress limit 2 aksi, AI fallback hanya 1 kali, scroll scan maksimal 2 pass, dan hard timeout 3 menit per lowongan. Jika slide/form pertama tidak berubah, sistem mengambil screenshot + DOM snapshot, meminta AI satu kali dengan intent aman, lalu wajib mengambil keputusan bounded: lanjut bila ada progres, atau tandai `apply_unavailable` / `stuck_no_progress` dan lanjut ke lowongan berikutnya bila aman. AI tetap hanya boleh memilih elemen visible dari snapshot Playwright. Masih perlu verifikasi manual terhadap slide Jobstreet nyata. | `lib/browser/form-filler.ts`, `lib/browser/dom-snapshot.ts`, `lib/ai/ui-action-planner.ts`, `lib/browser/ui-action-executor.ts`, `lib/browser/ai-apply-wizard.ts`, `lib/browser/apply-wizard-state.ts`, `lib/browser/jobstreet-apply-agent.ts`, `lib/browser/apply-watchdog.ts` |
+| Assisted Form Filling              | Partial | Jalur utama sekarang `mcp_ai_first`: app membuka lowongan, mengambil accessibility snapshot via Playwright MCP, menormalisasi halaman, meminta planner AI memilih aksi aman dari elemen visible saja, lalu mengeksekusi aksi lewat MCP executor. Snapshot MCP adalah source of truth untuk state apply; app tidak boleh mengaku sudah review/final submit bila snapshot masih menunjukkan slide/form sebelumnya. Runner lama AI DOM tetap ada sebagai fallback mode, sedangkan kalibrasi dipindah menjadi debug-only. Masih perlu QA nyata Jobstreet. | `lib/mcp/playwright-mcp-client.ts`, `lib/mcp/mcp-snapshot-normalizer.ts`, `lib/ai/mcp-ui-action-planner.ts`, `lib/mcp/mcp-action-executor.ts`, `lib/browser/mcp-ai-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts` |
 | Modal Pertanyaan Tambahan          | Partial | Question handling lama tetap ada. AI wizard baru juga bisa pause saat butuh jawaban user, menyimpan pending question + suggested answer/evidence, dan menyiapkan payload agar pertanyaan serupa bisa dipakai ulang. UI popup detail tombol khusus belum selesai dihubungkan penuh. | `lib/browser/ai-apply-wizard.ts`, `lib/ai/question-answerer.ts`, `app/applications/[id]/review/page.tsx` |
 | Memori Pertanyaan                  | Partial | `QuestionMemory` lama tetap dipakai. Fondasi `FormInteractionMemory` sudah ditambahkan ke schema untuk menyimpan pola field/button hasil identifikasi AI pada form serupa, tetapi migrasi/generate Prisma dan penyimpanan runtime suksesnya belum selesai diverifikasi. | `app/api/questions/answer/route.ts`, `prisma/schema.prisma`, `lib/browser/ai-apply-wizard.ts` |
 | Modal Captcha/Verifikasi           | Selesai | Guardrail tetap keras: captcha, OTP, login/password, security verification, permission dialog, dan elemen sensitif diblokir. AI tidak bisa override blok ini dan browser tetap visible. | `lib/browser/page-detector.ts`, `lib/security/safe-automation.ts`, `lib/browser/ui-action-executor.ts`, `lib/ai/ui-action-planner.ts` |
 | Review Lamaran Sebelum Submit      | Partial | Mode `review_each_application` tetap pause di `pending_review`, tetapi mode `auto_submit_safe_only` tidak lagi turun ke review saat `final_submit_ready`. Review page lama tetap ada untuk kasus manual/external/question-required. | `app/applications/[id]/review/page.tsx`, `app/api/campaigns/[id]/status/route.ts`, `lib/browser/ai-apply-wizard.ts`, `lib/browser/jobstreet-apply-agent.ts` |
-| Submit Lamaran                     | Partial | Submit akhir kini strictly bounded. Resolver submit final dibatasi 8 detik: scan viewport, scroll ke bawah, scan kandidat tombol, minta planner AI final submit satu kali, lalu berhenti dengan status `submit_not_found_timeout` bila tidak ada kandidat high-confidence. Pesan normal-flow browser-check yang ambigu dihapus; user kini mendapat keputusan in-app yang jelas seperti `Coba Lagi`, `Lewati Lowongan`, `Anggap Sudah Terkirim`, dan opsional `Buka Browser`. `appliedCount` hanya naik setelah verifikasi sukses; submit yang sudah diklik tetapi belum terverifikasi tetap `paused`, bukan false success. Masih perlu uji manual Jobstreet nyata. | `lib/browser/jobstreet-apply-agent.ts`, `lib/browser/final-submit-resolver.ts`, `lib/browser/ai-apply-wizard.ts`, `lib/browser/apply-wizard-state.ts`, `lib/browser/ui-action-executor.ts`, `app/api/applications/[id]/submit/route.ts` |
+| Submit Lamaran                     | Partial | Submit akhir sekarang harus lolos gate MCP: planner hanya boleh mengembalikan `final_submit` jika confidence ≥ 0.9, field wajib visible tidak kosong, dan kandidat label submit benar-benar terlihat seperti `Submit Application` / `Kirim Lamaran`. Setelah klik submit, runner wajib menunggu perubahan halaman, mengambil snapshot MCP lagi, lalu hanya menandai `submitted` jika marker sukses benar-benar muncul. Bila belum terverifikasi, hasilnya `submit_unverified` dan `appliedCount` tidak boleh bertambah. | `lib/browser/mcp-ai-apply-runner.ts`, `lib/mcp/mcp-action-executor.ts`, `lib/mcp/mcp-snapshot-normalizer.ts`, `app/api/applications/[id]/submit/route.ts` |
 | Skip Lamaran                       | Selesai | Tombol "Lewati Lamaran" di halaman review mengubah status ke `skipped` dan mengembalikan job ke `shortlisted`. | `app/applications/[id]/review/page.tsx`, `app/api/applications/[id]/skip/route.ts` |
-| Campaign Loop / Autopilot v2       | Partial | Autopilot v2 kini wajib continue setelah job-level stuck yang bounded. Jika satu lowongan berakhir sebagai `apply_unavailable`, `stuck_no_progress`, atau `submit_not_found_timeout`, sistem menulis log terstruktur, menandai lowongan terminal untuk kampanye saat ini, lalu otomatis lanjut ke lowongan berikutnya. Kampanye hanya pause untuk captcha, OTP, login/security verification, pertanyaan wajib yang tidak dikenal, submit sudah diklik tetapi belum terverifikasi, atau terlalu banyak stuck berturut-turut. Limit stuck berturut-turut kini 5 lowongan dengan pesan pause eksplisit. UI status kampanye juga mulai menampilkan countdown step, no-progress count, AI fallback count, dan next automatic action. Propagasi UI status lanjutannya masih perlu verifikasi manual end-to-end. | `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/autopilot/start/route.ts`, `app/api/campaigns/[id]/autopilot/continue/route.ts`, `app/api/campaigns/[id]/autopilot/decision/route.ts`, `app/api/campaigns/[id]/status/route.ts`, `components/campaign-actions.tsx`, `lib/browser/jobstreet-apply-agent.ts`, `lib/browser/apply-wizard-state.ts`, `lib/campaign/campaign-state.ts`, `lib/browser/apply-watchdog.ts` |
+| Campaign Loop / Autopilot v2       | Partial | Jika `formAutomationMode = mcp_ai_first`, Autopilot kini memanggil runner MCP AI First sebagai jalur utama, tidak memulai dari kalibrasi, dan tidak fallback diam-diam ke flow lama rusak. Bila server MCP tidak aktif, kampanye dijeda dengan pesan Indonesia eksplisit untuk menjalankan `npm run mcp:playwright`. Jika satu lowongan `submitted`, loop lanjut ke job berikutnya; jika `ask_user`/`submit_unverified`, keputusan diarahkan ke UI; jika `manual_intervention`, kampanye pause; jika `apply_unavailable`/`stuck_no_progress`, lowongan ditandai terminal lalu aman lanjut. | `lib/campaign/autopilot-runner.ts`, `lib/browser/jobstreet-apply-agent.ts`, `app/api/campaigns/[id]/autopilot/continue/route.ts`, `app/api/campaigns/[id]/status/route.ts`, `components/campaign-actions.tsx` |
 | Apply Calibration / Dry Run        | Selesai (Perlu Verifikasi Manual) | One-time dry run apply untuk mendeteksi flow type, platform, form fields, buttons, questions, dan submit candidates tanpa melakukan submit. Mendukung deteksi internal Jobstreet, external redirect, email apply, WhatsApp apply. Manual intervention (login/captcha/OTP) menghentikan flow dan membiarkan browser terbuka. | `lib/browser/jobstreet-apply-calibrator.ts`, `app/api/jobs/[id]/apply/calibrate/route.ts`, `app/api/jobs/[id]/calibration/route.ts`, `app/jobs/[id]/calibration/page.tsx` |
 | Log Aktivitas                      | Selesai | Dashboard dan halaman `/logs` kini membaca `AutomationLog` nyata dari database. Log search Jobstreet, assisted apply, dan kalibrasi lengkap dengan semua event. | `lib/logging/automation-log.ts`, `prisma/schema.prisma`, `app/logs/page.tsx`, `app/dashboard/page.tsx` |
 | Pause/Resume/Stop Campaign         | Partial | API route status update dan log nyata sudah ada, tetapi resume belum melanjutkan automation session sesungguhnya. Kontrol kampanye di halaman detail kini terintegrasi dengan campaign loop. | `app/api/campaigns/[id]/pause/route.ts`, `app/api/campaigns/[id]/resume/route.ts`, `app/api/campaigns/[id]/stop/route.ts`, `components/campaign-actions.tsx` |
 | Screenshot Saat Submit             | Selesai | Screenshot sebelum submit, setelah submit, dan saat error/intervensi disimpan ke `storage/screenshots` dan ditautkan ke `Application.screenshotPath`. | `lib/browser/jobstreet-apply-agent.ts`, `prisma/schema.prisma` |
-| README Setup                       | Selesai | README sudah menjelaskan instalasi, ENV, Prisma, Playwright, route, dan batasan. | `README.md` |
+| Runtime State Debug Endpoint       | Selesai | Endpoint debug baru mengembalikan state runtime kampanye, current job, application terbaru, log terbaru, page kind MCP terakhir, tombol visible MCP, pertanyaan MCP, submit candidate MCP, plan AI terakhir, dan action terakhir tanpa membocorkan secret. | `app/api/debug/campaigns/[id]/runtime-state/route.ts` |
+| README Setup                       | Selesai | README kini mencakup setup Playwright MCP sidecar, script `mcp:playwright`, ENV MCP, batasan keamanan, dan catatan profile session lokal. | `README.md`, `package.json`, `.env.example`, `.gitignore` |
 
 ## 5. Struktur Folder Saat Ini
 
@@ -670,7 +671,7 @@ Target:
 - [ ] Session Jobstreet aktif / user sudah login.
 - [ ] Campaign `cmpw0lf1q00009kzenh71ae42` ditemukan.
 - [ ] Campaign mode = `auto_submit_safe_only`.
-- [ ] Campaign `formAutomationMode` = `ai_first`.
+- [ ] Campaign `formAutomationMode` = `mcp_ai_first`.
 - [ ] Campaign `targetApplyCount` minimal 5 atau dinaikkan ke 5 jika kurang.
 - [ ] Autopilot dapat mencari lowongan.
 - [ ] Autopilot membuka lowongan pertama.
@@ -699,26 +700,23 @@ Isi setelah testing:
 
 | No | Job Title | Company | JobListing ID | Application ID | Status | SubmittedAt | Evidence / Log Event | Catatan |
 | -- | --------- | ------- | ------------- | -------------- | ------ | ----------- | -------------------- | ------- |
-| 1 |  |  |  |  |  |  |  |  |
-| 2 |  |  |  |  |  |  |  |  |
-| 3 |  |  |  |  |  |  |  |  |
-| 4 |  |  |  |  |  |  |  |  |
-| 5 |  |  |  |  |  |  |  |  |
+| 1 | — | — | — | — | Belum diuji live | — | `mcp_ai.runner_started`, `mcp_ai.snapshot_captured`, `mcp_ai.page_kind_detected` (target event implementasi) | QA live belum dijalankan pada task ini. |
+| 2 | — | — | — | — | Belum diuji live | — | `mcp_ai.plan_requested`, `mcp_ai.plan_received`, `mcp_ai.action_executed` (target event implementasi) | Butuh Playwright MCP aktif dan session Jobstreet login. |
+| 3 | — | — | — | — | Belum diuji live | — | `mcp_ai.final_submit_detected`, `mcp_ai.final_submit_clicked` (target event implementasi) | Submit aman baru boleh diverifikasi dari snapshot MCP. |
+| 4 | — | — | — | — | Belum diuji live | — | `mcp_ai.submit_verified` / `mcp_ai.submit_unverified` (target event implementasi) | Belum ada bukti submit verified nyata. |
+| 5 | — | — | — | — | Belum diuji live | — | `mcp_ai.server_unavailable` (blocker saat MCP belum aktif) | Jangan klaim PASS sebelum 5 submit verified nyata. |
 
 ### Status Akhir QA
 
-Isi salah satu:
+`FAILED`
 
-- `PASSED` jika 5 lamaran submitted dan verified.
-- `PARTIAL` jika kurang dari 5 berhasil.
-- `FAILED` jika tidak ada submit verified.
-
-Wajib tulis:
-- jumlah submitted verified
-- jumlah skipped
-- jumlah `apply_unavailable`
-- jumlah stuck
-- jumlah `manual_intervention`
-- jumlah `submit_unverified`
-- blocker utama
-- next fix yang diperlukan
+Ringkasan aktual task ini:
+- submitted verified: 0
+- skipped: 0
+- `apply_unavailable`: 0
+- stuck: 0
+- `manual_intervention`: 0
+- `submit_unverified`: 0
+- evidence log events implementasi: `mcp_ai.runner_started`, `mcp_ai.snapshot_captured`, `mcp_ai.page_kind_detected`, `mcp_ai.plan_requested`, `mcp_ai.plan_received`, `mcp_ai.action_executed`, `mcp_ai.no_progress_detected`, `mcp_ai.ask_user_required`, `mcp_ai.final_submit_detected`, `mcp_ai.final_submit_clicked`, `mcp_ai.submit_verified`, `mcp_ai.submit_unverified`, `mcp_ai.runner_failed`, `mcp_ai.server_unavailable`
+- blocker utama: QA live campaign `cmpw0lf1q00009kzenh71ae42` belum dijalankan, sehingga belum ada 5 submit verified; MCP sidecar dan hambatan Jobstreet live belum divalidasi pada task ini.
+- next fix yang diperlukan: jalankan `npm run mcp:playwright`, `npm run dev`, buka campaign target, pastikan `formAutomationMode = mcp_ai_first`, lalu lakukan QA live sampai minimal 5 submit verified atau dokumentasikan blocker live yang nyata dengan jujur.

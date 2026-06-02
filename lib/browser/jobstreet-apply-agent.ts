@@ -80,7 +80,16 @@ type ProfileData = {
 };
 
 type ApplyResult = {
-  status: "submitted" | "pending_review" | "paused" | "failed" | "apply_unavailable" | "stuck_no_progress" | "submit_not_found_timeout";
+  status:
+    | "submitted"
+    | "pending_review"
+    | "paused"
+    | "failed"
+    | "apply_unavailable"
+    | "stuck_no_progress"
+    | "submit_not_found_timeout"
+    | "submit_unverified"
+    | "manual_intervention_required";
   message: string;
   applicationId?: string;
   error?: string;
@@ -1101,14 +1110,39 @@ export async function startJobApplication({
   const session = await launchManagedBrowser();
   try {
     const resolvedSubmitMode = resolveSubmitMode(campaign, submitMode);
+    const formAutomationMode = campaign.formAutomationMode ?? process.env.FORM_AUTOMATION_DEFAULT ?? "mcp_ai_first";
 
-    if ((campaign.formAutomationMode ?? "ai_first") === "ai_first") {
+    if (formAutomationMode === "mcp_ai_first") {
+      const { runMcpAiApplyRunner } = await import("@/lib/browser/mcp-ai-apply-runner");
+      const questionMemory = await prisma.questionMemory.findMany({
+        orderBy: [{ confidence: "desc" }, { usageCount: "desc" }],
+        take: 40,
+      });
+
+      return await runMcpAiApplyRunner({
+        jobListing,
+        campaign: {
+          ...campaign,
+          formAutomationMode,
+        },
+        candidateProfile: profile,
+        questionMemory: questionMemory.map((item) => ({
+          question: item.questionRaw,
+          answer: item.answer,
+          confidence: item.confidence,
+          source: item.source,
+        })),
+        mode: resolvedSubmitMode,
+      });
+    }
+
+    if (formAutomationMode === "ai_first") {
       return await runAiFirstApplyRunner({
         page: session.page,
         jobListing,
         campaign: {
           ...campaign,
-          formAutomationMode: campaign.formAutomationMode ?? "ai_first",
+          formAutomationMode,
         },
         candidateProfile: profile,
         mode: resolvedSubmitMode,

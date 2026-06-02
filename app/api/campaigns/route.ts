@@ -24,7 +24,7 @@ export async function POST(request: Request) {
       defaultAvailability?: string;
       submitMode?: "assisted_auto_apply" | "manual_review_only";
       automationMode?: "review_each_application" | "auto_submit_safe_only";
-      formAutomationMode?: "deterministic_first" | "ai_fallback" | "ai_first";
+      formAutomationMode?: "mcp_ai_first" | "deterministic_first" | "ai_fallback" | "ai_first";
       lowScoreMode?: "ask" | "auto_skip" | "auto_apply";
       autoSubmitSafeOnly?: boolean;
     };
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
             : (body.submitMode ?? "manual_review_only"),
         status: "ready",
         automationMode: body.automationMode ?? "auto_submit_safe_only",
-        formAutomationMode: body.formAutomationMode ?? "ai_first",
+        formAutomationMode: body.formAutomationMode ?? process.env.FORM_AUTOMATION_DEFAULT ?? "mcp_ai_first",
         lowScoreMode: body.lowScoreMode ?? "ask",
         autoSubmitSafeOnly: body.autoSubmitSafeOnly ?? body.automationMode === "auto_submit_safe_only",
       } as {

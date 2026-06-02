@@ -58,7 +58,8 @@ export default function NewCampaignPage() {
       automationMode: String(formData.get("automationMode") || "auto_submit_safe_only") as
         | "review_each_application"
         | "auto_submit_safe_only",
-      formAutomationMode: String(formData.get("formAutomationMode") || "ai_first") as
+      formAutomationMode: String(formData.get("formAutomationMode") || "mcp_ai_first") as
+        | "mcp_ai_first"
         | "deterministic_first"
         | "ai_fallback"
         | "ai_first",
@@ -176,12 +177,13 @@ export default function NewCampaignPage() {
             </div>
             <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">
               <span>Mode Pengisian Form</span>
-              <select name="formAutomationMode" defaultValue="ai_first" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3">
-                <option value="ai_first">AI First - paling fleksibel untuk Jobstreet</option>
+              <select name="formAutomationMode" defaultValue="mcp_ai_first" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3">
+                <option value="mcp_ai_first">MCP AI First — disarankan</option>
+                <option value="ai_first">AI First DOM</option>
                 <option value="ai_fallback">AI Fallback</option>
-                <option value="deterministic_first">Deterministic First</option>
+                <option value="deterministic_first">Deterministic</option>
               </select>
-              <p className="text-xs text-slate-400">Default kampanye baru memakai AI First agar form Jobstreet dibaca dan diisi langsung oleh AI sejak awal.</p>
+              <p className="text-xs text-slate-400">MCP AI First: AI membaca struktur halaman nyata melalui Playwright MCP, lalu memilih tombol/field yang aman untuk diklik atau diisi. Mode ini paling cocok untuk form Jobstreet yang sering berubah.</p>
             </label>
             <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">
               <span>Perilaku untuk Skor Rendah</span>
