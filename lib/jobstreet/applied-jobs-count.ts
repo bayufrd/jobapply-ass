@@ -1,6 +1,5 @@
-import { prisma } from "@/lib/db/prisma";
-import { checkPlaywrightMcpHealth } from "@/lib/mcp/mcp-health";
-import { PlaywrightMcpClient } from "@/lib/mcp/playwright-mcp-client";
+import { PlaywrightMcpClient } from "./../mcp/playwright-mcp-client";
+import { detectManualInterventionFromSignals } from "./../browser/page-detector";
 
 export type AppliedJobsCountResult = {
   ok: boolean;
@@ -12,56 +11,53 @@ export type AppliedJobsCountResult = {
 
 export async function getJobstreetAppliedJobsCountWithMcp(): Promise<AppliedJobsCountResult> {
   const url = "https://id.jobstreet.com/id/my-activity/applied-jobs";
-  
+  const client = new PlaywrightMcpClient();
+
   try {
-    const health = await checkPlaywrightMcpHealth();
-    if (!health.ok) {
-      return {
-        ok: false,
-        count: null,
-        url,
-        message: "Playwright MCP belum aktif atau browser belum siap.",
-      };
-    }
-
-    const client = new PlaywrightMcpClient();
-    await client.connect();
-    
+    // 1. Navigate to Applied Jobs page
     await client.navigate(url);
-    // Wait for content to load
+    
+    // Wait a bit for content to load
     await new Promise((resolve) => setTimeout(resolve, 3000));
-    
+
+    // 2. Get snapshot
     const snapshot = await client.snapshot();
-    const text = snapshot.accessibilityText || snapshot.rawText || "";
-    
-    // Check for login/security
-    const lowerText = text.toLowerCase();
-    if (
-      lowerText.includes("login") || 
-      lowerText.includes("captcha") || 
-      lowerText.includes("otp") || 
-      lowerText.includes("verifikasi") || 
-      lowerText.includes("security")
-    ) {
+    const text = snapshot.accessibilityText || "";
+
+    // 3. Check for manual intervention (login, captcha, etc.)
+    const intervention = detectManualInterventionFromSignals(url, {
+      visibleText: text,
+      interactiveTexts: snapshot.elements.map(e => e.text || e.name || "").filter(Boolean),
+      hasVisiblePasswordInput: snapshot.elements.some(e => e.role === "textbox" && e.name?.toLowerCase().includes("password")),
+      hasVisibleOtpInput: snapshot.elements.some(e => e.name?.toLowerCase().includes("otp") || e.name?.toLowerCase().includes("verification")),
+      hasVisibleCaptcha: text.toLowerCase().includes("captcha") || text.toLowerCase().includes("robot"),
+      hasVisibleLoginButton: snapshot.elements.some(e => e.role === "button" && /(login|log in|sign in|masuk)/i.test(e.name || "")),
+    });
+
+    if (intervention.detected) {
       return {
         ok: false,
         count: null,
         url,
-        rawTextPreview: text.slice(0, 500),
-        message: "Butuh login/verifikasi Jobstreet untuk membaca total lamaran.",
+        rawTextPreview: text.substring(0, 500),
+        message: `Butuh login/verifikasi Jobstreet untuk membaca total lamaran. (${intervention.type})`,
       };
     }
 
-    // Parsing rules: Cari pattern "98 lowongan"
+    // 4. Parse count
+    // Pattern: "98 lowongan", "1 lowongan", etc.
+    // We prioritize "lowongan" keyword as per requirement.
     const matches = [...text.matchAll(/(\d+)\s+lowongan/gi)];
+    
     if (matches.length > 0) {
-      // Prioritaskan angka yang paling dekat dengan label halaman Applied Jobs / Dilamar
-      // Untuk saat ini ambil yang pertama ditemukan yang valid
+      // If multiple matches, we take the first one which is usually the main count
+      // or the one closest to "Applied Jobs" context in accessibility tree.
       const count = parseInt(matches[0][1], 10);
       return {
         ok: true,
         count,
         url,
+        rawTextPreview: text.substring(0, 500),
         message: "Total lamaran Jobstreet berhasil dibaca.",
       };
     }
@@ -70,15 +66,15 @@ export async function getJobstreetAppliedJobsCountWithMcp(): Promise<AppliedJobs
       ok: false,
       count: null,
       url,
-      rawTextPreview: text.slice(0, 500),
-      message: "Tidak bisa menemukan jumlah lamaran di halaman. Pastikan format halaman benar.",
+      rawTextPreview: text.substring(0, 500),
+      message: "Tidak dapat menemukan angka total lamaran di halaman.",
     };
-  } catch (error) {
+  } catch (error: unknown) {
     return {
       ok: false,
       count: null,
       url,
-      message: error instanceof Error ? error.message : "Terjadi kesalahan saat membaca total lamaran.",
+      message: `Gagal membaca total lamaran: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 }

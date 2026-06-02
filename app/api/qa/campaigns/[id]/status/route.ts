@@ -108,5 +108,12 @@ export async function GET(
       typeof latestSuccessMetadata?.successMarker === "string"
         ? latestSuccessMetadata.successMarker
         : null,
+    appliedJobsVerification: {
+      before: parseJson<number | null>(campaign.logs.find(l => l.event === "qa.applied_jobs_baseline")?.metadataJson, null),
+      after: parseJson<number | null>(campaign.logs.find(l => l.event === "qa.applied_jobs_after_submit")?.metadataJson, null),
+      expectedMinimum: null, // Will be calculated by consumer or added to log
+      verified: campaign.applications.some(a => a.status === "submitted"),
+      lastCheckedAt: campaign.logs.find(l => l.event.startsWith("qa.applied_jobs_"))?.createdAt.toISOString() ?? null,
+    },
   });
 }

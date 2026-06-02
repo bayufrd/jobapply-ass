@@ -62,3 +62,5 @@ storage/logs/*.jsonl
 storage/
 .mcp-output/
 tests/layout/*.apk
+.playwright-mcp/
+/.playwright-mcp/
