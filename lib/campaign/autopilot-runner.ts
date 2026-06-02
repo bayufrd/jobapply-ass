@@ -213,7 +213,7 @@ async function scoreJobIfNeeded(campaignId: string, jobId: string) {
   });
 }
 
-async function pickNextJob(campaignId: string, options?: { allowSkipped?: boolean }) {
+async function pickNextJob(campaignId: string, options?: { allowSkipped?: boolean; includeApplying?: boolean }) {
   const blockedJobIds = (
     await prisma.application.findMany({
       where: {
@@ -228,10 +228,14 @@ async function pickNextJob(campaignId: string, options?: { allowSkipped?: boolea
     ? [...PICKABLE_JOB_STATUSES]
     : PICKABLE_JOB_STATUSES.filter((status) => status !== "skipped");
 
+  if (options?.includeApplying) {
+    candidateStatuses.push("applying" as (typeof candidateStatuses)[number]);
+  }
+
   return prisma.jobListing.findFirst({
     where: {
       campaignId,
-      status: { in: candidateStatuses as Array<"discovered" | "shortlisted" | "skipped"> },
+      status: { in: [...new Set(candidateStatuses)] as Array<"discovered" | "shortlisted" | "skipped" | "applying"> },
       id: { notIn: blockedJobIds },
     },
     orderBy: [{ matchScore: "desc" }, { createdAt: "asc" }],
@@ -320,7 +324,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
   let consecutiveStuckJobs = 0;
 
   while (consecutiveUnavailableJobs < maxConsecutiveUnavailableJobs) {
-    const nextJob = await pickNextJob(campaignId);
+    const nextJob = await pickNextJob(campaignId, { includeApplying: true });
     if (!nextJob || !nextJob.campaign) {
       await setCampaignRuntimeState(campaignId, {
         status: "paused",

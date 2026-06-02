@@ -644,3 +644,81 @@ git commit -m "[WIP] document current blocker and partial implementation"
   * tidak ada proxy rotation
   * tidak ada scraping besar-besaran
   * submit final tetap butuh approval user
+
+## 22. QA End-to-End Autopilot — Campaign cmpw0lf1q00009kzenh71ae42
+
+### Target QA
+
+Campaign URL:
+`http://localhost:3000/campaigns/cmpw0lf1q00009kzenh71ae42`
+
+Target:
+- Minimal 5 lamaran berhasil submitted dan terverifikasi.
+- Tidak boleh ada false success.
+- `Campaign.appliedCount` hanya bertambah jika submit benar-benar verified.
+- `Application.status` hanya menjadi `submitted` jika ada marker sukses setelah submit.
+- `JobListing.status` hanya menjadi `submitted` jika `Application` terkait submitted.
+
+### Checklist QA
+
+- [ ] Dev server berjalan.
+- [ ] Database bisa diakses.
+- [ ] Prisma client sudah generate.
+- [ ] 9router health aktif.
+- [ ] Chat model aktif.
+- [ ] Browser Playwright visible terbuka.
+- [ ] Session Jobstreet aktif / user sudah login.
+- [ ] Campaign `cmpw0lf1q00009kzenh71ae42` ditemukan.
+- [ ] Campaign mode = `auto_submit_safe_only`.
+- [ ] Campaign `formAutomationMode` = `ai_first`.
+- [ ] Campaign `targetApplyCount` minimal 5 atau dinaikkan ke 5 jika kurang.
+- [ ] Autopilot dapat mencari lowongan.
+- [ ] Autopilot membuka lowongan pertama.
+- [ ] AI membaca form apply.
+- [ ] AI mengisi field dari `CandidateProfile`/`Campaign`/`QuestionMemory`.
+- [ ] Jika ada Yes/No/question, decision muncul di UI, bukan instruksi “cek browser”.
+- [ ] Submit Application diklik otomatis jika aman.
+- [ ] Submit sukses diverifikasi.
+- [ ] `Application` #1 status `submitted`.
+- [ ] `Application` #2 status `submitted`.
+- [ ] `Application` #3 status `submitted`.
+- [ ] `Application` #4 status `submitted`.
+- [ ] `Application` #5 status `submitted`.
+- [ ] `Campaign.appliedCount` bertambah minimal 5.
+- [ ] Autopilot lanjut lowongan berikutnya otomatis setelah submit verified.
+- [ ] Lowongan yang stuck/`apply_unavailable` tidak diulang otomatis.
+- [ ] Submit yang tidak verified tidak dihitung sebagai submitted.
+- [ ] Tidak ada pesan normal-flow “Periksa browser” kecuali captcha/login/OTP/security.
+- [ ] Logs menunjukkan alur jelas dari search sampai submit verified.
+- [ ] Screenshot submit/error tersimpan bila relevan.
+- [ ] QA result ditulis lengkap di `IMPLEMENTATION_STATUS.md`.
+
+### Data Hasil QA
+
+Isi setelah testing:
+
+| No | Job Title | Company | JobListing ID | Application ID | Status | SubmittedAt | Evidence / Log Event | Catatan |
+| -- | --------- | ------- | ------------- | -------------- | ------ | ----------- | -------------------- | ------- |
+| 1 |  |  |  |  |  |  |  |  |
+| 2 |  |  |  |  |  |  |  |  |
+| 3 |  |  |  |  |  |  |  |  |
+| 4 |  |  |  |  |  |  |  |  |
+| 5 |  |  |  |  |  |  |  |  |
+
+### Status Akhir QA
+
+Isi salah satu:
+
+- `PASSED` jika 5 lamaran submitted dan verified.
+- `PARTIAL` jika kurang dari 5 berhasil.
+- `FAILED` jika tidak ada submit verified.
+
+Wajib tulis:
+- jumlah submitted verified
+- jumlah skipped
+- jumlah `apply_unavailable`
+- jumlah stuck
+- jumlah `manual_intervention`
+- jumlah `submit_unverified`
+- blocker utama
+- next fix yang diperlukan

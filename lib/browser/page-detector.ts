@@ -11,6 +11,10 @@ export async function detectManualIntervention(page: Page): Promise<DetectionRes
   const content = (await page.content()).toLowerCase();
   const url = page.url().toLowerCase();
 
+  if (!url || url === "about:blank") {
+    return { detected: false };
+  }
+
   // Login detection
   if (
     url.includes("/login") ||

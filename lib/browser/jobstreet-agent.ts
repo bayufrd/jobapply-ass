@@ -262,11 +262,38 @@ async function scoreAndUpdateJobListing(
 
 // ── Search URL Builder ─────────────────────────────────────────────────
 
+function normalizeSearchLocation(location?: string | null) {
+  const value = location?.trim();
+  if (!value) return "";
+
+  const normalized = value
+    .replace(/\bjakarta raya\b/gi, "Jakarta")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const segments = normalized
+    .split(/[;,]/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (segments.length > 0) {
+    return segments[0];
+  }
+
+  const jakartaBaratMatch = normalized.match(/jakarta barat/i);
+  if (jakartaBaratMatch) {
+    return "Jakarta Barat";
+  }
+
+  return normalized;
+}
+
 function buildSearchUrl(keyword: string, location?: string | null): string {
   const params = new URLSearchParams();
   params.set("keywords", keyword);
-  if (location && location.trim()) {
-    params.set("where", location.trim());
+  const normalizedLocation = normalizeSearchLocation(location);
+  if (normalizedLocation) {
+    params.set("where", normalizedLocation);
   }
   return `${JOBSTREET_BASE}/jobs?${params.toString()}`;
 }
@@ -522,10 +549,11 @@ export async function runJobstreetCampaign(
     await writeAutomationLog({
       campaignId: input.campaignId,
       event: "jobstreet.search_started",
-      message: `Memulai pencarian Jobstreet dengan kata kunci "${input.keyword}"${input.location ? ` di ${input.location}` : ""}. Maksimal ${maxJobs} lowongan akan diperiksa.`,
+      message: `Memulai pencarian Jobstreet dengan kata kunci "${input.keyword}"${input.location ? ` di ${normalizeSearchLocation(input.location) || input.location}` : ""}. Maksimal ${maxJobs} lowongan akan diperiksa.`,
       metadata: {
         keyword: input.keyword,
         location: input.location ?? null,
+        normalizedLocation: normalizeSearchLocation(input.location) || null,
         maxJobs,
         targetApplyCount: input.targetApplyCount,
         matchThreshold: input.matchThreshold,

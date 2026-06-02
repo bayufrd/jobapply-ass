@@ -74,7 +74,16 @@ const FINAL_SUBMIT_PATTERNS = [
   "submit application",
   "kirim lamaran",
   "send application",
-  "submit",
+  "application submitted",
+];
+
+const CONTINUE_PATTERNS = [
+  "continue",
+  "next",
+  "selanjutnya",
+  "lanjut",
+  "review",
+  "continue application",
 ];
 
 const SUCCESS_PATTERNS = [
@@ -99,7 +108,7 @@ function includesAny(text: string, patterns: string[]) {
 
 async function collectWizardSignals(page: Page) {
   return page.evaluate(
-    ({ applyPatterns, questionPatterns, reviewPatterns, finalSubmitPatterns }) => {
+    ({ applyPatterns, questionPatterns, reviewPatterns, finalSubmitPatterns, continuePatterns }) => {
       const selectors = [
         "button",
         "a[role='button']",
@@ -141,6 +150,7 @@ async function collectWizardSignals(page: Page) {
 
       const visibleText = normalizeInner(document.body?.innerText || "");
       const hasApplyButton = buttonTexts.some((text) => applyPatterns.some((pattern: string) => text.includes(pattern)));
+      const hasContinueSignals = buttonTexts.some((text) => continuePatterns.some((pattern: string) => text === pattern || text.includes(pattern)));
       const hasFinalSubmitSignals = buttonTexts.some((text) => finalSubmitPatterns.some((pattern: string) => text === pattern || text.includes(pattern)));
       const hasQuestionSignals = questionPatterns.some((pattern: string) => visibleText.includes(pattern));
       const hasReviewSignals = reviewPatterns.some((pattern: string) => visibleText.includes(pattern));
@@ -151,6 +161,7 @@ async function collectWizardSignals(page: Page) {
       return {
         visibleText,
         hasApplyButton,
+        hasContinueSignals,
         hasFinalSubmitSignals,
         hasQuestionSignals,
         hasReviewSignals,
@@ -163,6 +174,7 @@ async function collectWizardSignals(page: Page) {
       questionPatterns: QUESTION_PATTERNS,
       reviewPatterns: REVIEW_PATTERNS,
       finalSubmitPatterns: FINAL_SUBMIT_PATTERNS,
+      continuePatterns: CONTINUE_PATTERNS,
     },
   );
 }
@@ -187,9 +199,12 @@ export async function detectApplyWizardState(page: Page): Promise<ApplyWizardSna
   } else if (includesAny(visibleText, ["captcha", "otp", "verification", "security check", "login", "sign in"])) {
     state = "manual_intervention";
     reason = "Marker login/verifikasi manual terlihat pada halaman.";
-  } else if (signals.hasFinalSubmitSignals && (signals.hasReviewSignals || signals.hasForm)) {
+  } else if (signals.hasFinalSubmitSignals && (signals.hasReviewSignals || signals.hasForm) && !signals.hasContinueSignals) {
     state = "final_submit_ready";
     reason = "Tombol submit final terlihat pada halaman review/form.";
+  } else if (signals.hasContinueSignals && signals.hasForm) {
+    state = "application_form";
+    reason = "Form aplikasi masih berada pada langkah lanjut, belum final submit.";
   } else if (signals.hasQuestionSignals && signals.hasForm) {
     state = "question_step";
     reason = "Form berisi marker pertanyaan tambahan.";

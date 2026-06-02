@@ -172,19 +172,30 @@ async function collectVisibleCandidates(page: Page, expectedLabels: string[], re
             })
             .catch(() => ({ rootText: "", ariaLabel: "", automation: "", inViewport: false, nearBottom: false }));
 
+          const exactStrongSubmit = text === "submit application" || text === "kirim lamaran";
+          const containsStrongSubmit = text.includes("submit application") || text.includes("kirim lamaran");
+          const genericSubmit = text === "submit" || text === "kirim";
+          const hasSubmitSemantics = /submit|kirim|apply|lamar|send/i.test(`${text} ${metadata.ariaLabel} ${metadata.automation}`);
+
           let score = 0;
-          if (text === "submit application" || text === "kirim lamaran") score += 6;
-          else if (text.includes("submit application") || text.includes("kirim lamaran")) score += 5;
-          else if (text === "submit" || text === "kirim") score += 3;
+          if (exactStrongSubmit) score += 8;
+          else if (containsStrongSubmit) score += 6;
+          else if (genericSubmit) score += 4;
           else score += 2;
 
           if (metadata.inViewport) score += 2;
           if (metadata.nearBottom) score += 1;
           if (reviewKeywords.some((keyword) => metadata.rootText.includes(keyword))) score += 3;
           if (reviewKeywords.some((keyword) => metadata.automation.includes(keyword) || metadata.ariaLabel.includes(keyword))) score += 2;
-          if (metadata.rootText.includes("stay safe")) score -= 1;
+          if (metadata.rootText.includes("stay safe") && !hasSubmitSemantics) score -= 1;
 
-          const confidence = score >= 8 ? "high" : score >= 5 ? "medium" : "low";
+          const confidence = exactStrongSubmit
+            ? "high"
+            : score >= 7
+              ? "high"
+              : score >= 5
+                ? "medium"
+                : "low";
           candidates.push({
             locator: scopedSelector,
             text,
