@@ -157,7 +157,12 @@ async function ensureJobsExist(campaignId: string) {
     await setCampaignRuntimeState(campaignId, {
       status: "paused",
       currentStep: "manual_intervention",
-      decisionStatus: "manual_intervention",
+      decisionStatus: "manual_intervention_required",
+      currentQuestion: result.message,
+      decisionPayloadJson: JSON.stringify({
+        type: "manual_intervention_required",
+        message: result.message,
+      }),
     });
     return { searched: true, jobsFound: 0, paused: true, message: result.message };
   }
@@ -332,37 +337,58 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
 
     const health = await checkPlaywrightMcpHealth();
     if (!health.ok) {
+      const isBrowserUnavailable = health.browserDependencyOk === false || health.snapshotUsable === false;
+      const currentStep = isBrowserUnavailable ? "mcp_browser_unavailable" : "mcp_unavailable";
+      const decisionType = isBrowserUnavailable ? "mcp_browser_unavailable" : "mcp_unavailable";
+      const userMessage = isBrowserUnavailable
+        ? "Playwright MCP aktif, tetapi browser Chromium/Chrome belum siap. Jalankan npx playwright install chromium lalu restart MCP."
+        : "Playwright MCP belum aktif. Jalankan npm run mcp:playwright lalu klik Lanjutkan Kampanye.";
+
       await setCampaignRuntimeState(campaignId, {
         status: "paused",
-        currentStep: "mcp_unavailable",
-        decisionStatus: "mcp_unavailable",
+        currentStep,
+        decisionStatus: decisionType,
         decisionPayloadJson: JSON.stringify({
-          type: "mcp_unavailable",
-          message: "Playwright MCP belum aktif. Jalankan npm run mcp:playwright lalu klik Lanjutkan Kampanye.",
+          type: decisionType,
+          message: userMessage,
           technicalDetails: health.error ?? null,
           mcpUrl: health.url,
+          connectOk: health.connectOk,
+          toolsListOk: health.toolsListOk,
+          navigateOk: health.navigateOk,
+          snapshotOk: health.snapshotOk,
+          snapshotUsable: health.snapshotUsable,
+          browserDependencyOk: health.browserDependencyOk,
+          rawSnapshotPreview: health.rawSnapshotPreview ?? null,
         }),
       });
       await writeAutomationLog({
         campaignId,
         level: "warn",
         event: "mcp.preflight_failed",
-        message: "Playwright MCP tidak bisa diakses. Jalankan npm run mcp:playwright.",
+        message: userMessage,
         metadata: {
           campaignId,
           stage: "mcp_connect",
           mcpUrl: health.url,
           error: health.error ?? null,
+          connectOk: health.connectOk,
+          toolsListOk: health.toolsListOk,
+          navigateOk: health.navigateOk,
+          snapshotOk: health.snapshotOk,
+          snapshotUsable: health.snapshotUsable,
+          browserDependencyOk: health.browserDependencyOk,
+          rawSnapshotPreview: health.rawSnapshotPreview ?? null,
         },
       });
       return {
         status: "paused",
-        message: "Playwright MCP belum aktif. Jalankan npm run mcp:playwright lalu klik Lanjutkan Kampanye.",
+        message: userMessage,
         campaignId,
-        currentStep: "mcp_unavailable",
+        currentStep,
         decisionRequired: {
-          type: "mcp_unavailable",
-          message: "Playwright MCP belum aktif. Jalankan npm run mcp:playwright lalu klik Lanjutkan Kampanye.",
+          type: decisionType,
+          message: userMessage,
           technicalDetails: health.error ?? null,
           mcpUrl: health.url,
         },
@@ -372,8 +398,19 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     await writeAutomationLog({
       campaignId,
       event: "mcp.preflight_ok",
-      message: "Playwright MCP aktif dan bisa diakses.",
-      metadata: { campaignId, stage: "mcp_connect", mcpUrl: health.url },
+      message: "Playwright MCP aktif dan snapshot browser siap dipakai.",
+      metadata: {
+        campaignId,
+        stage: "mcp_connect",
+        mcpUrl: health.url,
+        connectOk: health.connectOk,
+        toolsListOk: health.toolsListOk,
+        navigateOk: health.navigateOk,
+        snapshotOk: health.snapshotOk,
+        snapshotUsable: health.snapshotUsable,
+        browserDependencyOk: health.browserDependencyOk,
+        rawSnapshotPreview: health.rawSnapshotPreview ?? null,
+      },
     });
   }
 
@@ -391,6 +428,10 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       message: searchState.message ?? "Autopilot dijeda.",
       campaignId,
       currentStep: "manual_intervention",
+      decisionRequired: {
+        type: "manual_intervention_required",
+        message: searchState.message ?? "Autopilot dijeda.",
+      },
     };
   }
 
@@ -403,11 +444,20 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     const nextJob = await pickNextJob(campaignId, { includeApplying: true });
     if (!nextJob || !nextJob.campaign) {
       await setCampaignRuntimeState(campaignId, {
-        status: "paused",
+        status: "completed",
         currentStep: "no_jobs_remaining",
         decisionStatus: null,
         decisionPayloadJson: null,
         currentJobId: null,
+        currentQuestion: null,
+        currentJobTitle: null,
+        currentJobCompany: null,
+      });
+      await writeAutomationLog({
+        campaignId,
+        event: "campaign.no_jobs_remaining",
+        message: "Tidak ada lowongan eligible yang bisa diproses. Kampanye dihentikan.",
+        metadata: { campaignId, currentStep: "no_jobs_remaining" },
       });
       return {
         status: "completed",
@@ -656,7 +706,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         : pausedReason === "Verifikasi manual terdeteksi"
           || pausedReason.includes("intervensi manual")
           || pausedReason.includes("halaman eksternal")
-            ? "manual_intervention"
+            ? "manual_intervention_required"
             : pausedReason === "Submit final eksternal membutuhkan review"
               ? "review_required"
               : pausedReason === "AI membutuhkan jawaban Anda"
@@ -665,7 +715,9 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
                   ? "question_required"
                   : pausedReason.includes("submit") && pausedReason.includes("verifikasi")
                     ? "submit_unverified"
-                    : "paused";
+                    : pausedReason.includes("langkah yang diharapkan") || pausedReason.includes("bukti verifikasi keamanan")
+                      ? "state_mismatch"
+                      : "paused";
 
       const resolvedCurrentStep = pendingQuestion
         ? "employer_questions"
@@ -677,13 +729,15 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
               ? "update_profile"
               : pausedReason.includes("review") || pausedReason.includes("submit application")
                 ? "review_submit"
-                : inferredDecisionStatus === "manual_intervention"
+                : inferredDecisionStatus === "manual_intervention_required"
                   ? "manual_intervention"
                   : inferredDecisionStatus === "review_required"
                     ? "review_required"
                     : inferredDecisionStatus === "submit_unverified"
                       ? "submit_unverified"
                       : "apply_paused";
+
+      const blockerEvidence = applyResult.error ? parseJson<Record<string, unknown> | null>(applyResult.error, null) : null;
 
       await setCampaignRuntimeState(campaignId, {
         status: "paused",
@@ -696,20 +750,29 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
           question: pendingQuestion,
           message: applyResult.message,
           step: resolvedCurrentStep,
+          blockerEvidence,
         }),
       });
 
       return {
         status: pendingQuestion || inferredDecisionStatus === "question_required"
           ? "question_required"
-          : inferredDecisionStatus === "manual_intervention"
+          : inferredDecisionStatus === "manual_intervention_required"
             ? "manual_intervention_required"
-            : "submit_unverified",
+            : inferredDecisionStatus === "state_mismatch"
+              ? "paused"
+              : "submit_unverified",
         message: applyResult.message,
         campaignId,
         currentStep: resolvedCurrentStep,
         currentJobId: job.id,
         applicationId: application?.id,
+        decisionRequired: {
+          type: inferredDecisionStatus,
+          applicationId: application?.id ?? null,
+          message: applyResult.message,
+          blockerEvidence,
+        },
       };
     }
 
@@ -744,16 +807,24 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
 
       if (consecutiveStuckJobs >= maxConsecutiveStuckJobs) {
         await setCampaignRuntimeState(campaignId, {
-          status: "paused",
+          status: "completed",
           currentStep: "too_many_unusable_jobs",
-          currentJobId: job.id,
+          currentJobId: null,
           currentQuestion: "Terlalu banyak lowongan stuck berturut-turut. Periksa filter kampanye atau jalankan ulang nanti.",
-          decisionStatus: "paused",
+          decisionStatus: null,
           decisionPayloadJson: null,
+          currentJobTitle: null,
+          currentJobCompany: null,
+        });
+        await writeAutomationLog({
+          campaignId,
+          event: "campaign.too_many_unusable_jobs",
+          message: "Terlalu banyak lowongan stuck berturut-turut. Kampanye dihentikan.",
+          metadata: { campaignId, currentStep: "too_many_unusable_jobs", consecutiveStuckJobs },
         });
 
         return {
-          status: "paused",
+          status: "completed",
           message: "Terlalu banyak lowongan stuck berturut-turut. Periksa filter kampanye atau jalankan ulang nanti.",
           campaignId,
           currentStep: "too_many_unusable_jobs",
@@ -803,21 +874,48 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     }
 
     await prisma.jobListing.update({ where: { id: job.id }, data: { status: "failed" } });
+    await setCampaignRuntimeState(campaignId, {
+      status: "paused",
+      currentStep: "apply_failed",
+      currentJobId: job.id,
+      currentQuestion: applyResult.message,
+      decisionStatus: "stuck_no_progress",
+      decisionPayloadJson: JSON.stringify({
+        type: "stuck_no_progress",
+        applicationId: applyResult.applicationId ?? null,
+        message: applyResult.message,
+      }),
+    });
     return {
-      status: "error",
+      status: "paused",
       message: applyResult.message,
       campaignId,
       currentStep: "apply_failed",
       currentJobId: job.id,
+      applicationId: applyResult.applicationId,
+      decisionRequired: {
+        type: "stuck_no_progress",
+        applicationId: applyResult.applicationId ?? null,
+        message: applyResult.message,
+      },
     };
   }
 
   await setCampaignRuntimeState(campaignId, {
-    status: "paused",
+    status: "completed",
     currentStep: "too_many_unusable_jobs",
     currentQuestion: "Terlalu banyak lowongan stuck berturut-turut. Periksa filter kampanye atau jalankan ulang nanti.",
     decisionStatus: null,
     decisionPayloadJson: null,
+    currentJobId: null,
+    currentJobTitle: null,
+    currentJobCompany: null,
+  });
+  await writeAutomationLog({
+    campaignId,
+    event: "campaign.too_many_unusable_jobs",
+    message: "Terlalu banyak lowongan stuck berturut-turut. Kampanye dihentikan.",
+    metadata: { campaignId, currentStep: "too_many_unusable_jobs", consecutiveUnavailableJobs },
   });
 
   return {
@@ -836,9 +934,67 @@ export async function applyAutopilotDecision(campaignId: string, input: Decision
 
   const payload = parseJson<Record<string, unknown> | null>((campaign as typeof campaign & { decisionPayloadJson?: string | null }).decisionPayloadJson, null);
   const jobId = typeof payload?.jobId === "string" ? payload.jobId : null;
+  const applicationId = typeof payload?.applicationId === "string" ? payload.applicationId : null;
+  const decisionType = typeof payload?.type === "string" ? payload.type : null;
+
+  if (!jobId && !applicationId) {
+    throw new Error("Tidak ada keputusan aktif yang bisa diproses.");
+  }
+
+  if ((decisionType === "question_required" || decisionType === "submit_unverified") && applicationId) {
+    if (input.action === "skip") {
+      await prisma.application.update({
+        where: { id: applicationId },
+        data: {
+          status: "skipped",
+          skippedReason:
+            decisionType === "question_required"
+              ? "User memilih melewati lowongan karena pertanyaan perlu jawaban manual."
+              : "User memilih melewati lowongan karena submit belum terverifikasi.",
+        },
+      });
+
+      if (jobId) {
+        await prisma.jobListing.update({ where: { id: jobId }, data: { status: "skipped" } });
+      }
+
+      await setCampaignRuntimeState(campaignId, {
+        status: "running",
+        currentStep: "decision_resolved",
+        decisionStatus: null,
+        decisionPayloadJson: null,
+        currentQuestion: null,
+      });
+
+      return {
+        status: "safe_continue" as const,
+        message: "Lowongan dilewati sesuai keputusan Anda.",
+      };
+    }
+
+    if (["accept", "yes", "edit_answer", "reject", "no"].includes(input.action)) {
+      await setCampaignRuntimeState(campaignId, {
+        status: "running",
+        currentStep: "decision_resolved",
+        decisionStatus: null,
+        decisionPayloadJson: null,
+        currentQuestion: null,
+      });
+
+      return {
+        status: "safe_continue" as const,
+        message:
+          decisionType === "question_required"
+            ? input.action === "edit_answer"
+              ? "Jawaban akan diedit di aplikasi lalu kampanye bisa dilanjutkan."
+              : "Keputusan jawaban disimpan. Lanjutkan kampanye untuk meneruskan apply."
+            : "Keputusan submit disimpan. Lanjutkan kampanye untuk verifikasi ulang atau proses berikutnya.",
+      };
+    }
+  }
 
   if (!jobId) {
-    throw new Error("Tidak ada keputusan aktif yang bisa diproses.");
+    throw new Error("Keputusan ini membutuhkan lowongan aktif.");
   }
 
   if (input.action === "skip" || input.action === "skip_similar") {

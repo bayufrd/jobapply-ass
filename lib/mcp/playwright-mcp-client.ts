@@ -53,7 +53,14 @@ export type McpSnapshot = {
   title: string;
   accessibilityText: string;
   elements: McpElement[];
+  rawText: string;
   raw?: unknown;
+};
+
+export type McpSnapshotValidation = {
+  ok: boolean;
+  reason?: "empty_snapshot" | "browser_dependency_error" | "no_accessibility_tree" | "unknown";
+  message: string;
 };
 
 type McpJsonRpcError = {
@@ -159,6 +166,70 @@ function extractTextBlocks(payload: unknown): string[] {
   return Object.values(record).flatMap((value) => extractTextBlocks(value));
 }
 
+const MCP_BROWSER_DEPENDENCY_PATTERNS = [
+  /chromium/i,
+  /chrome/i,
+  /browser not found/i,
+  /executable doesn't exist/i,
+  /playwright install/i,
+  /install/i,
+];
+
+function compactWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function truncateText(value: string, maxLength = 1000) {
+  return compactWhitespace(value).slice(0, maxLength);
+}
+
+function extractRawText(raw: unknown) {
+  return extractTextBlocks(raw).join("\n").slice(0, 20000);
+}
+
+function containsBrowserDependencyError(value: string) {
+  const text = compactWhitespace(value);
+  return MCP_BROWSER_DEPENDENCY_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function parseTextSnapshotElements(text: string): McpElement[] {
+  const lines = text.split(/\r?\n/);
+  const elements: McpElement[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const match = trimmed.match(/^[-*]?\s*([a-z][a-z0-9_ -]+?)\s+"([^"]+)"(?:\s+\[ref=(e[\w-]+)\])?/i);
+    if (!match) continue;
+
+    const [, rawRole, rawName, rawRef] = match;
+    const role = compactWhitespace(rawRole).toLowerCase();
+    const name = compactWhitespace(rawName);
+    const elementId = rawRef || `mcp-text-${elements.length + 1}`;
+
+    elements.push({
+      elementId,
+      role,
+      name,
+      text: name,
+    });
+  }
+
+  return elements;
+}
+
+function extractUrlFromText(text: string) {
+  const urlMatch = text.match(/\bhttps?:\/\/[^\s)\]]+/i)
+    || text.match(/\burl\s*[:=]\s*([^\s]+)/i);
+  return urlMatch?.[1] ?? urlMatch?.[0] ?? "";
+}
+
+function extractTitleFromText(text: string) {
+  const titleMatch = text.match(/\btitle\s*[:=]\s*(.+)/i);
+  return compactWhitespace(titleMatch?.[1] ?? "");
+}
+
 function normalizeSnapshotPayload(raw: unknown): McpSnapshot {
   const payload = (asObject(raw) ?? {}) as SnapshotPayload;
   const elementsSource = Array.isArray(payload.elements)
@@ -167,17 +238,69 @@ function normalizeSnapshotPayload(raw: unknown): McpSnapshot {
       ? payload.nodes
       : [];
 
-  const elements = elementsSource.map(sanitizeElement).filter((item): item is McpElement => Boolean(item));
+  const rawText = extractRawText(raw);
   const accessibilityText = pickString(payload.accessibilityText)
     || pickString(payload.text)
-    || extractTextBlocks(raw).join("\n").slice(0, 20000);
+    || rawText;
+  const parsedElements = elementsSource.map(sanitizeElement).filter((item): item is McpElement => Boolean(item));
+  const fallbackTextElements = parsedElements.length === 0 ? parseTextSnapshotElements(accessibilityText || rawText) : [];
+  const elements = parsedElements.length > 0 ? parsedElements : fallbackTextElements;
+  const normalizedUrl = pickString(payload.url).trim() || extractUrlFromText(accessibilityText || rawText);
+  const normalizedTitle = pickString(payload.title).trim() || extractTitleFromText(accessibilityText || rawText);
 
   return {
-    url: pickString(payload.url),
-    title: pickString(payload.title),
+    url: normalizedUrl,
+    title: normalizedTitle,
     accessibilityText,
     elements,
+    rawText,
     raw,
+  };
+}
+
+export function getMcpSnapshotPreview(snapshot: Pick<McpSnapshot, "accessibilityText" | "rawText" | "elements">) {
+  return {
+    accessibilityTextPreview: truncateText(snapshot.accessibilityText, 500),
+    rawTextPreview: truncateText(snapshot.rawText, 500),
+    parsedElementsCount: snapshot.elements.length,
+  };
+}
+
+export function validateMcpSnapshot(snapshot: McpSnapshot): McpSnapshotValidation {
+  const accessibilityText = compactWhitespace(snapshot.accessibilityText);
+  const rawText = compactWhitespace(snapshot.rawText);
+  const hasElements = snapshot.elements.length > 0;
+  const hasUrlOrTitle = Boolean(snapshot.url.trim() || snapshot.title.trim());
+  const hasUsefulText = accessibilityText.length > 0 || rawText.length > 0;
+  const combinedText = `${accessibilityText}\n${rawText}`;
+
+  if (containsBrowserDependencyError(combinedText)) {
+    return {
+      ok: false,
+      reason: "browser_dependency_error",
+      message: "Playwright MCP aktif, tetapi browser Chromium/Chrome belum siap. Jalankan npx playwright install chromium lalu restart MCP.",
+    };
+  }
+
+  if (!hasUrlOrTitle && !hasElements && !hasUsefulText) {
+    return {
+      ok: false,
+      reason: "empty_snapshot",
+      message: "Snapshot MCP kosong/tidak valid. Automasi dihentikan sebelum AI planner agar tidak salah aksi.",
+    };
+  }
+
+  if (!hasElements && !hasUsefulText) {
+    return {
+      ok: false,
+      reason: "no_accessibility_tree",
+      message: "Snapshot MCP tidak memiliki accessibility tree yang bisa dipakai.",
+    };
+  }
+
+  return {
+    ok: true,
+    message: "Snapshot MCP valid.",
   };
 }
 
@@ -362,20 +485,20 @@ export class PlaywrightMcpClient {
     return normalizeSnapshotPayload(raw);
   }
 
-  async click(elementId: string): Promise<void> {
-    await this.callTool("browser_click", { elementId });
+  async click(elementId: string, element?: string): Promise<void> {
+    await this.callTool("browser_click", { element: element || elementId, ref: elementId });
   }
 
-  async fill(elementId: string, value: string): Promise<void> {
-    await this.callTool("browser_fill", { elementId, value });
+  async fill(elementId: string, value: string, element?: string): Promise<void> {
+    await this.callTool("browser_fill", { element: element || elementId, ref: elementId, text: value });
   }
 
-  async select(elementId: string, value: string): Promise<void> {
-    await this.callTool("browser_select", { elementId, value });
+  async select(elementId: string, value: string, element?: string): Promise<void> {
+    await this.callTool("browser_select", { element: element || elementId, ref: elementId, value });
   }
 
-  async check(elementId: string, checked: boolean): Promise<void> {
-    await this.callTool("browser_check", { elementId, checked });
+  async check(elementId: string, checked: boolean, element?: string): Promise<void> {
+    await this.callTool("browser_check", { element: element || elementId, ref: elementId, checked });
   }
 
   async listTools(): Promise<unknown> {

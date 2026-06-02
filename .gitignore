@@ -51,6 +51,8 @@ storage/screenshots/*
 storage/jobstreet.auth.json
 storage/logs/*.log
 storage/logs/*.jsonl
+.mcp-browser-profile/
+.playwright-browser-profile/
 
 # keep storage directories
 !storage/cv/.gitkeep
@@ -58,5 +60,5 @@ storage/logs/*.jsonl
 /storage/
 /storage/*
 storage/
-.mcp-browser-profile/
 .mcp-output/
+tests/layout/*.apk

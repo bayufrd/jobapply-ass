@@ -3,6 +3,7 @@ import { getNineRouterChatModel, getNineRouterClient } from "@/lib/ai/9router-cl
 import { extractJsonObject } from "@/lib/ai/json";
 import type { CandidateProfileResult } from "@/lib/ai/schemas";
 import type { DomSnapshot } from "@/lib/browser/dom-snapshot";
+import type { JobstreetLayoutKnowledge } from "@/lib/jobstreet/jobstreet-layout-knowledge";
 
 const uiActionSchema = z.discriminatedUnion("type", [
   z.object({
@@ -117,6 +118,13 @@ type UiPlannerInput = {
   questionMemory: PlannerQuestionMemory;
   currentApplicationState: PlannerState;
   safetyMode: "strict" | "normal";
+  jobstreetKnowledge?: {
+    step: JobstreetLayoutKnowledge["step"] | "unknown";
+    confidence: number;
+    matchedSignals: string[];
+    warnings: string[];
+    reference?: JobstreetLayoutKnowledge | null;
+  };
 };
 
 function buildAllowedElementIds(snapshot: DomSnapshot) {
@@ -264,6 +272,13 @@ export async function planUiNextActions(input: UiPlannerInput): Promise<UiAction
         content: JSON.stringify(
           {
             task: "Tentukan aksi UI aman berikutnya untuk proses lamaran kerja.",
+            promptRules: [
+              "Gunakan Jobstreet reference layout hanya sebagai guidance.",
+              "Snapshot DOM live dan URL live tetap sumber kebenaran runtime.",
+              "Hanya pilih elementId yang benar-benar terlihat pada snapshot live.",
+              "Jangan mengklik elemen hanya karena fixture/reference memilikinya.",
+              "Jangan salah klasifikasi Profile/Profile Avatar/Skip to content/Open app/SIGN_IN_PAGE sebagai login tanpa bukti visible kuat seperti password, OTP, captcha, atau security challenge.",
+            ],
             format: {
               goal: "click_apply | fill_form | answer_question | continue | final_submit | ask_user | skip_job | wait | manual_intervention | unknown",
               confidence: "number 0-1",
@@ -290,6 +305,28 @@ export async function planUiNextActions(input: UiPlannerInput): Promise<UiAction
             campaign: input.campaign,
             jobListing: input.jobListing,
             questionMemory: input.questionMemory,
+            jobstreetReferenceKnowledge: input.jobstreetKnowledge
+              ? {
+                  detectedStep: input.jobstreetKnowledge.step,
+                  confidence: input.jobstreetKnowledge.confidence,
+                  matchedSignals: input.jobstreetKnowledge.matchedSignals,
+                  warnings: input.jobstreetKnowledge.warnings,
+                  reference: input.jobstreetKnowledge.reference
+                    ? {
+                        step: input.jobstreetKnowledge.reference.step,
+                        referenceTitle: input.jobstreetKnowledge.reference.referenceTitle,
+                        referenceUrlPattern: input.jobstreetKnowledge.reference.referenceUrlPattern,
+                        expectedVisibleTexts: input.jobstreetKnowledge.reference.expectedVisibleTexts,
+                        expectedButtons: input.jobstreetKnowledge.reference.expectedButtons,
+                        expectedInputs: input.jobstreetKnowledge.reference.expectedInputs,
+                        expectedQuestionPatterns: input.jobstreetKnowledge.reference.expectedQuestionPatterns,
+                        successMarkers: input.jobstreetKnowledge.reference.successMarkers,
+                        antiPatterns: input.jobstreetKnowledge.reference.antiPatterns,
+                        aiGuidance: input.jobstreetKnowledge.reference.aiGuidance,
+                      }
+                    : null,
+                }
+              : null,
             allowedElementIds: buildAllowedElementIds(input.domSnapshot),
             domSnapshot: sanitizeSnapshotForPrompt(input.domSnapshot),
           },

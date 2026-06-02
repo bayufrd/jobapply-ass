@@ -1,0 +1,474 @@
+- generic [ref=e3]:
+  - button
+  - button "Skip to content" [ref=e4] [cursor=pointer]
+  - generic [ref=e5]:
+    - status
+  - banner [ref=e7]:
+    - generic [ref=e11]:
+      - generic [ref=e12]:
+        - link "Jobstreet" [ref=e14] [cursor=pointer]:
+          - /url: /en
+          - generic [ref=e15]: Jobstreet
+          - img [ref=e17]
+        - generic [ref=e22]:
+          - link "Job search" [ref=e24] [cursor=pointer]:
+            - /url: /en
+            - generic [ref=e26]: Job search
+          - link "People search" [ref=e29] [cursor=pointer]:
+            - /url: /profiles/search?tracking=ILC-profile-search-header
+            - generic [ref=e31]: People search
+          - link "Career advice" [ref=e34] [cursor=pointer]:
+            - /url: /career-advice
+            - generic [ref=e36]: Career advice
+          - link "Companies" [ref=e39] [cursor=pointer]:
+            - /url: /companies
+            - generic [ref=e41]: Companies
+          - link "Community" [ref=e44] [cursor=pointer]:
+            - /url: /community
+            - generic [ref=e46]: Community
+      - generic [ref=e48]:
+        - button "English" [ref=e51] [cursor=pointer]:
+          - generic [ref=e53]:
+            - img [ref=e56]
+            - generic [ref=e59]: English
+            - img [ref=e62]
+        - link "Sign in" [ref=e72] [cursor=pointer]:
+          - /url: /oauth/login?returnUrl=%2Fjob%2F92333161%3Forigin%3DcardTitle%26ref%3Dsearch-standalone%26type%3Dstandard%23sol%3Db23da3e8b101079b5de736df916616b5de69254b
+          - generic [ref=e73]:
+            - generic:
+              - generic: Sign in
+        - link "Employer site" [ref=e75] [cursor=pointer]:
+          - /url: https://id.employer.seek.com/
+          - generic [ref=e76]: Employer site
+  - main [ref=e78]:
+    - generic [ref=e84]:
+      - generic [ref=e85]:
+        - button "Share or report ad" [ref=e100] [cursor=pointer]:
+          - img [ref=e103]
+        - generic [ref=e108]:
+          - heading "Backend Developer" [level=1] [ref=e109]
+          - generic [ref=e110]:
+            - button "PT. Trimegah Sekuritas Indonesia, Tbk" [ref=e111] [cursor=pointer]:
+              - generic [ref=e112]:
+                - text: PT. Trimegah Sekuritas Indonesia, Tbk
+                - img [ref=e114]
+            - generic [ref=e117]:
+              - generic [ref=e118]:
+                - generic "4.2 out of 5" [ref=e119]:
+                  - img [ref=e121]
+                - text: "4.2"
+              - link "20 reviews" [ref=e124] [cursor=pointer]:
+                - /url: /companies/trimegah-securities-indonesia-168558432829186/reviews?jobId=92333161
+              - generic [ref=e125]: ·
+              - link "View all jobs" [ref=e127] [cursor=pointer]:
+                - /url: /Trimegah-Securities-Indonesia-jobs/at-this-company
+        - generic [ref=e128]:
+          - generic [ref=e129]:
+            - generic [ref=e130]:
+              - img [ref=e134]
+              - generic [ref=e139]:
+                - link "South Jakarta, Jakarta":
+                  - /url: /Backend-Developer-jobs/in-South-Jakarta-Jakarta
+            - generic [ref=e140]:
+              - img [ref=e144]
+              - generic [ref=e149]:
+                - link "Developers/Programmers (Information & Communication Technology)":
+                  - /url: /jobs-in-information-communication-technology/developers-programmers
+            - generic [ref=e150]:
+              - img [ref=e154]
+              - generic [ref=e159]:
+                - link "Full time":
+                  - /url: /Backend-Developer-jobs/full-time
+            - generic [ref=e160]:
+              - img [ref=e164]
+              - generic [ref=e170]: Add expected salary to your profile for insights
+          - generic [ref=e171]: Posted 7d ago
+        - generic [ref=e176]:
+          - link "Apply for Backend Developer at PT. Trimegah Sekuritas Indonesia, Tbk" [ref=e179] [cursor=pointer]:
+            - /url: /job/92333161/apply
+            - generic [ref=e180]:
+              - generic:
+                - generic: Quick apply
+          - button "Save Backend Developer at PT. Trimegah Sekuritas Indonesia, Tbk" [ref=e182] [cursor=pointer]:
+            - generic [ref=e183]:
+              - generic:
+                - generic:
+                  - generic: Save
+      - generic [ref=e184]:
+        - generic [ref=e188]:
+          - paragraph [ref=e189]:
+            - strong [ref=e190]: "Job Description:"
+          - list [ref=e191]:
+            - listitem [ref=e192]:
+              - paragraph [ref=e193]: Design, develop, and maintain robust, scalable, and high-performance backend services using Java (Quarkus) and C# (.NET)
+            - listitem [ref=e194]:
+              - paragraph [ref=e195]: Develop and manage APIs (RESTful) for internal and external consumption, and coordinate and oversee the definition of API contracts for services
+            - listitem [ref=e196]:
+              - paragraph [ref=e197]: Participate in the full software development lifecycle, from requirements gathering to deployment and support
+            - listitem [ref=e198]:
+              - paragraph [ref=e199]: Contribute to architecture review and discussions for new services and feature development
+            - listitem [ref=e200]:
+              - paragraph [ref=e201]: Assist in the debugging and integration of frontend clients, using a variety of technologies such as Vue.js and React
+            - listitem [ref=e202]:
+              - paragraph [ref=e203]: Monitor, troubleshoot, and optimize backend services for performance and reliability
+            - listitem [ref=e204]:
+              - paragraph [ref=e205]: Containerize services for Kubernetes, and work with DevOps team to deploy, debug, and optimize backend services
+            - listitem [ref=e206]:
+              - paragraph [ref=e207]: Implement secure and efficient database interactions and data storage solutions
+            - listitem [ref=e208]:
+              - paragraph [ref=e209]: Participate in code reviews, ensuring adherence to coding standards and best practices
+            - listitem [ref=e210]:
+              - paragraph [ref=e211]: Write comprehensive unit and integration tests to ensure code quality and reliability
+          - paragraph [ref=e212]
+          - paragraph [ref=e213]: "Requirements:"
+          - list [ref=e214]:
+            - listitem [ref=e215]:
+              - paragraph [ref=e216]: 4+ years of hands-on software development experience in Java, C# or similar programming language
+            - listitem [ref=e217]:
+              - paragraph [ref=e218]: 2+ years of hands-on development experience designing and developing RESTful APIs
+            - listitem [ref=e219]:
+              - paragraph [ref=e220]: 1+ years experience building and maintaining microservices in a variety of programming languages
+            - listitem [ref=e221]:
+              - paragraph [ref=e222]: Demonstrated hands-on development experience with relational, SQL databases such as PostgreSQL and NoSQL databases such as MongoDB or Redis
+            - listitem [ref=e223]:
+              - paragraph [ref=e224]: Proficient with Object-Oriented Programming (OOP) and Design Patterns
+            - listitem [ref=e225]:
+              - paragraph [ref=e226]: Strong understanding and demonstrated proficiency in writing, debugging, and maintaining complex SQL queries
+            - listitem [ref=e227]:
+              - paragraph [ref=e228]: Familiarity with Go, Elixir, PHP, or other languages is a plus
+            - listitem [ref=e229]:
+              - paragraph [ref=e230]: Previous experience with Protobuf/gRPC is a plus
+            - listitem [ref=e231]:
+              - paragraph [ref=e232]: Strong understanding and familiarity with message queues/brokers such as Kafka, Nats. IO
+            - listitem [ref=e233]:
+              - paragraph [ref=e234]: Demonstrable experience writing comprehensive unit tests for backend code
+            - listitem [ref=e235]:
+              - paragraph [ref=e236]: Experience with version control systems, especially Git
+            - listitem [ref=e237]:
+              - paragraph [ref=e238]: Understanding of microservices architecture principles
+            - listitem [ref=e239]:
+              - paragraph [ref=e240]: Familiarity with containerization technologies (Docker) and orchestration (Kubernetes)
+            - listitem [ref=e241]:
+              - paragraph [ref=e242]: Eagerness to learn and adapt to new technologies, especially Kubernetes
+            - listitem [ref=e243]:
+              - paragraph [ref=e244]: Experience with cloud platforms (e.g., AWS, Azure, GCP) is a plus
+            - listitem [ref=e245]:
+              - paragraph [ref=e246]: Basic understanding of frontend technologies (HTML, CSS, JavaScript) and modern JavaScript frameworks (Vue. js, React)
+            - listitem [ref=e247]:
+              - paragraph [ref=e248]: Excellent problem-solving skills and attention to detail
+            - listitem [ref=e249]:
+              - paragraph [ref=e250]: Ability to work independently and as part of a collaborative team
+            - listitem [ref=e251]:
+              - paragraph [ref=e252]: Strong communication skills in Bahasa Indonesia
+            - listitem [ref=e253]:
+              - paragraph [ref=e254]: Proficiency in English is a plus
+          - paragraph [ref=e255]
+        - generic [ref=e257]:
+          - generic [ref=e259]:
+            - generic [ref=e260]:
+              - heading "Unlock job insights" [level=2] [ref=e261]
+              - generic [ref=e262]:
+                - generic [ref=e264]:
+                  - img [ref=e267]
+                  - generic [ref=e269]: Hirer responsiveness
+                - generic [ref=e271]:
+                  - img [ref=e274]
+                  - generic [ref=e278]: Salary match
+                - generic [ref=e280]:
+                  - img [ref=e283]
+                  - generic [ref=e285]: Number of applicants
+            - generic [ref=e286]:
+              - button "Sign In" [ref=e287] [cursor=pointer]:
+                - generic [ref=e288]:
+                  - generic:
+                    - generic: Sign In
+              - button "Register" [ref=e289] [cursor=pointer]:
+                - generic [ref=e290]:
+                  - generic:
+                    - generic: Register
+          - img [ref=e292]
+        - generic [ref=e300]:
+          - heading "Employer questions" [level=2] [ref=e301]
+          - generic [ref=e302]:
+            - generic [ref=e303]: "Your application will include the following questions:"
+            - list [ref=e304]:
+              - listitem [ref=e305]:
+                - generic [ref=e310]: Which of the following types of qualifications do you have?
+              - listitem [ref=e311]:
+                - generic [ref=e316]: How many years' experience do you have as a Backend Developer?
+              - listitem [ref=e317]:
+                - generic [ref=e322]: How would you rate your English language skills?
+              - listitem [ref=e323]:
+                - generic [ref=e328]: Which of the following programming languages are you experienced in?
+        - generic [ref=e331]:
+          - heading "Company profile" [level=3] [ref=e332]
+          - generic [ref=e333]:
+            - generic [ref=e334]:
+              - generic [ref=e337]:
+                - img "Company Logo for Trimegah Securities Indonesia" [ref=e339]
+                - generic [ref=e340]:
+                  - button "Trimegah Securities Indonesia" [ref=e341] [cursor=pointer]:
+                    - heading "Trimegah Securities Indonesia" [level=4] [ref=e342]:
+                      - text: Trimegah Securities Indonesia
+                      - img [ref=e344]
+                  - generic [ref=e347]:
+                    - generic [ref=e348]:
+                      - generic "4.2 out of 5" [ref=e349]:
+                        - img [ref=e351]
+                      - text: "4.2"
+                    - generic [ref=e353]: ·
+                    - link "20 reviews" [ref=e355] [cursor=pointer]:
+                      - /url: /companies/trimegah-securities-indonesia-168558432829186/reviews?jobId=92333161
+              - generic [ref=e357]:
+                - generic [ref=e359]:
+                  - img [ref=e362]
+                  - generic [ref=e365]: Financial Investment Services
+                - generic [ref=e367]:
+                  - img [ref=e370]
+                  - generic [ref=e372]: 101-1,000 employees
+              - generic [ref=e374]:
+                - generic [ref=e375]:
+                  - generic:
+                    - generic:
+                      - paragraph: Established in May 1990, now Trimegah Securities is more than just one of the largest and fully integrated securities companies in Indonesia. It is admittedly one of the most trusted securities companies in Indonesia.
+                      - paragraph: Equity Capital Markets Division provides equity brokerage service and margin lending facility for retail and institutional clients. Debt Capital Markets Division facilitates government bond transactions, including Retail Government Bond, Retail Shariah Government Bond, and corporate bonds. Investment Banking Division provides bonds and equity underwriting service, arranger as well as financial advisory. Our subsidiary, PT Trimegah Asset Management, which is established in January 2011, provides clients with various types of mutual funds.
+                      - paragraph: All of these are served through 17 branch offices in 13 major cities throughout Indonesia. The extensive network is expected to further increase clients′ access to Trimegah′s products and services. On top of that Trimegah is always committed to information technology development that will increase the quality of our products and services, and our operations.
+                  - generic [ref=e378]:
+                    - paragraph [ref=e379]: Established in May 1990, now Trimegah Securities is more than just one of the largest and fully integrated securities companies in Indonesia. It is admittedly one of the most trusted securities companies in Indonesia.
+                    - paragraph [ref=e380]: Equity Capital Markets Division provides equity brokerage service and margin lending facility for retail and institutional clients. Debt Capital Markets Division facilitates government bond transactions, including Retail Government Bond, Retail Shariah Government Bond, and corporate bonds. Investment Banking Division provides bonds and equity underwriting service, arranger as well as financial advisory. Our subsidiary, PT Trimegah Asset Management, which is established in January 2011, provides clients with various types of mutual funds.
+                    - paragraph [ref=e381]: All of these are served through 17 branch offices in 13 major cities throughout Indonesia. The extensive network is expected to further increase clients′ access to Trimegah′s products and services. On top of that Trimegah is always committed to information technology development that will increase the quality of our products and services, and our operations.
+                - button [ref=e384] [cursor=pointer]:
+                  - text: Show more
+                  - generic [ref=e385]:
+                    - text: ⁠
+                    - img [ref=e387]
+            - generic [ref=e391]:
+              - generic [ref=e393]:
+                - img [ref=e396]
+                - generic [ref=e398]: Perks and benefits
+              - generic [ref=e399]:
+                - generic [ref=e401]: • Medical
+                - generic [ref=e403]: • Dental
+            - link "More about this company" [ref=e406] [cursor=pointer]:
+              - /url: /companies/trimegah-securities-indonesia-168558432829186
+              - generic [ref=e407]:
+                - generic:
+                  - generic:
+                    - text: More about this company
+                    - generic:
+                      - text: ⁠
+                      - generic:
+                        - img
+        - generic [ref=e409]:
+          - heading "Report this job advert" [level=2] [ref=e411]
+          - generic [ref=e412]:
+            - generic [ref=e413]: Be careful
+            - generic [ref=e414]: Don’t provide your bank or credit card details when applying for jobs.
+            - link "Learn how to protect yourself" [ref=e416] [cursor=pointer]:
+              - /url: /security-hub#protect-yourself-online
+            - button "Report this job ad" [ref=e422] [cursor=pointer]:
+              - text: Report this job ad
+              - generic [ref=e423]:
+                - text: ⁠
+                - img [ref=e425]
+        - generic [ref=e428]:
+          - heading "Featured jobs" [level=4] [ref=e429]
+          - generic [ref=e432]:
+            - generic [ref=e435] [cursor=pointer]:
+              - link [ref=e436]:
+                - /url: /job/92321975?ref=cp-recs&origin=competitiveRecommendedJobs&pos=1#sol=73a4b71a955da32c14b10ebc4cd2b4edfefac17e
+              - generic [ref=e437]:
+                - generic:
+                  - generic:
+                    - img
+              - generic [ref=e440]: Back-End Developer (Engineer)
+              - generic [ref=e443]: PT Depoguna Bangunan Online
+              - generic [ref=e446]: Jakarta, ID
+              - generic [ref=e449]: 8d ago
+              - button "Sign in to save this job" [ref=e453]:
+                - img [ref=e456]
+            - generic [ref=e460] [cursor=pointer]:
+              - link [ref=e461]:
+                - /url: /job/92259845?ref=cp-recs&origin=competitiveRecommendedJobs&pos=2#sol=b5849e2463ebc058500f3636e925bba4400c428e
+              - generic [ref=e462]:
+                - generic:
+                  - generic:
+                    - img
+              - generic [ref=e465]: Senior Java Developer
+              - generic [ref=e468]: PT Green City Traffic
+              - generic [ref=e471]: South Jakarta, Jakarta, ID
+              - generic [ref=e474]: 12d ago
+              - button "Sign in to save this job" [ref=e478]:
+                - img [ref=e481]
+            - generic [ref=e485] [cursor=pointer]:
+              - link [ref=e486]:
+                - /url: /job/92317421?ref=cp-recs&origin=competitiveRecommendedJobs&pos=3#sol=cf9c7964ea4944be91127fd5be3ee3b432dede2d
+              - generic [ref=e487]:
+                - generic:
+                  - generic:
+                    - img
+              - generic [ref=e490]: Full Stack Developer
+              - generic [ref=e493]: PT Petrosea Tbk
+              - generic [ref=e496]: West Jakarta, Jakarta, ID
+              - generic [ref=e499]: 8d ago
+              - button "Sign in to save this job" [ref=e503]:
+                - img [ref=e506]
+        - generic [ref=e514]:
+          - img "salary teaser image" [ref=e516]
+          - generic [ref=e517]:
+            - generic [ref=e518]: What can I earn as a Backend developer
+            - link "See more detailed salary information salary teaser link arrow" [ref=e519] [cursor=pointer]:
+              - /url: https://id.jobstreet.com/career-advice/role/backend-developer/salary?campaigncode=lrn:skj:sklm:cg:jbd:alpha
+              - generic [ref=e520]: See more detailed salary information
+              - img "salary teaser link arrow" [ref=e521]
+  - contentinfo [ref=e523]:
+    - generic [ref=e525]:
+      - generic [ref=e528]:
+        - generic [ref=e530]:
+          - generic [ref=e532]:
+            - generic [ref=e533]: Job seekers
+            - list [ref=e534]:
+              - listitem [ref=e535]:
+                - link "Job search" [ref=e536] [cursor=pointer]:
+                  - /url: /en
+                  - generic [ref=e538]: Job search
+              - listitem [ref=e539]:
+                - link "Profile" [ref=e540] [cursor=pointer]:
+                  - /url: /profile
+                  - generic [ref=e542]: Profile
+              - listitem [ref=e543]:
+                - link "People search" [ref=e544] [cursor=pointer]:
+                  - /url: /profiles/search?tracking=ILC-profile-search-footer
+                  - generic [ref=e546]: People search
+              - listitem [ref=e547]:
+                - link "Saved searches" [ref=e548] [cursor=pointer]:
+                  - /url: /oauth/login?returnUrl=%2Fmy-activity%2Fsaved-searches
+                  - generic [ref=e550]: Saved searches
+              - listitem [ref=e551]:
+                - link "Saved jobs" [ref=e552] [cursor=pointer]:
+                  - /url: /oauth/login?returnUrl=%2Fmy-activity%2Fsaved-jobs
+                  - generic [ref=e554]: Saved jobs
+              - listitem [ref=e555]:
+                - link "Job applications" [ref=e556] [cursor=pointer]:
+                  - /url: /oauth/login?returnUrl=%2Fmy-activity%2Fapplied-jobs
+                  - generic [ref=e558]: Job applications
+              - listitem [ref=e559]:
+                - link "Career advice" [ref=e560] [cursor=pointer]:
+                  - /url: /career-advice
+                  - generic [ref=e562]: Career advice
+              - listitem [ref=e563]:
+                - link "Explore careers" [ref=e564] [cursor=pointer]:
+                  - /url: /career-advice/explore-careers
+                  - generic [ref=e566]: Explore careers
+              - listitem [ref=e567]:
+                - link "Explore salaries" [ref=e568] [cursor=pointer]:
+                  - /url: /career-advice/explore-salaries
+                  - generic [ref=e570]: Explore salaries
+              - listitem [ref=e571]:
+                - link "Companies" [ref=e572] [cursor=pointer]:
+                  - /url: /companies
+                  - generic [ref=e574]: Companies
+              - listitem [ref=e575]:
+                - link "Community" [ref=e576] [cursor=pointer]:
+                  - /url: /community
+                  - generic [ref=e578]: Community
+              - listitem [ref=e579]:
+                - generic [ref=e581] [cursor=pointer]:
+                  - button "Download apps" [ref=e584]
+                  - img [ref=e590]
+          - generic [ref=e593]:
+            - generic [ref=e594]: Employers
+            - list [ref=e595]:
+              - listitem [ref=e596]:
+                - link "Register for free" [ref=e597] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/
+                  - generic [ref=e599]: Register for free
+              - listitem [ref=e600]:
+                - link "Post a job ad" [ref=e601] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/
+                  - generic [ref=e603]: Post a job ad
+              - listitem [ref=e604]:
+                - link "Products & prices" [ref=e605] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/products/jobads
+                  - generic [ref=e607]: Products & prices
+              - listitem [ref=e608]:
+                - link "Customer service" [ref=e609] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/contactus
+                  - generic [ref=e611]: Customer service
+              - listitem [ref=e612]:
+                - link "Hiring advice" [ref=e613] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/hiring-advice
+                  - generic [ref=e615]: Hiring advice
+              - listitem [ref=e616]:
+                - link "Market insights" [ref=e617] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/market-insights
+                  - generic [ref=e619]: Market insights
+              - listitem [ref=e620]:
+                - link "Recruitment software partners" [ref=e621] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/partners/connect-with-seek
+                  - generic [ref=e623]: Recruitment software partners
+        - generic [ref=e626]:
+          - generic [ref=e628]:
+            - generic [ref=e629]: About us
+            - list [ref=e630]:
+              - listitem [ref=e631]:
+                - link "About us" [ref=e632] [cursor=pointer]:
+                  - /url: /about
+                  - generic [ref=e634]: About us
+              - listitem [ref=e635]:
+                - link "Newsroom" [ref=e636] [cursor=pointer]:
+                  - /url: /about/news
+                  - generic [ref=e638]: Newsroom
+              - listitem [ref=e639]:
+                - link "Investors" [ref=e640] [cursor=pointer]:
+                  - /url: https://au.seek.com/about/investors
+                  - generic [ref=e642]: Investors
+              - listitem [ref=e643]:
+                - link "Careers" [ref=e644] [cursor=pointer]:
+                  - /url: /careers
+                  - generic [ref=e646]: Careers
+              - listitem [ref=e647]:
+                - generic [ref=e649] [cursor=pointer]:
+                  - button "International partners" [ref=e652]
+                  - img [ref=e658]
+              - listitem [ref=e660]:
+                - generic [ref=e662] [cursor=pointer]:
+                  - button "Partner services" [ref=e665]
+                  - img [ref=e671]
+          - generic [ref=e674]:
+            - generic [ref=e675]: Contact
+            - list [ref=e676]:
+              - listitem [ref=e677]:
+                - link "Help centre" [ref=e678] [cursor=pointer]:
+                  - /url: https://help.id.jobstreet.com/id/s/?language=en_US
+                  - generic [ref=e680]: Help centre
+              - listitem [ref=e681]:
+                - link "Contact us" [ref=e682] [cursor=pointer]:
+                  - /url: /contact-us
+                  - generic [ref=e684]: Contact us
+              - listitem [ref=e685]:
+                - link "Product & tech blog" [ref=e686] [cursor=pointer]:
+                  - /url: https://medium.com/seek-blog
+                  - generic [ref=e688]: Product & tech blog
+              - listitem [ref=e689]:
+                - generic [ref=e691] [cursor=pointer]:
+                  - button "Social" [ref=e694]
+                  - img [ref=e700]
+      - generic [ref=e704]:
+        - button "Location" [ref=e708] [cursor=pointer]:
+          - generic [ref=e710]:
+            - img [ref=e713]
+            - generic [ref=e717]: Indonesia
+            - img [ref=e720]
+        - generic [ref=e722]:
+          - generic [ref=e723]:
+            - link "Terms & conditions" [ref=e725] [cursor=pointer]:
+              - /url: /terms
+              - generic [ref=e727]: Terms & conditions
+            - link "Security" [ref=e729] [cursor=pointer]:
+              - /url: /security-hub
+              - generic [ref=e731]: Security
+            - link "Privacy" [ref=e733] [cursor=pointer]:
+              - /url: /my-privacy
+              - generic [ref=e735]: Privacy
+          - generic [ref=e736]: Copyright © 2026, Jobstreet

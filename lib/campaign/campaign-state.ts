@@ -9,3 +9,13 @@ export function canContinueAutopilot(status: string): boolean {
 export function isCampaignTerminal(status: string): boolean {
   return ["completed"].includes(status);
 }
+
+export const TERMINAL_CAMPAIGN_STEPS = [
+  "no_jobs_remaining",
+  "target_reached",
+  "too_many_unusable_jobs",
+] as const;
+
+export function isTerminalCampaignStep(step: string | null | undefined): boolean {
+  return TERMINAL_CAMPAIGN_STEPS.includes(step as (typeof TERMINAL_CAMPAIGN_STEPS)[number]);
+}

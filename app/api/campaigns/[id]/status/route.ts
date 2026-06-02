@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
-import { canContinueAutopilot, canStartAutopilot, isCampaignTerminal } from "@/lib/campaign/campaign-state";
+import { canContinueAutopilot, canStartAutopilot, isCampaignTerminal, isTerminalCampaignStep } from "@/lib/campaign/campaign-state";
 
 function parseJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -140,29 +140,75 @@ export async function GET(
   const latestWatchdogLog = campaign.logs.find((log) => log.event.startsWith("application.") || log.event.startsWith("campaign.autopilot_continue_after_stuck")) ?? null;
   const latestWatchdogMetadata = parseJson<Record<string, unknown> | null>(latestWatchdogLog?.metadataJson, null);
   const watchdogState = (latestWatchdogMetadata?.watchdog ?? null) as Record<string, unknown> | null;
+  const isTerminalStep = isTerminalCampaignStep(runtimeCampaign.currentStep ?? "");
   const nextRecommendedAction =
-    campaign.status === "paused" && runtimeCampaign.decisionStatus === "low_score"
-      ? "decision_required"
-      : campaign.status === "paused" && runtimeCampaign.decisionStatus === "question_required"
-        ? "question_required"
-        : campaign.status === "paused" && runtimeCampaign.decisionStatus === "review_required"
-          ? "review_required"
-          : campaign.status === "paused" && runtimeCampaign.decisionStatus === "submit_unverified"
-            ? "submit_unverified"
-            : campaign.status === "paused" && runtimeCampaign.decisionStatus === "mcp_unavailable"
-              ? "mcp_unavailable"
-              : campaign.appliedCount >= campaign.targetApplyCount || isCampaignTerminal(campaign.status)
-                ? "completed"
-                : "safe_continue";
+    isTerminalStep || campaign.status === "completed"
+      ? "completed"
+      : campaign.status === "paused" && runtimeCampaign.decisionStatus === "low_score"
+        ? "decision_required"
+        : campaign.status === "paused" && runtimeCampaign.decisionStatus === "question_required"
+          ? "question_required"
+          : campaign.status === "paused" && runtimeCampaign.decisionStatus === "review_required"
+            ? "review_required"
+            : campaign.status === "paused" && runtimeCampaign.decisionStatus === "submit_unverified"
+              ? "submit_unverified"
+              : campaign.status === "paused" && runtimeCampaign.decisionStatus === "mcp_unavailable"
+                ? "mcp_unavailable"
+                : campaign.appliedCount >= campaign.targetApplyCount || isCampaignTerminal(campaign.status)
+                  ? "completed"
+                  : "safe_continue";
 
   const latestMcpFailureLog = campaign.logs.find((log) => log.event === "mcp.preflight_failed" || log.event === "mcp_ai.runner_failed") ?? null;
   const latestMcpFailureMetadata = parseJson<Record<string, unknown> | null>(latestMcpFailureLog?.metadataJson, null);
+  const latestSuccessLog = campaign.logs.find((log) => log.event === "application.submit_success_marker_detected") ?? null;
+  const latestSuccessMetadata = parseJson<Record<string, unknown> | null>(latestSuccessLog?.metadataJson, null);
+  const latestApplication = campaign.applications[0] ?? null;
+  const blocker =
+    campaign.status === "error"
+      ? {
+          type: "error",
+          message: campaign.logs[0]?.message ?? "Terjadi error kampanye.",
+        }
+      : runtimeCampaign.decisionStatus === "question_required"
+        ? {
+            type: "question_required",
+            message: "Pertanyaan ditemukan. Pilih jawaban di modal ini untuk melanjutkan.",
+          }
+        : runtimeCampaign.decisionStatus === "manual_intervention"
+          ? {
+              type: "manual_intervention",
+              message: runtimeCampaign.currentQuestion ?? "Butuh tindakan manual untuk login, captcha, OTP, atau verifikasi keamanan.",
+            }
+          : runtimeCampaign.decisionStatus === "submit_unverified"
+            ? {
+                type: "submit_unverified",
+                message: "Belum sampai halaman sukses. QA dihentikan dan log sudah disimpan.",
+              }
+            : runtimeCampaign.decisionStatus === "mcp_unavailable" || runtimeCampaign.currentStep === "mcp_browser_unavailable"
+              ? {
+                  type: "mcp_browser_unavailable",
+                  message: "Playwright MCP atau browser Chromium belum siap.",
+                }
+              : null;
 
   return NextResponse.json({
     campaign,
     counts,
+    appliedCount: campaign.appliedCount,
+    verifiedSubmittedCount: counts.submitted,
     currentStep: runtimeCampaign.currentStep,
     currentJob,
+    latestApplication:
+      latestApplication
+        ? {
+            id: latestApplication.id,
+            status: latestApplication.status,
+            submittedAt: latestApplication.submittedAt,
+            notes: latestApplication.notes,
+            jobTitle: latestApplication.jobListing?.title ?? null,
+            company: latestApplication.jobListing?.company ?? null,
+          }
+        : null,
     aiUi: {
       currentAction: latestAiMetadata?.goal ?? latestAiLog?.event ?? null,
       reason: latestAiMetadata?.userFacingReason ?? runtimeCampaign.currentQuestion ?? null,
@@ -194,8 +240,14 @@ export async function GET(
       lastMessage: latestWatchdogLog?.message ?? null,
     },
     lastDecisionRequired: parseJson(runtimeCampaign.decisionPayloadJson, null),
+    blocker,
+    lastSuccessMarker:
+      typeof latestSuccessMetadata?.successMarker === "string"
+        ? latestSuccessMetadata.successMarker
+        : null,
     localLog: {
       file: `storage/logs/campaign-${id}.log`,
+      path: `storage/logs/campaign-${id}.log`,
       apiUrl: `/api/campaigns/${id}/local-log?tail=300`,
     },
     mcpUnavailable:
@@ -219,7 +271,10 @@ export async function GET(
       readableMessage: translateEvent(log.event),
       jobTitle: log.jobListing?.title ?? null,
     })),
-    canContinue: canContinueAutopilot(campaign.status) || canStartAutopilot(campaign.status),
+    canContinue:
+      !isTerminalStep &&
+      campaign.status !== "completed" &&
+      (canContinueAutopilot(campaign.status) || canStartAutopilot(campaign.status)),
     nextRecommendedAction,
   });
 }

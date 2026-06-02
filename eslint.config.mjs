@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Saved third-party Jobstreet assets used only as archived layout references.
+    "tests/layout/**",
   ]),
 ]);
 

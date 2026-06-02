@@ -184,6 +184,8 @@ Install the Playwright browser runtime:
 npx playwright install chromium
 ```
 
+If Playwright MCP reports Chromium/Chrome not found, install Playwright Chromium first.
+
 The browser manager in [`lib/browser/playwright-manager.ts`](lib/browser/playwright-manager.ts:1) enforces visible non-headless mode. If [`PLAYWRIGHT_HEADLESS`](.env:8) is set to `true`, the app will throw an error by design.
 
 ## Playwright MCP startup
@@ -193,6 +195,20 @@ Start the MCP sidecar in a separate terminal:
 ```bash
 npm run mcp:playwright
 ```
+
+Optional macOS command when Chrome is already available:
+
+```bash
+npx @playwright/mcp@latest \
+  --port 8931 \
+  --browser chrome \
+  --user-data-dir .mcp-browser-profile \
+  --viewport-size 1366x900 \
+  --timeout-action 5000 \
+  --timeout-navigation 60000
+```
+
+If MCP says Chromium/Chrome not found, either run [`npx playwright install chromium`](README.md:184) or start MCP with [`--browser chrome`](README.md:199).
 
 Expected startup output includes:
 
@@ -228,7 +244,7 @@ npm run dev
 
 Open `http://localhost:3000`. The root route in [`app/page.tsx`](app/page.tsx:1) redirects to [`/dashboard`](app/dashboard/page.tsx:1).
 
-MCP diagnostics are available at [`/api/debug/mcp`](app/api/debug/mcp/route.ts:1).
+MCP diagnostics are available at [`/api/debug/mcp`](app/api/debug/mcp/route.ts:1). The route now uses a local `data:` health page instead of Jobstreet, validates `connectOk`, `toolsListOk`, `navigateOk`, `snapshotOk`, `snapshotUsable`, `browserDependencyOk`, and returns snapshot preview text before any AI planner call.
 
 ## Login and session save behavior
 

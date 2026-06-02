@@ -17,9 +17,13 @@ function getSessionPath() {
   return process.env.PLAYWRIGHT_SESSION_PATH?.trim() || "./storage/jobstreet.auth.json";
 }
 
-async function ensureSessionDir(sessionPath: string) {
-  const absolutePath = path.join(process.cwd(), sessionPath.replace(/^\.\//, ""));
-  await mkdir(path.dirname(absolutePath), { recursive: true });
+function getLegacyBrowserProfileDir() {
+  return "./.playwright-browser-profile";
+}
+
+async function ensureProfileDir(profileDir: string) {
+  const absolutePath = path.join(process.cwd(), profileDir.replace(/^\.\//, ""));
+  await mkdir(absolutePath, { recursive: true });
   return absolutePath;
 }
 
@@ -42,9 +46,10 @@ export async function launchManagedBrowser() {
 
   activeSessionPromise = (async () => {
     const sessionPath = getSessionPath();
-    const absoluteSessionPath = await ensureSessionDir(sessionPath);
+    const profileDir = getLegacyBrowserProfileDir();
+    const absoluteProfileDir = await ensureProfileDir(profileDir);
 
-    const context = await chromium.launchPersistentContext(path.dirname(absoluteSessionPath), {
+    const context = await chromium.launchPersistentContext(absoluteProfileDir, {
       headless: false,
       channel: "chromium",
       viewport: { width: 1440, height: 960 },

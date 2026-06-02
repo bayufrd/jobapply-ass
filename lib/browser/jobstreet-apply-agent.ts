@@ -1270,35 +1270,35 @@ export async function startJobApplication({
   profile: ProfileData;
   submitMode?: SubmitModeStrategy;
 }): Promise<ApplyResult> {
+  const resolvedSubmitMode = resolveSubmitMode(campaign, submitMode);
+  const formAutomationMode = campaign.formAutomationMode ?? process.env.FORM_AUTOMATION_DEFAULT ?? "mcp_ai_first";
+
+  if (formAutomationMode === "mcp_ai_first") {
+    const { runMcpAiApplyRunner } = await import("@/lib/browser/mcp-ai-apply-runner");
+    const questionMemory = await prisma.questionMemory.findMany({
+      orderBy: [{ confidence: "desc" }, { usageCount: "desc" }],
+      take: 40,
+    });
+
+    return await runMcpAiApplyRunner({
+      jobListing,
+      campaign: {
+        ...campaign,
+        formAutomationMode,
+      },
+      candidateProfile: profile,
+      questionMemory: questionMemory.map((item) => ({
+        question: item.questionRaw,
+        answer: item.answer,
+        confidence: item.confidence,
+        source: item.source,
+      })),
+      mode: resolvedSubmitMode,
+    });
+  }
+
   const session = await launchManagedBrowser();
   try {
-    const resolvedSubmitMode = resolveSubmitMode(campaign, submitMode);
-    const formAutomationMode = campaign.formAutomationMode ?? process.env.FORM_AUTOMATION_DEFAULT ?? "mcp_ai_first";
-
-    if (formAutomationMode === "mcp_ai_first") {
-      const { runMcpAiApplyRunner } = await import("@/lib/browser/mcp-ai-apply-runner");
-      const questionMemory = await prisma.questionMemory.findMany({
-        orderBy: [{ confidence: "desc" }, { usageCount: "desc" }],
-        take: 40,
-      });
-
-      return await runMcpAiApplyRunner({
-        jobListing,
-        campaign: {
-          ...campaign,
-          formAutomationMode,
-        },
-        candidateProfile: profile,
-        questionMemory: questionMemory.map((item) => ({
-          question: item.questionRaw,
-          answer: item.answer,
-          confidence: item.confidence,
-          source: item.source,
-        })),
-        mode: resolvedSubmitMode,
-      });
-    }
-
     if (formAutomationMode === "ai_first") {
       return await runAiFirstApplyRunner({
         page: session.page,

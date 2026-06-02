@@ -8,9 +8,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/**/*.test.ts",
+    "test": "node --experimental-strip-types --test tests/**/*.test.ts",
     "db:seed": "node --experimental-strip-types prisma/seed.ts",
-    "mcp:playwright": "npx @playwright/mcp@latest --port 8931 --user-data-dir .mcp-browser-profile --viewport-size 1366x900 --timeout-action 5000 --timeout-navigation 60000"
+    "mcp:playwright": "npx @playwright/mcp@latest --port 8931 --browser chromium --user-data-dir .mcp-browser-profile --viewport-size 1366x900 --timeout-action 5000 --timeout-navigation 60000",
+    "mcp:playwright:chrome": "npx @playwright/mcp@latest --port 8931 --browser chrome --user-data-dir .mcp-browser-profile --viewport-size 1366x900 --timeout-action 5000 --timeout-navigation 60000",
+    "qa:autopilot": "node scripts/qa-autopilot.mjs",
+    "qa:autopilot:5": "node scripts/qa-autopilot.mjs --target=5"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

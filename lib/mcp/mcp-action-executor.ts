@@ -41,6 +41,10 @@ function getElementLabel(page: NormalizedMcpPage, elementId: string) {
   ].find((item) => item.elementId === elementId)?.label;
 }
 
+function getElementDescriptor(page: NormalizedMcpPage, elementId: string) {
+  return getElementLabel(page, elementId) || elementId;
+}
+
 function isSensitiveLabel(label: string | undefined) {
   return label ? SENSITIVE_LABEL_PATTERNS.some((pattern) => pattern.test(label)) : false;
 }
@@ -137,18 +141,20 @@ export async function executeMcpActionPlan({
     }
   }
 
+  const descriptor = getElementDescriptor(page, firstAction.elementId);
+
   switch (firstAction.type) {
     case "click":
-      await client.click(firstAction.elementId);
+      await client.click(firstAction.elementId, descriptor);
       break;
     case "fill":
-      await client.fill(firstAction.elementId, firstAction.value);
+      await client.fill(firstAction.elementId, firstAction.value, descriptor);
       break;
     case "select":
-      await client.select(firstAction.elementId, firstAction.value);
+      await client.select(firstAction.elementId, firstAction.value, descriptor);
       break;
     case "check":
-      await client.check(firstAction.elementId, firstAction.checked);
+      await client.check(firstAction.elementId, firstAction.checked, descriptor);
       break;
   }
 

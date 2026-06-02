@@ -1,5 +1,6 @@
 import { getNineRouterChatModel, getNineRouterClient } from "@/lib/ai/9router-client";
 import { extractJsonObject } from "@/lib/ai/json";
+import type { JobstreetLayoutKnowledge } from "@/lib/jobstreet/jobstreet-layout-knowledge";
 import type { NormalizedMcpPage } from "@/lib/mcp/mcp-snapshot-normalizer";
 
 export type McpAiActionPlan = {
@@ -38,6 +39,14 @@ type PlannerInput = {
   questionMemory: Array<Record<string, unknown>>;
   previousActions: Array<Record<string, unknown>>;
   mode: string;
+  currentUrl?: string;
+  jobstreetKnowledge?: {
+    step: JobstreetLayoutKnowledge["step"] | "unknown";
+    confidence: number;
+    matchedSignals: string[];
+    warnings: string[];
+    reference?: JobstreetLayoutKnowledge | null;
+  };
 };
 
 const SENSITIVE_PATTERNS = [/captcha/i, /otp/i, /password/i, /login/i, /security/i, /verification/i];
@@ -127,6 +136,14 @@ export async function planMcpUiAction(input: PlannerInput): Promise<McpAiActionP
         content: JSON.stringify(
           {
             task: "Rencanakan aksi UI berikutnya dari snapshot MCP yang terlihat.",
+            promptRules: [
+              "Gunakan Jobstreet reference layout hanya sebagai guidance.",
+              "Sumber kebenaran runtime tetap snapshot MCP live dan URL live.",
+              "Anda hanya boleh memilih elementId yang benar-benar terlihat di snapshot MCP live.",
+              "Jangan klik elemen hanya karena fixture/reference pernah memilikinya.",
+              "Jangan klasifikasikan Profile/Profile Avatar/Skip to content/Open app/SIGN_IN_PAGE sebagai login tanpa bukti visible kuat seperti password, OTP, captcha, atau security challenge.",
+            ],
+            currentUrl: input.currentUrl ?? input.page.url,
             page: input.page,
             candidateProfile: input.candidateProfile,
             campaignDefaults: input.campaignDefaults,
@@ -134,6 +151,28 @@ export async function planMcpUiAction(input: PlannerInput): Promise<McpAiActionP
             questionMemory: input.questionMemory,
             previousActions: input.previousActions,
             mode: input.mode,
+            jobstreetReferenceKnowledge: input.jobstreetKnowledge
+              ? {
+                  detectedStep: input.jobstreetKnowledge.step,
+                  confidence: input.jobstreetKnowledge.confidence,
+                  matchedSignals: input.jobstreetKnowledge.matchedSignals,
+                  warnings: input.jobstreetKnowledge.warnings,
+                  reference: input.jobstreetKnowledge.reference
+                    ? {
+                        step: input.jobstreetKnowledge.reference.step,
+                        referenceTitle: input.jobstreetKnowledge.reference.referenceTitle,
+                        referenceUrlPattern: input.jobstreetKnowledge.reference.referenceUrlPattern,
+                        expectedVisibleTexts: input.jobstreetKnowledge.reference.expectedVisibleTexts,
+                        expectedButtons: input.jobstreetKnowledge.reference.expectedButtons,
+                        expectedInputs: input.jobstreetKnowledge.reference.expectedInputs,
+                        expectedQuestionPatterns: input.jobstreetKnowledge.reference.expectedQuestionPatterns,
+                        successMarkers: input.jobstreetKnowledge.reference.successMarkers,
+                        antiPatterns: input.jobstreetKnowledge.reference.antiPatterns,
+                        aiGuidance: input.jobstreetKnowledge.reference.aiGuidance,
+                      }
+                    : null,
+                }
+              : null,
             outputSchema: {
               goal: [
                 "click_apply",

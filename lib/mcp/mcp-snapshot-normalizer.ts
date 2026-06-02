@@ -1,3 +1,4 @@
+import { detectApplicationSuccessMarker } from "@/lib/browser/success-markers";
 import type { McpElement, McpSnapshot } from "@/lib/mcp/playwright-mcp-client";
 
 export type NormalizedMcpPage = {
@@ -22,20 +23,6 @@ export type NormalizedMcpPage = {
   questions: Array<{ text: string; options?: string[] }>;
   submitCandidates: Array<{ elementId: string; label: string; confidenceHint: string }>;
 };
-
-const SUCCESS_MARKERS = [
-  "application submitted",
-  "your application has been submitted",
-  "your application has been sent",
-  "application sent",
-  "applied",
-  "you applied",
-  "lamaran terkirim",
-  "lamaran berhasil dikirim",
-  "anda telah melamar",
-  "terima kasih telah melamar",
-  "thank you for applying",
-];
 
 const SECURITY_MARKERS = [
   "captcha",
@@ -94,7 +81,7 @@ function detectPageKind(snapshot: McpSnapshot, buttons: NormalizedMcpPage["butto
   const text = normalizeText(`${snapshot.title}\n${snapshot.accessibilityText}`);
   const url = normalizeText(snapshot.url);
 
-  if (SUCCESS_MARKERS.some((marker) => text.includes(marker))) {
+  if (detectApplicationSuccessMarker({ url: snapshot.url, text: `${snapshot.title}\n${snapshot.accessibilityText}` }).matched) {
     return "success";
   }
 
@@ -212,6 +199,8 @@ export function normalizeMcpSnapshot(snapshot: McpSnapshot): NormalizedMcpPage {
 }
 
 export function hasMcpSuccessMarker(page: NormalizedMcpPage) {
-  const text = normalizeText(`${page.title}\n${page.visibleTextSummary}`);
-  return SUCCESS_MARKERS.some((marker) => text.includes(marker));
+  return detectApplicationSuccessMarker({
+    url: page.url,
+    text: `${page.title}\n${page.visibleTextSummary}`,
+  }).matched;
 }

@@ -194,6 +194,13 @@ export function CampaignActions({
   const targetReached = effectiveAppliedCount >= effectiveTargetApplyCount;
   const latestDecision = statusData?.lastDecisionRequired;
 
+  const terminalSteps = new Set([
+    "no_jobs_remaining",
+    "target_reached",
+    "too_many_unusable_jobs",
+  ]);
+  const isTerminalStep = terminalSteps.has(statusData?.currentStep ?? "");
+
   const progressWidth = useMemo(() => {
     if (effectiveTargetApplyCount <= 0) return 0;
     return Math.min(100, (effectiveAppliedCount / effectiveTargetApplyCount) * 100);
@@ -491,7 +498,7 @@ export function CampaignActions({
           </button>
           <button
             onClick={() => runAutopilot("continue", { autoSequence: true, resetCounter: true })}
-            disabled={loadingAction !== null || !statusData?.canContinue || targetReached}
+            disabled={loadingAction !== null || !statusData?.canContinue || targetReached || isTerminalStep}
             className="rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-3 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loadingAction === "continue" ? "Melanjutkan..." : "Lanjutkan"}
@@ -514,6 +521,11 @@ export function CampaignActions({
           </Link>
         </div>
 
+        {isTerminalStep && (
+          <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">
+            Kampanye selesai. Tidak ada lowongan eligible yang bisa diproses lagi.
+          </div>
+        )}
         {resultMessage && (
           <div
             className={`mt-4 rounded-xl border p-4 text-sm ${
@@ -549,9 +561,12 @@ export function CampaignActions({
 
       {latestDecision?.type === "question_required" && (
         <section className="rounded-2xl border border-cyan-500/30 bg-cyan-500/5 p-6">
-          <h3 className="text-lg font-semibold text-cyan-300">Pertanyaan tambahan ditemukan</h3>
-          <p className="mt-2 text-sm text-slate-300">{latestDecision.question ?? latestDecision.message ?? "Pilih jawaban untuk melanjutkan."}</p>
-          <p className="mt-2 text-sm text-slate-400">AI tidak yakin dengan jawaban ini. Terima atau ubah jawaban.</p>
+          <p className="text-xs uppercase tracking-[0.3em] text-cyan-300">Pertanyaan dari Jobstreet</p>
+          <h3 className="mt-2 text-lg font-semibold text-white">Pertanyaan ditemukan. Pilih jawaban di modal ini untuk melanjutkan.</h3>
+          <p className="mt-3 text-sm text-slate-200">{latestDecision.question ?? latestDecision.message ?? "Pilih jawaban untuk melanjutkan."}</p>
+          <p className="mt-4 text-xs uppercase tracking-[0.2em] text-cyan-300">Saran AI</p>
+          <p className="mt-2 text-sm text-slate-300">AI menyarankan jawaban berikut. Terima atau ubah jawaban.</p>
+          <p className="mt-2 text-sm text-slate-400">Browser manual hanya diperlukan untuk captcha, OTP, login, atau verifikasi keamanan.</p>
           <div className="mt-4 flex flex-wrap gap-3">
             <button onClick={() => submitDecision("accept")} disabled={loadingAction !== null} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50">Accept</button>
             <button onClick={() => submitDecision("reject")} disabled={loadingAction !== null} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50">Reject</button>
@@ -559,21 +574,21 @@ export function CampaignActions({
             <button onClick={() => submitDecision("no")} disabled={loadingAction !== null} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50">No</button>
             <button onClick={() => submitDecision("edit_answer")} disabled={loadingAction !== null} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">Edit Answer</button>
             <button onClick={() => submitDecision("skip")} disabled={loadingAction !== null} className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50">Skip Job</button>
+            <button disabled className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-500 opacity-60">Remember for this campaign</button>
           </div>
         </section>
       )}
 
       {latestDecision?.type === "submit_unverified" && (
         <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6">
-          <h3 className="text-lg font-semibold text-amber-300">Submit belum bisa diverifikasi</h3>
+          <h3 className="text-lg font-semibold text-amber-300">Belum sampai halaman sukses. QA dihentikan dan log sudah disimpan.</h3>
           <p className="mt-2 text-sm text-slate-300">{latestDecision.message ?? "Submit belum bisa diverifikasi."}</p>
           <div className="mt-4 flex flex-wrap gap-3">
-            <button onClick={() => submitDecision("accept")} disabled={loadingAction !== null} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50">Accept as Submitted</button>
-            <button onClick={() => runAutopilot("continue", { autoSequence: true, resetCounter: true })} disabled={loadingAction !== null} className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-50">Retry Verification</button>
+            <button onClick={() => runAutopilot("continue", { autoSequence: true, resetCounter: true })} disabled={loadingAction !== null} className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-50">Coba Verifikasi Lagi</button>
             <button onClick={() => submitDecision("skip")} disabled={loadingAction !== null} className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50">Skip Job</button>
             {latestDecision.applicationId && (
               <Link href={`/applications/${latestDecision.applicationId}/review`} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
-                Open Browser
+                Buka Review Lamaran
               </Link>
             )}
           </div>

@@ -1,13 +1,24 @@
 import type { ApplicationStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { planMcpUiAction, type McpAiActionPlan } from "@/lib/ai/mcp-ui-action-planner";
+import { detectApplicationSuccessMarker } from "@/lib/browser/success-markers";
 import { detectJobstreetApplyStep } from "@/lib/browser/jobstreet-apply-step-detector";
+import { matchLiveSnapshotToJobstreetKnowledge } from "@/lib/jobstreet/jobstreet-fixture-matcher";
+import { getJobstreetLayoutKnowledge } from "@/lib/jobstreet/jobstreet-layout-knowledge";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
 import { executeMcpActionPlan } from "@/lib/mcp/mcp-action-executor";
 import { hasMcpSuccessMarker, normalizeMcpSnapshot, type NormalizedMcpPage } from "@/lib/mcp/mcp-snapshot-normalizer";
-import { PlaywrightMcpClient, PlaywrightMcpError, type McpSnapshot } from "@/lib/mcp/playwright-mcp-client";
+import {
+  getMcpSnapshotPreview,
+  PlaywrightMcpClient,
+  PlaywrightMcpError,
+  type McpSnapshot,
+  validateMcpSnapshot,
+} from "@/lib/mcp/playwright-mcp-client";
 
 type SubmitModeStrategy = "review_each_application" | "auto_submit_safe_only";
+
+const LEGACY_BROWSER_BLOCKED_IN_MCP_MODE = "LEGACY_BROWSER_BLOCKED_IN_MCP_MODE";
 
 type JobListingData = {
   id: string;
@@ -64,6 +75,7 @@ type McpApplyResult = {
   pageKind?: NormalizedMcpPage["pageKind"];
   latestPlanGoal?: McpAiActionPlan["goal"];
   latestAction?: McpAiActionPlan["actions"][number] | null;
+  successMarker?: string | null;
 };
 
 type RunInput = {
@@ -132,14 +144,14 @@ async function createApplicationRecord(
   });
 }
 
-async function verifySubmitted(campaign: CampaignData, jobListing: JobListingData, applicationId: string) {
+async function verifySubmitted(campaign: CampaignData, jobListing: JobListingData, applicationId: string, successMarker: string) {
   await prisma.application.update({
     where: { id: applicationId },
     data: {
       status: "submitted",
       submittedAt: new Date(),
       userApproved: true,
-      notes: "Lamaran diverifikasi terkirim melalui snapshot MCP.",
+      notes: `Lamaran diverifikasi terkirim melalui marker sukses: ${successMarker}`,
     },
   });
   await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "submitted" } });
@@ -175,6 +187,55 @@ function buildMcpLogMetadata(input: {
     pageKind: input.pageKind ?? null,
     error: input.error ?? null,
     technical: input.technical ?? null,
+  };
+}
+
+async function createControlledManualInterventionResult(input: {
+  campaign: CampaignData;
+  jobListing: JobListingData;
+  applicationId: string;
+  snapshot: McpSnapshot;
+  pageKind: NormalizedMcpPage["pageKind"];
+  evidenceType: "login" | "captcha" | "otp" | "security_verification";
+  evidence: string[];
+  confidence: number;
+  message: string;
+}) {
+  const snapshotPreview = getMcpSnapshotPreview(input.snapshot).accessibilityTextPreview;
+  const currentUrl = input.snapshot.url;
+  const blockerEvidence = {
+    detected: true,
+    type: input.evidenceType,
+    confidence: input.confidence,
+    evidence: input.evidence,
+    currentUrl,
+    snapshotPreview,
+  };
+
+  await writeAutomationLog({
+    campaignId: input.campaign.id,
+    jobListingId: input.jobListing.id,
+    applicationId: input.applicationId,
+    level: "warn",
+    event: "manual_intervention.confirmed",
+    message: input.message,
+    metadata: blockerEvidence,
+  });
+
+  await prisma.application.update({
+    where: { id: input.applicationId },
+    data: {
+      status: "paused",
+      notes: JSON.stringify(blockerEvidence),
+    },
+  });
+
+  return {
+    status: "manual_intervention_required" as const,
+    message: input.message,
+    applicationId: input.applicationId,
+    pageKind: input.pageKind,
+    error: JSON.stringify(blockerEvidence),
   };
 }
 
@@ -283,6 +344,14 @@ export async function runMcpAiApplyRunner({
         jobUrl: jobListing.url,
       }),
     });
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      applicationId: application.id,
+      event: "mcp_ai.url_step_runner_started",
+      message: "Runner MCP-only mulai dari URL lowongan aktif.",
+      metadata: { jobUrl: jobListing.url },
+    });
     await client.navigate(jobListing.url);
     await writeAutomationLog({
       campaignId: campaign.id,
@@ -322,24 +391,59 @@ export async function runMcpAiApplyRunner({
       }),
     });
     let snapshot = await client.snapshot();
+    const initialSnapshotValidation = validateMcpSnapshot(snapshot);
+    const initialSnapshotPreview = getMcpSnapshotPreview(snapshot);
     await writeAutomationLog({
       campaignId: campaign.id,
       jobListingId: jobListing.id,
       applicationId: application.id,
-      event: "mcp_ai.snapshot_ok",
-      message: "Snapshot awal MCP berhasil diambil.",
-      metadata: buildMcpLogMetadata({
-        campaignId: campaign.id,
-        jobListingId: jobListing.id,
-        applicationId: application.id,
-        stage: "mcp_tool_call",
-        mcpUrl,
-        toolName: "browser_snapshot",
-        jobTitle: jobListing.title,
-        company: jobListing.company,
-        jobUrl: jobListing.url,
-      }),
+      event: initialSnapshotValidation.ok ? "mcp_ai.snapshot_ok" : "mcp_ai.snapshot_invalid",
+      message: initialSnapshotValidation.ok
+        ? "Snapshot awal MCP berhasil diambil."
+        : initialSnapshotValidation.message,
+      metadata: {
+        ...buildMcpLogMetadata({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          stage: "mcp_tool_call",
+          mcpUrl,
+          toolName: "browser_snapshot",
+          jobTitle: jobListing.title,
+          company: jobListing.company,
+          jobUrl: jobListing.url,
+        }),
+        ...initialSnapshotPreview,
+        url: snapshot.url,
+        title: snapshot.title,
+        validation: initialSnapshotValidation,
+      },
     });
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      applicationId: application.id,
+      event: "mcp_ai.job_detail_snapshot",
+      message: "Snapshot detail lowongan berhasil diambil melalui MCP.",
+      metadata: {
+        url: snapshot.url,
+        title: snapshot.title,
+        snapshotPreview: initialSnapshotPreview.accessibilityTextPreview,
+      },
+    });
+
+    if (!initialSnapshotValidation.ok) {
+      await prisma.application.update({
+        where: { id: application.id },
+        data: { status: "paused", notes: initialSnapshotValidation.message },
+      });
+      return {
+        status: "paused",
+        message: initialSnapshotValidation.message,
+        applicationId: application.id,
+      };
+    }
+
     let normalized = normalizeMcpSnapshot(snapshot);
     let previousFingerprint = fingerprintSnapshot(snapshot);
     let sameSnapshotRepeats = 0;
@@ -354,12 +458,17 @@ export async function runMcpAiApplyRunner({
         return { status: "failed", message: "Batas durasi otomatisasi terlampaui.", applicationId: application.id, pageKind: normalized.pageKind };
       }
 
+      const snapshotValidation = validateMcpSnapshot(snapshot);
+      const snapshotPreview = getMcpSnapshotPreview(snapshot);
+
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,
         applicationId: application.id,
-        event: "mcp_ai.snapshot_captured",
-        message: "Snapshot MCP berhasil diambil.",
+        event: snapshotValidation.ok ? "mcp_ai.snapshot_captured" : "mcp_ai.snapshot_invalid",
+        message: snapshotValidation.ok
+          ? "Snapshot MCP berhasil diambil."
+          : "Snapshot MCP kosong/tidak valid. Automasi dihentikan sebelum AI planner agar tidak salah aksi.",
         metadata: {
           ...buildMcpLogMetadata({
             campaignId: campaign.id,
@@ -376,10 +485,56 @@ export async function runMcpAiApplyRunner({
           }),
           url: snapshot.url,
           title: snapshot.title,
+          ...snapshotPreview,
+          elementCount: snapshot.elements.length,
+          buttonCount: normalized.buttons.length,
+          questionCount: normalized.questions.length,
+          validation: snapshotValidation,
         },
       });
 
+      if (!snapshotValidation.ok) {
+        await prisma.application.update({
+          where: { id: application.id },
+          data: { status: "paused", notes: snapshotValidation.message },
+        });
+        return {
+          status: "paused",
+          message: snapshotValidation.message,
+          applicationId: application.id,
+          pageKind: normalized.pageKind,
+        };
+      }
+
       const detectedStep = detectJobstreetApplyStep(snapshot.url, snapshot.accessibilityText);
+      const fixtureMatch = matchLiveSnapshotToJobstreetKnowledge(normalized, snapshot.url);
+      const fixtureReference = fixtureMatch.step === "unknown" ? null : getJobstreetLayoutKnowledge(fixtureMatch.step);
+
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "jobstreet_fixture.match_started",
+        message: "Sistem mulai mencocokkan snapshot MCP live dengan fixture Jobstreet.",
+        metadata: {
+          applicationId: application.id,
+          step,
+          url: snapshot.url,
+        },
+      });
+
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "jobstreet_fixture.match_result",
+        message: `Fixture Jobstreet cocok dengan langkah ${fixtureMatch.step} (confidence ${fixtureMatch.confidence}).`,
+        metadata: {
+          applicationId: application.id,
+          step,
+          url: snapshot.url,
+          fixtureMatch,
+          detectedStep,
+        },
+      });
 
       await writeAutomationLog({
         campaignId: campaign.id,
@@ -391,6 +546,8 @@ export async function runMcpAiApplyRunner({
           step,
           stepName: detectedStep,
           url: snapshot.url,
+          fixtureMatchedStep: fixtureMatch.step,
+          fixtureConfidence: fixtureMatch.confidence,
         },
       });
 
@@ -440,6 +597,22 @@ export async function runMcpAiApplyRunner({
         });
       }
 
+      if (fixtureMatch.step === "update_profile") {
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          event: "jobstreet_fixture.false_positive_prevented",
+          message: "Fixture Jobstreet cocok dengan langkah Update Profile. Sistem akan mencari tombol Continue, bukan meminta login/verifikasi.",
+          metadata: {
+            applicationId: application.id,
+            step,
+            url: snapshot.url,
+            warnings: fixtureMatch.warnings,
+            matchedSignals: fixtureMatch.matchedSignals,
+          },
+        });
+      }
+
       if (detectedStep === "review_submit") {
         await writeAutomationLog({
           campaignId: campaign.id,
@@ -450,50 +623,135 @@ export async function runMcpAiApplyRunner({
         });
       }
 
-      if (normalized.pageKind === "login_or_security") {
-        await prisma.application.update({ where: { id: application.id }, data: { status: "paused", notes: "Perlu login/captcha/OTP/verifikasi keamanan manual." } });
-        return {
-          status: "manual_intervention_required",
-          message: "Perlu intervensi manual untuk login, captcha, OTP, atau verifikasi keamanan.",
-          applicationId: application.id,
-          pageKind: normalized.pageKind,
-        };
-      }
+      if (normalized.pageKind === "login_or_security" && fixtureMatch.step !== "update_profile") {
+        const lowerText = `${snapshot.title}\n${snapshot.accessibilityText}`.toLowerCase();
+        const evidence: string[] = [];
+        let evidenceType: "login" | "captcha" | "otp" | "security_verification" | null = null;
+        let confidence = 0;
 
-      if (detectedStep === "success" || hasMcpSuccessMarker(normalized)) {
-        await verifySubmitted(campaign, jobListing, application.id);
+        if (/captcha|recaptcha|hcaptcha|verify you are human|robot/i.test(lowerText)) {
+          evidenceType = "captcha";
+          confidence = 0.99;
+          evidence.push("Teks captcha atau verifikasi manusia terlihat pada snapshot MCP.");
+        } else if (/otp|one-time password|verification code|kode verifikasi/i.test(lowerText)) {
+          evidenceType = "otp";
+          confidence = 0.96;
+          evidence.push("Teks OTP atau kode verifikasi terlihat pada snapshot MCP.");
+        } else if (/login|log in|sign in|masuk/.test(lowerText) || /\/oauth\/login/.test(snapshot.url.toLowerCase())) {
+          evidenceType = "login";
+          confidence = 0.98;
+          evidence.push("Halaman login atau URL oauth/login terlihat pada snapshot MCP.");
+        } else if (/security check|verify your identity|verify your account|unusual activity|verifikasi identitas|verifikasi akun|aktivitas tidak biasa/i.test(lowerText)) {
+          evidenceType = "security_verification";
+          confidence = 0.93;
+          evidence.push("Teks verifikasi keamanan terlihat pada snapshot MCP.");
+        }
+
+        if (evidenceType && evidence.length > 0 && confidence >= 0.85) {
+          return await createControlledManualInterventionResult({
+            campaign,
+            jobListing,
+            applicationId: application.id,
+            snapshot,
+            pageKind: normalized.pageKind,
+            evidenceType,
+            evidence,
+            confidence,
+            message: "Perlu intervensi manual untuk login, captcha, OTP, atau verifikasi keamanan.",
+          });
+        }
+
         await writeAutomationLog({
           campaignId: campaign.id,
           jobListingId: jobListing.id,
-          event: "jobstreet_apply.success_detected",
-          message: "Halaman success Jobstreet terdeteksi. Lamaran ditandai terkirim.",
-          metadata: { applicationId: application.id, step, url: snapshot.url },
+          applicationId: application.id,
+          level: "warn",
+          event: "manual_intervention.rejected_no_evidence",
+          message: "Kandidat manual intervention ditolak karena evidence MCP tidak cukup.",
+          metadata: {
+            step,
+            currentUrl: snapshot.url,
+            snapshotPreview: getMcpSnapshotPreview(snapshot).accessibilityTextPreview,
+            pageKind: normalized.pageKind,
+          },
+        });
+      }
+
+      const successDetection = detectApplicationSuccessMarker({
+        url: snapshot.url,
+        text: `${snapshot.title}\n${snapshot.accessibilityText}`,
+      });
+
+      if (fixtureMatch.step === "success" || detectedStep === "success" || hasMcpSuccessMarker(normalized) || successDetection.matched) {
+        const successMarker = successDetection.marker ?? (fixtureMatch.step === "success" || detectedStep === "success" ? "/apply/success" : "has been sent");
+        await verifySubmitted(campaign, jobListing, application.id, successMarker);
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          event: "application.submit_success_marker_detected",
+          message: `Marker sukses submit terdeteksi: ${successMarker}`,
+          metadata: { applicationId: application.id, step, url: snapshot.url, successMarker, successSource: successDetection.source },
+        });
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          event: "application.submitted",
+          message: "Halaman success Jobstreet terverifikasi. Lamaran ditandai terkirim.",
+          metadata: { applicationId: application.id, step, url: snapshot.url, successMarker },
+        });
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          event: "campaign.applied_count_incremented",
+          message: "Jumlah lamaran kampanye bertambah setelah submit berhasil diverifikasi.",
+          metadata: { applicationId: application.id, step, successMarker },
         });
         await writeAutomationLog({
           campaignId: campaign.id,
           jobListingId: jobListing.id,
           event: "mcp_ai.submit_verified",
           message: "Lamaran terverifikasi terkirim dari snapshot MCP.",
-          metadata: { applicationId: application.id, step },
+          metadata: { applicationId: application.id, step, successMarker },
         });
         return {
           status: "submitted",
           message: "Lamaran berhasil diverifikasi terkirim.",
           applicationId: application.id,
           pageKind: normalized.pageKind,
+          successMarker,
         };
       }
 
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,
+        event: "jobstreet_fixture.guidance_applied",
+        message: fixtureReference
+          ? `Guidance fixture diterapkan untuk langkah ${fixtureReference.referenceTitle}.`
+          : "Belum ada guidance fixture spesifik yang cukup kuat; planner tetap memakai snapshot MCP live.",
+        metadata: {
+          applicationId: application.id,
+          step,
+          fixtureStep: fixtureMatch.step,
+          fixtureConfidence: fixtureMatch.confidence,
+          referenceTitle: fixtureReference?.referenceTitle ?? null,
+          aiGuidance: fixtureReference?.aiGuidance ?? null,
+          matchedSignals: fixtureMatch.matchedSignals,
+          warnings: fixtureMatch.warnings,
+        },
+      });
+
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
         event: "mcp_ai.plan_requested",
         message: "Meminta rencana aksi berikutnya ke AI planner MCP.",
-        metadata: { applicationId: application.id, step, pageKind: normalized.pageKind },
+        metadata: { applicationId: application.id, step, pageKind: normalized.pageKind, fixtureMatch },
       });
 
       const plan = await planMcpUiAction({
         page: normalized,
+        currentUrl: snapshot.url,
         candidateProfile: buildCandidateProfile(candidateProfile),
         campaignDefaults: {
           currentSalary: campaign.defaultCurrentSalary,
@@ -506,6 +764,13 @@ export async function runMcpAiApplyRunner({
         questionMemory,
         previousActions,
         mode,
+        jobstreetKnowledge: {
+          step: fixtureMatch.step,
+          confidence: fixtureMatch.confidence,
+          matchedSignals: fixtureMatch.matchedSignals,
+          warnings: fixtureMatch.warnings,
+          reference: fixtureReference,
+        },
       });
 
       await writeAutomationLog({
@@ -517,13 +782,35 @@ export async function runMcpAiApplyRunner({
       });
 
       if (plan.goal === "manual_intervention") {
-        await prisma.application.update({ where: { id: application.id }, data: { status: "paused", notes: plan.userFacingReason } });
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          level: "warn",
+          event: "manual_intervention.rejected_no_evidence",
+          message: "Planner MCP meminta manual intervention tanpa evidence terstruktur. Diklasifikasikan sebagai state mismatch.",
+          metadata: {
+            step,
+            currentUrl: snapshot.url,
+            snapshotPreview: getMcpSnapshotPreview(snapshot).accessibilityTextPreview,
+            plan,
+          },
+        });
+        await prisma.application.update({ where: { id: application.id }, data: { status: "paused", notes: "Halaman tidak cocok dengan langkah yang diharapkan dan belum ada bukti verifikasi keamanan." } });
         return {
-          status: "manual_intervention_required",
-          message: plan.userFacingReason,
+          status: "paused",
+          message: "Halaman tidak cocok dengan langkah yang diharapkan dan belum ada bukti verifikasi keamanan.",
           applicationId: application.id,
           pageKind: normalized.pageKind,
           latestPlanGoal: plan.goal,
+          error: JSON.stringify({
+            detected: false,
+            type: "state_mismatch",
+            confidence: 0,
+            evidence: ["Planner meminta manual intervention tanpa evidence terstruktur."],
+            currentUrl: snapshot.url,
+            snapshotPreview: getMcpSnapshotPreview(snapshot).accessibilityTextPreview,
+          }),
         };
       }
 
@@ -623,14 +910,41 @@ export async function runMcpAiApplyRunner({
       previousFingerprint = nextFingerprint;
 
       if (plan.goal === "final_submit") {
-        if (hasMcpSuccessMarker(normalized)) {
-          await verifySubmitted(campaign, jobListing, application.id);
+        const successDetection = detectApplicationSuccessMarker({
+          url: snapshot.url,
+          text: `${snapshot.title}\n${snapshot.accessibilityText}`,
+        });
+
+        if (hasMcpSuccessMarker(normalized) || successDetection.matched) {
+          const successMarker = successDetection.marker ?? "has been sent";
+          await verifySubmitted(campaign, jobListing, application.id, successMarker);
+          await writeAutomationLog({
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+            event: "application.submit_success_marker_detected",
+            message: `Marker sukses submit terdeteksi: ${successMarker}`,
+            metadata: { applicationId: application.id, step, successMarker, successSource: successDetection.source },
+          });
+          await writeAutomationLog({
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+            event: "application.submitted",
+            message: "Lamaran berhasil diverifikasi setelah submit akhir MCP.",
+            metadata: { applicationId: application.id, step, successMarker },
+          });
+          await writeAutomationLog({
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+            event: "campaign.applied_count_incremented",
+            message: "Jumlah lamaran kampanye bertambah setelah submit akhir terverifikasi.",
+            metadata: { applicationId: application.id, step, successMarker },
+          });
           await writeAutomationLog({
             campaignId: campaign.id,
             jobListingId: jobListing.id,
             event: "mcp_ai.submit_verified",
             message: "Lamaran berhasil diverifikasi setelah submit akhir MCP.",
-            metadata: { applicationId: application.id, step },
+            metadata: { applicationId: application.id, step, successMarker },
           });
           return {
             status: "submitted",
@@ -639,6 +953,7 @@ export async function runMcpAiApplyRunner({
             pageKind: normalized.pageKind,
             latestPlanGoal: plan.goal,
             latestAction: execution.lastAction ?? null,
+            successMarker,
           };
         }
 
@@ -684,6 +999,23 @@ export async function runMcpAiApplyRunner({
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+
+    if (errorMessage.includes(LEGACY_BROWSER_BLOCKED_IN_MCP_MODE)) {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        level: "error",
+        event: "mcp_ai.legacy_browser_blocked",
+        message: LEGACY_BROWSER_BLOCKED_IN_MCP_MODE,
+        metadata: {
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          jobUrl: jobListing.url,
+        },
+      });
+    }
     const mcpError = error instanceof PlaywrightMcpError ? error : null;
     const stage = mcpError?.stage ?? "runner_unknown";
     const toolName = mcpError?.toolName;

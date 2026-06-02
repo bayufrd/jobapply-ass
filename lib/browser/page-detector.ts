@@ -1,6 +1,6 @@
 import type { Page } from "playwright";
-import type { InterventionReason } from "@/lib/security/safe-automation";
-import { detectJobstreetApplyStep, isNormalJobstreetApplyUrl } from "@/lib/browser/jobstreet-apply-step-detector";
+import type { InterventionReason } from "../security/safe-automation.ts";
+import { detectJobstreetApplyStep, isNormalJobstreetApplyUrl } from "./jobstreet-apply-step-detector.ts";
 
 export type ManualInterventionType =
   | "login"

@@ -1,0 +1,485 @@
+- generic [ref=e3]:
+  - button
+  - button "Skip to content" [ref=e4] [cursor=pointer]
+  - generic [ref=e5]:
+    - status
+  - banner [ref=e7]:
+    - generic [ref=e11]:
+      - generic [ref=e12]:
+        - link "Jobstreet" [ref=e14] [cursor=pointer]:
+          - /url: /en
+          - generic [ref=e15]: Jobstreet
+          - img [ref=e17]
+        - generic [ref=e22]:
+          - link "Job search" [ref=e24] [cursor=pointer]:
+            - /url: /en
+            - generic [ref=e26]: Job search
+          - link "People search" [ref=e29] [cursor=pointer]:
+            - /url: /profiles/search?tracking=ILC-profile-search-header
+            - generic [ref=e31]: People search
+          - link "Career advice" [ref=e34] [cursor=pointer]:
+            - /url: /career-advice
+            - generic [ref=e36]: Career advice
+          - link "Companies" [ref=e39] [cursor=pointer]:
+            - /url: /companies
+            - generic [ref=e41]: Companies
+          - link "Community" [ref=e44] [cursor=pointer]:
+            - /url: /community
+            - generic [ref=e46]: Community
+      - generic [ref=e48]:
+        - button "English" [ref=e51] [cursor=pointer]:
+          - generic [ref=e53]:
+            - img [ref=e56]
+            - generic [ref=e59]: English
+            - img [ref=e62]
+        - link "Sign in" [ref=e72] [cursor=pointer]:
+          - /url: /oauth/login?returnUrl=%2Fjob%2F92270989%3Forigin%3DcardTitle%26ref%3Dsearch-standalone%26type%3Dstandard%23sol%3Dd2cee453429c724c5d2d0a96a67c520dc154bbf9
+          - generic [ref=e73]:
+            - generic:
+              - generic: Sign in
+        - link "Employer site" [ref=e75] [cursor=pointer]:
+          - /url: https://id.employer.seek.com/
+          - generic [ref=e76]: Employer site
+  - main [ref=e78]:
+    - generic [ref=e89]:
+      - generic [ref=e90]:
+        - button "Share or report ad" [ref=e105] [cursor=pointer]:
+          - img [ref=e108]
+        - generic [ref=e113]:
+          - heading "IT Programmer" [level=1] [ref=e114]
+          - generic [ref=e115]:
+            - button "PT Sinergi Abadi Sentosa" [ref=e116] [cursor=pointer]:
+              - generic [ref=e117]:
+                - text: PT Sinergi Abadi Sentosa
+                - img [ref=e119]
+            - generic [ref=e122]:
+              - generic [ref=e123]:
+                - generic "5.0 out of 5" [ref=e124]:
+                  - img [ref=e126]
+                - text: "5.0"
+              - link "8 reviews" [ref=e129] [cursor=pointer]:
+                - /url: /companies/sinergi-abadi-sentosa-173018343542587/reviews?jobId=92270989
+              - generic [ref=e130]: ·
+              - link "View all jobs" [ref=e132] [cursor=pointer]:
+                - /url: /Sinergi-Abadi-Sentosa-jobs/at-this-company
+        - generic [ref=e133]:
+          - generic [ref=e134]:
+            - generic [ref=e135]:
+              - img [ref=e139]
+              - generic [ref=e144]:
+                - link "Tangerang, Banten":
+                  - /url: /Information-Technology-Programmer-jobs/in-Tangerang-Banten
+            - generic [ref=e145]:
+              - img [ref=e149]
+              - generic [ref=e154]:
+                - link "Developers/Programmers (Information & Communication Technology)":
+                  - /url: /jobs-in-information-communication-technology/developers-programmers
+            - generic [ref=e155]:
+              - img [ref=e159]
+              - generic [ref=e164]:
+                - link "Full time":
+                  - /url: /Information-Technology-Programmer-jobs/full-time
+            - generic [ref=e165]:
+              - img [ref=e169]
+              - generic [ref=e175]: Rp 6.500.000 – Rp 8.000.000 per month
+          - generic [ref=e176]: Posted 11d ago
+        - generic [ref=e181]:
+          - link "Apply for IT Programmer at PT Sinergi Abadi Sentosa" [ref=e184] [cursor=pointer]:
+            - /url: /job/92270989/apply
+            - generic [ref=e185]:
+              - generic:
+                - generic: Quick apply
+          - button "Save IT Programmer at PT Sinergi Abadi Sentosa" [ref=e187] [cursor=pointer]:
+            - generic [ref=e188]:
+              - generic:
+                - generic:
+                  - generic: Save
+      - generic [ref=e189]:
+        - generic [ref=e193]:
+          - paragraph [ref=e194]:
+            - strong [ref=e195]: "Kualifikasi :"
+          - list [ref=e196]:
+            - listitem [ref=e197]:
+              - paragraph [ref=e198]: Pendidikan minimal S1/S2 jurusan Sistem Informasi, Teknik Informatika, Ilmu Komputer, atau bidang terkait.
+            - listitem [ref=e199]:
+              - paragraph [ref=e200]: Memiliki pengalaman minimal 3 tahun sebagai IT Programmer / Software Developer.
+            - listitem [ref=e201]:
+              - paragraph [ref=e202]: Menguasai database structure dan management, khususnya MySQL.
+            - listitem [ref=e203]:
+              - paragraph [ref=e204]: Memahami konsep Software Engineering dan Rekayasa Perangkat Lunak (RPL).
+            - listitem [ref=e205]:
+              - paragraph [ref=e206]: Menguasai bahasa pemrograman dan framework seperti PHP, ReactJS, VueJS, dan NodeJS.
+            - listitem [ref=e207]:
+              - paragraph [ref=e208]: Memahami pengembangan aplikasi berbasis web.
+            - listitem [ref=e209]:
+              - paragraph [ref=e210]: Memahami pengembangan mobile application (iOS & Android).
+            - listitem [ref=e211]:
+              - paragraph [ref=e212]: Memahami integrasi dan pengelolaan API.
+            - listitem [ref=e213]:
+              - paragraph [ref=e214]: Memiliki kemampuan problem solving dan analytical thinking yang baik.
+            - listitem [ref=e215]:
+              - paragraph [ref=e216]: Mampu bekerja secara individu maupun tim.
+          - paragraph [ref=e217]
+          - paragraph [ref=e218]:
+            - strong [ref=e219]: "Tugas & Tanggung Jawab :"
+          - list [ref=e220]:
+            - listitem [ref=e221]:
+              - paragraph [ref=e222]: Bertanggung jawab dalam merancang, mengembangkan, menguji, dan memelihara aplikasi web maupun mobile application.
+            - listitem [ref=e223]:
+              - paragraph [ref=e224]: Melakukan pengembangan Front-End dan Back-End sesuai kebutuhan sistem.
+            - listitem [ref=e225]:
+              - paragraph [ref=e226]: Membuat serta mengintegrasikan API antar sistem/aplikasi.
+            - listitem [ref=e227]:
+              - paragraph [ref=e228]: Melakukan maintenance, troubleshooting, dan debugging pada aplikasi.
+            - listitem [ref=e229]:
+              - paragraph [ref=e230]: Mengoptimalkan performa aplikasi dan database.
+            - listitem [ref=e231]:
+              - paragraph [ref=e232]: Melakukan pengembangan fitur baru sesuai kebutuhan perusahaan.
+            - listitem [ref=e233]:
+              - paragraph [ref=e234]: Memastikan aplikasi berjalan dengan baik, aman, dan user friendly.
+            - listitem [ref=e235]:
+              - paragraph [ref=e236]: Berkoordinasi dengan tim terkait untuk analisa kebutuhan sistem dan implementasi aplikasi.
+            - listitem [ref=e237]:
+              - paragraph [ref=e238]: Membuat dokumentasi teknis terkait pengembangan sistem dan aplikasi.
+            - listitem [ref=e239]:
+              - paragraph [ref=e240]: Melakukan testing serta evaluasi sistem sebelum deployment aplikasi.
+          - paragraph [ref=e241]
+          - paragraph [ref=e242]:
+            - strong [ref=e243]: "Tahapan Rekrutmen:"
+          - list [ref=e244]:
+            - listitem [ref=e245]:
+              - paragraph [ref=e246]: Seleksi Administrasi
+            - listitem [ref=e247]:
+              - paragraph [ref=e248]:
+                - text: Interview HR & User (
+                - strong [ref=e249]: Offline / Tatap Muka Langsung
+                - text: )
+            - listitem [ref=e250]:
+              - paragraph [ref=e251]: Offering Letter
+          - paragraph [ref=e252]:
+            - strong [ref=e253]: Seluruh proses interview dilakukan secara offline (tatap muka langsung) di kantor perusahaan. Kandidat yang lolos seleksi administrasi akan diundang hadir sesuai jadwal yang ditentukan.
+        - generic [ref=e255]:
+          - generic [ref=e257]:
+            - generic [ref=e258]:
+              - heading "Unlock job insights" [level=2] [ref=e259]
+              - generic [ref=e260]:
+                - generic [ref=e262]:
+                  - img [ref=e265]
+                  - generic [ref=e267]: Hirer responsiveness
+                - generic [ref=e269]:
+                  - img [ref=e272]
+                  - generic [ref=e276]: Salary match
+                - generic [ref=e278]:
+                  - img [ref=e281]
+                  - generic [ref=e283]: Number of applicants
+            - generic [ref=e284]:
+              - button "Sign In" [ref=e285] [cursor=pointer]:
+                - generic [ref=e286]:
+                  - generic:
+                    - generic: Sign In
+              - button "Register" [ref=e287] [cursor=pointer]:
+                - generic [ref=e288]:
+                  - generic:
+                    - generic: Register
+          - img [ref=e290]
+        - generic [ref=e298]:
+          - heading "Employer questions" [level=2] [ref=e299]
+          - generic [ref=e300]:
+            - generic [ref=e301]: "Your application will include the following questions:"
+            - list [ref=e302]:
+              - listitem [ref=e303]:
+                - generic [ref=e308]: Berapa gaji bulanan yang kamu inginkan?
+              - listitem [ref=e309]:
+                - generic [ref=e314]: Kualifikasi mana yang kamu miliki?
+              - listitem [ref=e315]:
+                - generic [ref=e320]: Berapa tahun pengalaman kerjamu sebagai programmer teknologi informasi?
+              - listitem [ref=e321]:
+                - generic [ref=e326]: Bahasa pemrograman apa saja di bawah ini yang bisa kamu gunakan?
+              - listitem [ref=e327]:
+                - generic [ref=e332]: Berapa tahun pengalaman kerjamu di bidang pengembangan software?
+              - listitem [ref=e333]:
+                - generic [ref=e338]: Sistem Relational Database Management (RDBMS) apa saja yang bisa kamu gunakan?
+              - listitem [ref=e339]:
+                - generic [ref=e344]: Library/framework front end apa saja di bawah ini yang bisa kamu gunakan?
+              - listitem [ref=e345]:
+                - generic [ref=e350]: Berapa tahun pengalaman kerjamu menggunakan query SQL?
+        - generic [ref=e353]:
+          - heading "Company profile" [level=3] [ref=e354]
+          - generic [ref=e355]:
+            - generic [ref=e356]:
+              - generic [ref=e359]:
+                - img "Company Logo for Sinergi Abadi Sentosa" [ref=e361]
+                - generic [ref=e362]:
+                  - button "Sinergi Abadi Sentosa" [ref=e363] [cursor=pointer]:
+                    - heading "Sinergi Abadi Sentosa" [level=4] [ref=e364]:
+                      - text: Sinergi Abadi Sentosa
+                      - img [ref=e366]
+                  - generic [ref=e369]:
+                    - generic [ref=e370]:
+                      - generic "5.0 out of 5" [ref=e371]:
+                        - img [ref=e373]
+                      - text: "5.0"
+                    - generic [ref=e375]: ·
+                    - link "8 reviews" [ref=e377] [cursor=pointer]:
+                      - /url: /companies/sinergi-abadi-sentosa-173018343542587/reviews?jobId=92270989
+              - generic [ref=e379]:
+                - generic [ref=e381]:
+                  - img [ref=e384]
+                  - generic [ref=e387]: Retail & Consumer Products
+                - generic [ref=e389]:
+                  - img [ref=e392]
+                  - generic [ref=e394]: 101-1,000 employees
+              - generic [ref=e396]:
+                - generic [ref=e397]:
+                  - generic:
+                    - generic:
+                      - paragraph: PT. Sinergi Abadi Sentosa merupakan perusahaan berfokus dalam bidang Toll Manufacturing, Original Equipment Manufacturer (OEM), dan Consulting dalam pengembangan formulasi minuman serbuk yang memiliki fungsi kesehatan.
+                      - paragraph: Untuk mengetahu kami lebih jauh silahkan kunjungi website kami pada tautan diatas.
+                  - generic [ref=e400]:
+                    - paragraph [ref=e401]: PT. Sinergi Abadi Sentosa merupakan perusahaan berfokus dalam bidang Toll Manufacturing, Original Equipment Manufacturer (OEM), dan Consulting dalam pengembangan formulasi minuman serbuk yang memiliki fungsi kesehatan.
+                    - paragraph [ref=e402]: Untuk mengetahu kami lebih jauh silahkan kunjungi website kami pada tautan diatas.
+                - button [ref=e405] [cursor=pointer]:
+                  - text: Show more
+                  - generic [ref=e406]:
+                    - text: ⁠
+                    - img [ref=e408]
+            - generic [ref=e412]:
+              - generic [ref=e414]:
+                - img [ref=e417]
+                - generic [ref=e419]: Perks and benefits
+              - generic [ref=e420]:
+                - generic [ref=e422]: • BPJS KETENAGAKERJAAN
+                - generic [ref=e424]: • BPJS KESEHATAN
+                - generic [ref=e426]: • Tunjangan Hari Raya
+            - link "More about this company" [ref=e429] [cursor=pointer]:
+              - /url: /companies/sinergi-abadi-sentosa-173018343542587
+              - generic [ref=e430]:
+                - generic:
+                  - generic:
+                    - text: More about this company
+                    - generic:
+                      - text: ⁠
+                      - generic:
+                        - img
+        - generic [ref=e432]:
+          - heading "Report this job advert" [level=2] [ref=e434]
+          - generic [ref=e435]:
+            - generic [ref=e436]: Be careful
+            - generic [ref=e437]: Don’t provide your bank or credit card details when applying for jobs.
+            - link "Learn how to protect yourself" [ref=e439] [cursor=pointer]:
+              - /url: /security-hub#protect-yourself-online
+            - button "Report this job ad" [ref=e445] [cursor=pointer]:
+              - text: Report this job ad
+              - generic [ref=e446]:
+                - text: ⁠
+                - img [ref=e448]
+        - generic [ref=e451]:
+          - heading "Featured jobs" [level=4] [ref=e452]
+          - generic [ref=e455]:
+            - generic [ref=e458] [cursor=pointer]:
+              - link [ref=e459]:
+                - /url: /job/92277246?ref=cp-recs&origin=competitiveRecommendedJobs&pos=1#sol=a541d7724b950df559a7b129cdab9d23705f8687
+              - generic [ref=e460]:
+                - generic:
+                  - generic:
+                    - img
+              - generic [ref=e463]: Full Stack Programmer Staf
+              - generic [ref=e466]: PT Integral Mulia Cipta
+              - generic [ref=e469]: Cipondoh, Banten, ID
+              - generic [ref=e472]: 11d ago
+              - button "Sign in to save this job" [ref=e476]:
+                - img [ref=e479]
+            - generic [ref=e483] [cursor=pointer]:
+              - link [ref=e484]:
+                - /url: /job/92011375?ref=cp-recs&origin=competitiveRecommendedJobs&pos=2#sol=699ad93f6b76eeaa52a9abb6510afee27630cca0
+              - generic [ref=e485]:
+                - generic:
+                  - generic:
+                    - img
+              - generic [ref=e488]: IT Fullstack Developer
+              - generic [ref=e491]: PT Sinar Sukses Mandiri
+              - generic [ref=e494]: West Jakarta, Jakarta, ID
+              - generic [ref=e497]: 14d ago
+              - button "Sign in to save this job" [ref=e501]:
+                - img [ref=e504]
+            - generic [ref=e508] [cursor=pointer]:
+              - link [ref=e509]:
+                - /url: /job/92247057?ref=cp-recs&origin=competitiveRecommendedJobs&pos=3#sol=aa9504531dd7bfdced3ffc1e69eefe9eee2f9490
+              - generic [ref=e510]:
+                - generic:
+                  - generic:
+                    - img
+              - generic [ref=e513]: Front End Developer
+              - generic [ref=e516]: PT MLP Indonesia Trading
+              - generic [ref=e519]: South Jakarta, Jakarta, ID
+              - generic [ref=e522]: 12d ago
+              - button "Sign in to save this job" [ref=e526]:
+                - img [ref=e529]
+        - generic [ref=e536]:
+          - generic [ref=e537]: Career Advice
+          - generic [ref=e538]: Researching careers? Find all the information and tips you need on career advice.
+          - list [ref=e539]:
+            - listitem [ref=e540]:
+              - text: •
+              - generic [ref=e541]: Role descriptions
+            - listitem [ref=e542]:
+              - text: •
+              - generic [ref=e543]: Salary insights
+            - listitem [ref=e544]:
+              - text: •
+              - generic [ref=e545]: Tools to help you prepare for jobs
+          - link "Explore Career Advice arrow-right" [ref=e546] [cursor=pointer]:
+            - /url: https://id.jobstreet.com/career-advice?utm_campaign=LMIS_Web&utm_source=JobStreet&utm_medium=LMIS&utm_content=job-details
+            - generic [ref=e547]: Explore Career Advice
+            - img "arrow-right" [ref=e548]
+  - contentinfo [ref=e550]:
+    - generic [ref=e552]:
+      - generic [ref=e555]:
+        - generic [ref=e557]:
+          - generic [ref=e559]:
+            - generic [ref=e560]: Job seekers
+            - list [ref=e561]:
+              - listitem [ref=e562]:
+                - link "Job search" [ref=e563] [cursor=pointer]:
+                  - /url: /en
+                  - generic [ref=e565]: Job search
+              - listitem [ref=e566]:
+                - link "Profile" [ref=e567] [cursor=pointer]:
+                  - /url: /profile
+                  - generic [ref=e569]: Profile
+              - listitem [ref=e570]:
+                - link "People search" [ref=e571] [cursor=pointer]:
+                  - /url: /profiles/search?tracking=ILC-profile-search-footer
+                  - generic [ref=e573]: People search
+              - listitem [ref=e574]:
+                - link "Saved searches" [ref=e575] [cursor=pointer]:
+                  - /url: /oauth/login?returnUrl=%2Fmy-activity%2Fsaved-searches
+                  - generic [ref=e577]: Saved searches
+              - listitem [ref=e578]:
+                - link "Saved jobs" [ref=e579] [cursor=pointer]:
+                  - /url: /oauth/login?returnUrl=%2Fmy-activity%2Fsaved-jobs
+                  - generic [ref=e581]: Saved jobs
+              - listitem [ref=e582]:
+                - link "Job applications" [ref=e583] [cursor=pointer]:
+                  - /url: /oauth/login?returnUrl=%2Fmy-activity%2Fapplied-jobs
+                  - generic [ref=e585]: Job applications
+              - listitem [ref=e586]:
+                - link "Career advice" [ref=e587] [cursor=pointer]:
+                  - /url: /career-advice
+                  - generic [ref=e589]: Career advice
+              - listitem [ref=e590]:
+                - link "Explore careers" [ref=e591] [cursor=pointer]:
+                  - /url: /career-advice/explore-careers
+                  - generic [ref=e593]: Explore careers
+              - listitem [ref=e594]:
+                - link "Explore salaries" [ref=e595] [cursor=pointer]:
+                  - /url: /career-advice/explore-salaries
+                  - generic [ref=e597]: Explore salaries
+              - listitem [ref=e598]:
+                - link "Companies" [ref=e599] [cursor=pointer]:
+                  - /url: /companies
+                  - generic [ref=e601]: Companies
+              - listitem [ref=e602]:
+                - link "Community" [ref=e603] [cursor=pointer]:
+                  - /url: /community
+                  - generic [ref=e605]: Community
+              - listitem [ref=e606]:
+                - generic [ref=e608] [cursor=pointer]:
+                  - button "Download apps" [ref=e611]
+                  - img [ref=e617]
+          - generic [ref=e620]:
+            - generic [ref=e621]: Employers
+            - list [ref=e622]:
+              - listitem [ref=e623]:
+                - link "Register for free" [ref=e624] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/
+                  - generic [ref=e626]: Register for free
+              - listitem [ref=e627]:
+                - link "Post a job ad" [ref=e628] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/
+                  - generic [ref=e630]: Post a job ad
+              - listitem [ref=e631]:
+                - link "Products & prices" [ref=e632] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/products/jobads
+                  - generic [ref=e634]: Products & prices
+              - listitem [ref=e635]:
+                - link "Customer service" [ref=e636] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/contactus
+                  - generic [ref=e638]: Customer service
+              - listitem [ref=e639]:
+                - link "Hiring advice" [ref=e640] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/hiring-advice
+                  - generic [ref=e642]: Hiring advice
+              - listitem [ref=e643]:
+                - link "Market insights" [ref=e644] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/market-insights
+                  - generic [ref=e646]: Market insights
+              - listitem [ref=e647]:
+                - link "Recruitment software partners" [ref=e648] [cursor=pointer]:
+                  - /url: https://id.employer.seek.com/partners/connect-with-seek
+                  - generic [ref=e650]: Recruitment software partners
+        - generic [ref=e653]:
+          - generic [ref=e655]:
+            - generic [ref=e656]: About us
+            - list [ref=e657]:
+              - listitem [ref=e658]:
+                - link "About us" [ref=e659] [cursor=pointer]:
+                  - /url: /about
+                  - generic [ref=e661]: About us
+              - listitem [ref=e662]:
+                - link "Newsroom" [ref=e663] [cursor=pointer]:
+                  - /url: /about/news
+                  - generic [ref=e665]: Newsroom
+              - listitem [ref=e666]:
+                - link "Investors" [ref=e667] [cursor=pointer]:
+                  - /url: https://au.seek.com/about/investors
+                  - generic [ref=e669]: Investors
+              - listitem [ref=e670]:
+                - link "Careers" [ref=e671] [cursor=pointer]:
+                  - /url: /careers
+                  - generic [ref=e673]: Careers
+              - listitem [ref=e674]:
+                - generic [ref=e676] [cursor=pointer]:
+                  - button "International partners" [ref=e679]
+                  - img [ref=e685]
+              - listitem [ref=e687]:
+                - generic [ref=e689] [cursor=pointer]:
+                  - button "Partner services" [ref=e692]
+                  - img [ref=e698]
+          - generic [ref=e701]:
+            - generic [ref=e702]: Contact
+            - list [ref=e703]:
+              - listitem [ref=e704]:
+                - link "Help centre" [ref=e705] [cursor=pointer]:
+                  - /url: https://help.id.jobstreet.com/id/s/?language=en_US
+                  - generic [ref=e707]: Help centre
+              - listitem [ref=e708]:
+                - link "Contact us" [ref=e709] [cursor=pointer]:
+                  - /url: /contact-us
+                  - generic [ref=e711]: Contact us
+              - listitem [ref=e712]:
+                - link "Product & tech blog" [ref=e713] [cursor=pointer]:
+                  - /url: https://medium.com/seek-blog
+                  - generic [ref=e715]: Product & tech blog
+              - listitem [ref=e716]:
+                - generic [ref=e718] [cursor=pointer]:
+                  - button "Social" [ref=e721]
+                  - img [ref=e727]
+      - generic [ref=e731]:
+        - button "Location" [ref=e735] [cursor=pointer]:
+          - generic [ref=e737]:
+            - img [ref=e740]
+            - generic [ref=e744]: Indonesia
+            - img [ref=e747]
+        - generic [ref=e749]:
+          - generic [ref=e750]:
+            - link "Terms & conditions" [ref=e752] [cursor=pointer]:
+              - /url: /terms
+              - generic [ref=e754]: Terms & conditions
+            - link "Security" [ref=e756] [cursor=pointer]:
+              - /url: /security-hub
+              - generic [ref=e758]: Security
+            - link "Privacy" [ref=e760] [cursor=pointer]:
+              - /url: /my-privacy
+              - generic [ref=e762]: Privacy
+          - generic [ref=e763]: Copyright © 2026, Jobstreet
