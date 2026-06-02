@@ -11,6 +11,7 @@ import { answerApplicationQuestion } from "@/lib/ai/question-answerer";
 import type { QuestionAnswerResult } from "@/lib/ai/schemas";
 import { prisma } from "@/lib/db/prisma";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
+import { runAiApplyWizard } from "@/lib/browser/ai-apply-wizard";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -38,6 +39,7 @@ type CampaignData = {
   name: string;
   submitMode: string;
   automationMode?: string;
+  formAutomationMode?: string;
   autoSubmitSafeOnly?: boolean;
   lowScoreMode?: string;
   defaultCurrentSalary: number;
@@ -415,30 +417,25 @@ async function runJobstreetApplyWizard({
     const applyButtonFound = await findAndClickApplyButton(page);
 
     if (!applyButtonFound) {
-      const app = await prisma.application.create({
-        data: {
-          campaignId: campaign.id,
-          jobListingId: jobListing.id,
-          status: "failed",
-          submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
-          notes: "Tombol lamar tidak ditemukan di halaman lowongan.",
-        },
-      });
-      applicationId = app.id;
-
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,
-        level: "error",
-        event: "application.apply_button_not_found",
-        message: "Tombol lamar tidak ditemukan di halaman lowongan.",
+        level: "warn",
+        event: "ai_ui.fallback_started",
+        message: "Deterministic flow tidak menemukan tombol lamar. Beralih ke AI UI Agent.",
+        metadata: { reason: "apply_button_not_found" },
       });
 
-      return {
-        status: "failed",
-        message: "Tombol lamar tidak ditemukan di halaman lowongan. Kemungkinan lowongan sudah ditutup atau format halaman berubah.",
-        applicationId: app.id,
-      };
+      return await runAiApplyWizard({
+        page,
+        jobListing,
+        campaign: {
+          ...campaign,
+          formAutomationMode: campaign.automationMode ?? "ai_fallback",
+        },
+        profile,
+        mode: submitMode,
+      });
     }
 
     await writeAutomationLog({
@@ -691,30 +688,28 @@ async function runJobstreetApplyWizard({
     }
 
     if (!reachedFinalReview) {
-      const app = await prisma.application.create({
-        data: {
-          campaignId: campaign.id,
-          jobListingId: jobListing.id,
-          status: "paused",
-          submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
-          notes: `Form lamaran belum mencapai halaman review final Jobstreet. ${filledCount} field diisi, ${questionAnswers.length} pertanyaan dijawab. Lanjutkan sampai tombol Submit application terlihat.`,
-          answersJson: JSON.stringify(answersJson),
-        },
-      });
-      applicationId = app.id;
-      await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "applying" } });
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,
-        event: "application.form_not_ready",
-        message: "Form lamaran belum mencapai review final Jobstreet.",
-        metadata: { applicationId: app.id },
+        event: "ai_ui.fallback_started",
+        message: "Deterministic flow belum mencapai review final. Beralih ke AI UI Agent.",
+        metadata: {
+          reason: "form_not_ready",
+          fieldsFilled: filledCount,
+          questionsAnswered: questionAnswers.length,
+        },
       });
-      return {
-        status: "paused",
-        message: "Form lamaran belum mencapai review final Jobstreet. Lanjutkan sampai tombol Submit application terlihat.",
-        applicationId: app.id,
-      };
+
+      return await runAiApplyWizard({
+        page,
+        jobListing,
+        campaign: {
+          ...campaign,
+          formAutomationMode: campaign.automationMode ?? "ai_fallback",
+        },
+        profile,
+        mode: submitMode,
+      });
     }
 
     const app = await prisma.application.create({

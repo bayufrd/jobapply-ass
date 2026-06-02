@@ -960,7 +960,7 @@ export async function calibrateJobApply({
       pageContent.toLowerCase().includes("kirim cv ke");
 
     // Step 8: Snapshot the form
-    const { snapshot, screenshotPath, traversedSteps } = await collectMultiStepSnapshot(page, calibrationId);
+    const { snapshot, traversedSteps } = await collectMultiStepSnapshot(page, calibrationId);
 
     // Override flow type if email instructions detected
     if (hasEmailInstructions && snapshot.flowType !== "email_apply") {

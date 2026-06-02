@@ -20,6 +20,14 @@ function translateEvent(event: string) {
     "application.question_needs_user_input": "Autopilot menunggu jawaban Anda untuk pertanyaan lowongan.",
     "application.submitted": "Lamaran berhasil terkirim.",
     "application.submit_failed": "Submit lamaran gagal diverifikasi.",
+    "ai_ui.fallback_started": "Sistem beralih ke AI UI Agent karena flow deterministic stuck.",
+    "ai_ui.observe_started": "AI UI Agent mulai membaca tampilan form.",
+    "ai_ui.snapshot_captured": "Snapshot DOM aman berhasil diambil untuk AI.",
+    "ai_ui.plan_received": "AI mengembalikan rencana aksi berikutnya.",
+    "ai_ui.action_executed": "Aksi AI berhasil dijalankan di browser.",
+    "ai_ui.ask_user_required": "AI membutuhkan jawaban Anda untuk melanjutkan.",
+    "ai_ui.final_submit_detected": "AI mendeteksi submit final yang aman.",
+    "ai_ui.submitted_verified": "Submit final berhasil diverifikasi oleh AI UI Agent.",
   };
 
   return map[event] ?? event.replace(/\./g, " · ");
@@ -51,6 +59,14 @@ export async function GET(
     return NextResponse.json({ error: "Kampanye tidak ditemukan." }, { status: 404 });
   }
 
+  const runtimeCampaign = campaign as typeof campaign & {
+    currentJobId?: string | null;
+    currentStep?: string | null;
+    currentQuestion?: string | null;
+    decisionStatus?: string | null;
+    decisionPayloadJson?: string | null;
+  };
+
   const counts = {
     jobsFound: campaign.jobListings.length,
     jobsAnalyzed: campaign.jobListings.filter((job) => job.matchScore !== null).length,
@@ -63,16 +79,26 @@ export async function GET(
     failed: campaign.applications.filter((app) => app.status === "failed").length,
   };
 
-  const currentJob = campaign.currentJobId
-    ? campaign.jobListings.find((job) => job.id === campaign.currentJobId) ?? null
+  const currentJob = runtimeCampaign.currentJobId
+    ? campaign.jobListings.find((job) => job.id === runtimeCampaign.currentJobId) ?? null
     : null;
+
+  const latestAiLog = campaign.logs.find((log) => log.event.startsWith("ai_ui.")) ?? null;
+  const latestAiMetadata = parseJson<Record<string, unknown> | null>(latestAiLog?.metadataJson, null);
 
   return NextResponse.json({
     campaign,
     counts,
-    currentStep: campaign.currentStep,
+    currentStep: runtimeCampaign.currentStep,
     currentJob,
-    lastDecisionRequired: parseJson(campaign.decisionPayloadJson, null),
+    aiUi: {
+      currentAction: latestAiMetadata?.goal ?? latestAiLog?.event ?? null,
+      reason: latestAiMetadata?.userFacingReason ?? runtimeCampaign.currentQuestion ?? null,
+      targetElementId: latestAiMetadata?.targetElementId ?? null,
+      snapshotSummary: latestAiMetadata?.snapshotSummary ?? null,
+      pausedReason: campaign.status === "paused" ? (runtimeCampaign.currentQuestion ?? runtimeCampaign.decisionStatus ?? null) : null,
+    },
+    lastDecisionRequired: parseJson(runtimeCampaign.decisionPayloadJson, null),
     latestLogs: campaign.logs.map((log) => ({
       id: log.id,
       createdAt: log.createdAt,
@@ -84,11 +110,11 @@ export async function GET(
     })),
     canContinue: campaign.status === "running" || campaign.status === "ready" || campaign.status === "paused",
     nextRecommendedAction:
-      campaign.status === "paused" && campaign.decisionStatus === "low_score"
+      campaign.status === "paused" && runtimeCampaign.decisionStatus === "low_score"
         ? "decision_required"
-        : campaign.status === "paused" && campaign.decisionStatus === "question_required"
+        : campaign.status === "paused" && runtimeCampaign.decisionStatus === "question_required"
           ? "question_required"
-          : campaign.status === "paused" && campaign.decisionStatus === "review_required"
+          : campaign.status === "paused" && runtimeCampaign.decisionStatus === "review_required"
             ? "review_required"
             : campaign.appliedCount >= campaign.targetApplyCount
               ? "completed"

@@ -58,6 +58,10 @@ export default function NewCampaignPage() {
       automationMode: String(formData.get("automationMode") || "review_each_application") as
         | "review_each_application"
         | "auto_submit_safe_only",
+      formAutomationMode: String(formData.get("formAutomationMode") || "ai_fallback") as
+        | "deterministic_first"
+        | "ai_fallback"
+        | "ai_first",
       lowScoreMode: String(formData.get("lowScoreMode") || "ask") as
         | "ask"
         | "auto_skip"
@@ -170,6 +174,15 @@ export default function NewCampaignPage() {
                 Auto Submit Aman hanya berjalan jika sistem yakin form sudah lengkap dan submit berhasil bisa diverifikasi. Jika ragu, kampanye akan dijeda dan meminta keputusan Anda.
               </p>
             </div>
+            <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">
+              <span>Mode Pengisian Form</span>
+              <select name="formAutomationMode" defaultValue="ai_fallback" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3">
+                <option value="deterministic_first">Cepat & Stabil</option>
+                <option value="ai_fallback">AI Fallback</option>
+                <option value="ai_first">AI First</option>
+              </select>
+              <p className="text-xs text-slate-400">AI Fallback: Sistem memakai rule cepat dulu, lalu AI membaca tampilan jika stuck. AI First: AI membaca tampilan form dari awal. Lebih fleksibel tapi lebih lambat dan memakai lebih banyak token.</p>
+            </label>
             <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">
               <span>Perilaku untuk Skor Rendah</span>
               <select name="lowScoreMode" defaultValue="ask" className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3">

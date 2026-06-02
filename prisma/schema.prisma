@@ -96,6 +96,7 @@ model Campaign {
   currentJobTitle       String?
   currentJobCompany     String?
   automationMode        String                 @default("review_each_application")
+  formAutomationMode    String                 @default("ai_fallback")
   lowScoreMode          String                 @default("ask")
   autoSubmitSafeOnly    Boolean                @default(false)
   currentStep           String?
@@ -162,6 +163,23 @@ model QuestionMemory {
   usageCount         Int      @default(0)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+}
+
+model FormInteractionMemory {
+  id               String   @id @default(cuid())
+  platform         String
+  urlPattern       String
+  pageSignature    String
+  elementSignature String
+  fieldPurpose     String
+  actionType       String
+  valueSource      String
+  confidence       Float
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([platform, urlPattern])
+  @@index([pageSignature])
 }
 
 model AutomationLog {

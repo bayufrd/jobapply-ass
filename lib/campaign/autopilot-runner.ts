@@ -324,13 +324,13 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         continue;
       }
 
-      if (job.campaign.lowScoreMode === "auto_skip") {
+      if ((job.campaign as typeof job.campaign & { lowScoreMode?: string }).lowScoreMode === "auto_skip") {
         await prisma.jobListing.update({ where: { id: job.id }, data: { status: "skipped" } });
         consecutiveSkippableFailures += 1;
         continue;
       }
 
-      if (job.campaign.lowScoreMode === "auto_apply") {
+      if ((job.campaign as typeof job.campaign & { lowScoreMode?: string }).lowScoreMode === "auto_apply") {
         await writeAutomationLog({
           campaignId,
           jobListingId: job.id,
@@ -495,6 +495,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         name: job.campaign.name,
         submitMode: job.campaign.submitMode,
         automationMode: (job.campaign as typeof job.campaign & { automationMode?: string }).automationMode,
+        formAutomationMode: (job.campaign as typeof job.campaign & { formAutomationMode?: string }).formAutomationMode,
         autoSubmitSafeOnly: (job.campaign as typeof job.campaign & { autoSubmitSafeOnly?: boolean }).autoSubmitSafeOnly,
         lowScoreMode: (job.campaign as typeof job.campaign & { lowScoreMode?: string }).lowScoreMode,
         defaultCurrentSalary: job.campaign.defaultCurrentSalary,
@@ -567,13 +568,30 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       const answers = parseJson<{ pendingQuestions?: Array<{ question: string }> }>(application?.answersJson, {});
       const pendingQuestion = answers.pendingQuestions?.[0]?.question ?? null;
 
+      const pausedReason = applyResult.message;
+      const inferredDecisionStatus = pendingQuestion
+        ? "question_required"
+        : pausedReason === "Verifikasi manual terdeteksi"
+          ? "manual_intervention"
+          : pausedReason === "Submit final eksternal membutuhkan review"
+            ? "review_required"
+            : pausedReason === "AI membutuhkan jawaban Anda"
+              ? "question_required"
+              : "paused";
+
       await setCampaignRuntimeState(campaignId, {
         status: "paused",
-        currentStep: pendingQuestion ? "question_required" : "apply_paused",
-        currentQuestion: pendingQuestion,
-        decisionStatus: pendingQuestion ? "question_required" : "paused",
+        currentStep: pendingQuestion
+          ? "question_required"
+          : inferredDecisionStatus === "manual_intervention"
+            ? "manual_intervention"
+            : inferredDecisionStatus === "review_required"
+              ? "review_required"
+              : "apply_paused",
+        currentQuestion: pendingQuestion ?? pausedReason,
+        decisionStatus: inferredDecisionStatus,
         decisionPayloadJson: JSON.stringify({
-          type: pendingQuestion ? "question_required" : "paused",
+          type: inferredDecisionStatus,
           applicationId: application?.id ?? null,
           question: pendingQuestion,
           message: applyResult.message,
