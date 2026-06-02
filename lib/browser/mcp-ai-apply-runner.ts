@@ -159,6 +159,7 @@ function buildMcpLogMetadata(input: {
   step?: number;
   pageKind?: string;
   error?: string | null;
+  technical?: Record<string, unknown> | null;
 }) {
   return {
     campaignId: input.campaignId,
@@ -173,6 +174,7 @@ function buildMcpLogMetadata(input: {
     step: input.step ?? null,
     pageKind: input.pageKind ?? null,
     error: input.error ?? null,
+    technical: input.technical ?? null,
   };
 }
 
@@ -687,6 +689,7 @@ export async function runMcpAiApplyRunner({
     const toolName = mcpError?.toolName;
     const failedMcpUrl = mcpError?.mcpUrl ?? mcpUrl;
     const causeMessage = mcpError?.causeMessage ?? errorMessage;
+    const technicalMetadata = mcpError?.metadata ?? null;
 
     await prisma.application.update({ where: { id: application.id }, data: { status: "failed", notes: `Runner MCP gagal: ${errorMessage}` } });
 
@@ -709,6 +712,7 @@ export async function runMcpAiApplyRunner({
           company: jobListing.company,
           jobUrl: jobListing.url,
           error: causeMessage,
+          technical: technicalMetadata,
         }),
       });
     }
@@ -732,6 +736,7 @@ export async function runMcpAiApplyRunner({
           company: jobListing.company,
           jobUrl: jobListing.url,
           error: causeMessage,
+          technical: technicalMetadata,
         }),
       });
     }
@@ -755,6 +760,7 @@ export async function runMcpAiApplyRunner({
           company: jobListing.company,
           jobUrl: jobListing.url,
           error: causeMessage,
+          technical: technicalMetadata,
         }),
       });
     }
@@ -777,6 +783,7 @@ export async function runMcpAiApplyRunner({
         company: jobListing.company,
         jobUrl: jobListing.url,
         error: causeMessage,
+        technical: technicalMetadata,
       }),
     });
     return {

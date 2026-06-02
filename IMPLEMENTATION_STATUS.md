@@ -256,12 +256,16 @@ Jelaskan status browser automation:
 * Save to DB: Sudah diimplementasikan dengan deduplication berdasarkan URL (`@unique`).
 * AI job scoring: Sudah diimplementasikan. Skor rendah tidak lagi memblokir tombol lamar; perilaku ditentukan oleh `lowScoreMode`.
 * Form automation default: Default kampanye baru sekarang `formAutomationMode = ai_first`/`mcp_ai_first` dengan arah utama `auto_submit_safe_only`.
-* MCP preflight before search/apply: Untuk `formAutomationMode = mcp_ai_first`, helper [`checkPlaywrightMcpHealth()`](lib/mcp/mcp-health.ts:4) dipanggil sebelum `ensureJobsExist()`. Jika gagal, kampanye pause di `mcp_unavailable`, `decisionStatus = mcp_unavailable`, user-facing message menjadi `Playwright MCP belum aktif. Jalankan npm run mcp:playwright lalu klik Lanjutkan Kampanye.`, dan error raw `fetch failed` tidak lagi ditampilkan sebagai pesan utama.
+* MCP preflight before search/apply: Untuk `formAutomationMode = mcp_ai_first`, helper [`checkPlaywrightMcpHealth()`](lib/mcp/mcp-health.ts:6) dipanggil sebelum `ensureJobsExist()`. Jika gagal, kampanye pause di `mcp_unavailable`, `decisionStatus = mcp_unavailable`, user-facing message menjadi `Playwright MCP belum aktif. Jalankan npm run mcp:playwright lalu klik Lanjutkan Kampanye.`, dan error raw `fetch failed` tidak lagi ditampilkan sebagai pesan utama.
+* MCP Streamable HTTP client: Root cause HTTP 400 sekarang ditangani di [`PlaywrightMcpClient`](lib/mcp/playwright-mcp-client.ts:240) dengan menyimpan `Mcp-Session-Id` dari initialize, mengirim `MCP-Protocol-Version` pada semua request berikutnya, retry sekali bila server mengembalikan `404` untuk sesi lama, serta mempertahankan default protocol `2025-06-18` sampai server menegosiasikan versi lain.
+* MCP response parser: Helper parser di [`parseMcpHttpResponse()`](lib/mcp/playwright-mcp-client.ts:184) sekarang menangani respons `application/json` maupun `text/event-stream`, termasuk ekstraksi event `data:` dan pemilihan payload JSON-RPC final.
+* MCP diagnostic route: Route [`GET /api/debug/mcp`](app/api/debug/mcp/route.ts:1) sekarang menguji initialize, status session header, protocol version, `tools/list`, dan `browser_snapshot` tanpa menavigasi ke Jobstreet.
+* MCP technical logging: Jika `tools/call` ditolak server dengan HTTP 400, pesan utama ke user sekarang tetap aman (`Panggilan MCP gagal. Detail teknis tersimpan di log lokal.`), sementara metadata log lokal menyimpan `status`, `statusText`, `mcpUrl`, `stage`, `toolName`, `sessionIdPresent`, `protocolVersion`, dan `responseBodyPreview`.
 * Search batch size: Helper [`getSafeMaxJobs()`](lib/browser/jobstreet-agent.ts:78) sekarang mendukung ENV `JOBSTREET_SEARCH_BATCH_SIZE` dengan hard cap 20 untuk QA cepat tanpa mengubah batas aman maksimum.
 * URL-step detector Jobstreet: Detector URL sekarang menjadi sumber kebenaran utama untuk `/apply`, `/apply/role-requirements`, `/apply/profile`, `/apply/review`, dan `/apply/success`. Helper sentral di [`runUrlStepFlowIfOnJobstreetApplyUrl()`](lib/browser/jobstreet-apply-agent.ts:286) dipanggil segera setelah [`page.goto()`](lib/browser/jobstreet-apply-agent.ts:602), segera setelah klik Apply/Lamar di generic wizard, dan di awal setiap iterasi wizard lama. Untuk URL apply internal yang normal, generic wizard tidak lagi mengendalikan alur utama.
 * Manual intervention detector: [`detectManualIntervention()`](lib/browser/page-detector.ts:251) kini memakai visible text dan visible interactive elements sebagai prioritas utama. Password input, OTP input, captcha, halaman `/oauth/login`, dan security verification visible menjadi sinyal kuat; teks lemah seperti `Profile Avatar`, `Open app`, `SIGN_IN_PAGE`, atau `/oauth/login` di script/header tidak boleh memicu pause.
 * AI-first apply runner: [`runAiFirstApplyRunner()`](lib/browser/ai-first-apply-runner.ts:1) kini menulis log URL-step seperti `jobstreet_apply.step_detected_from_url`, `manual_intervention.candidate_detected`, `manual_intervention.false_positive_rejected`, dan `manual_intervention.confirmed` untuk membedakan kandidat false-positive vs intervensi manual nyata.
-* MCP AI-first runner: [`runMcpAiApplyRunner()`](lib/browser/mcp-ai-apply-runner.ts:149) sekarang menulis log diagnostik spesifik `mcp_ai.connect_started`, `mcp_ai.connect_ok`, `mcp_ai.connect_failed`, `mcp_ai.navigate_started`, `mcp_ai.navigate_ok`, `mcp_ai.snapshot_started`, `mcp_ai.snapshot_ok`, `mcp_ai.snapshot_failed`, `mcp_ai.tool_call_failed`, dan `mcp_ai.runner_failed`. Metadata log menyertakan `mcpUrl`, `stage`, `toolName`, `campaignId`, `jobListingId`, `applicationId`, judul lowongan, company, dan job URL.
+* MCP AI-first runner: [`runMcpAiApplyRunner()`](lib/browser/mcp-ai-apply-runner.ts:181) sekarang menulis log diagnostik spesifik `mcp_ai.connect_started`, `mcp_ai.connect_ok`, `mcp_ai.connect_failed`, `mcp_ai.navigate_started`, `mcp_ai.navigate_ok`, `mcp_ai.snapshot_started`, `mcp_ai.snapshot_ok`, `mcp_ai.snapshot_failed`, `mcp_ai.tool_call_failed`, dan `mcp_ai.runner_failed`. Metadata log menyertakan `mcpUrl`, `stage`, `toolName`, `campaignId`, `jobListingId`, `applicationId`, judul lowongan, company, job URL, dan metadata teknis saat ada error MCP.
 * AI planner: AI dipakai spesifik untuk menemukan tombol Continue/Submit dan mengisi field kosong yang relevan, bukan untuk menebak seluruh flow saat URL sudah jelas. Pada langkah `update_profile`, sistem scroll ke bawah lebih dulu lalu AI/MCP dipaksa mencari tombol `Continue`/`Lanjut`, dan jika URL tidak berpindah ke `/apply/review` dalam 8 detik hasilnya `stuck_no_progress` dengan keputusan in-app "Step Update Jobstreet Profile belum berpindah ke Review. Sistem mencoba klik Continue.", bukan pesan login/verifikasi.
 * Question detection: Pertanyaan normal kini diarahkan ke keputusan in-app, bukan instruksi umum untuk memeriksa browser.
 * Yes/No handling: Bila jawaban diketahui dari CV/default/memory, AI dapat menjawab. Bila tidak yakin, status harus pause ke keputusan user di halaman kampanye.
@@ -389,7 +393,7 @@ campaign.applied_count_incremented
 
 Tuliskan hasil testing manual terakhir:
 
-Tanggal: 2026-06-02 (observability + MCP preflight untuk Autopilot)
+Tanggal: 2026-06-02 (MCP Streamable HTTP session compliance + diagnostics)
 Command yang dijalankan:
 
 ```bash
@@ -400,30 +404,33 @@ npx prisma generate
 
 Hasil target verifikasi manual:
 
-Case 1: MCP tidak running
-
-* [ ] Stop MCP sidecar.
-* [ ] Buka halaman kampanye.
-* [ ] Klik `Jalankan Kampanye Autopilot`.
-* [ ] Konfirmasi app TIDAK mencari 20 lowongan lebih dulu.
-* [ ] Konfirmasi kampanye pause di `mcp_unavailable`.
-* [ ] Konfirmasi UI menampilkan: `Playwright MCP belum aktif. Jalankan npm run mcp:playwright lalu klik Lanjutkan Kampanye.`
-* [ ] Konfirmasi DB log memiliki `mcp.preflight_failed`.
-* [ ] Konfirmasi local file log `storage/logs/campaign-{campaignId}.log` terbentuk.
-
-Case 2: MCP running
+Case 1: MCP initialize + session header
 
 * [ ] Jalankan `npm run mcp:playwright`.
+* [ ] Pastikan output sidecar memuat `Listening on http://localhost:8931`.
+* [ ] Jalankan `curl -i -X POST http://localhost:8931/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"manual-check","version":"0.1.0"}}}'`.
+* [ ] Konfirmasi response header memuat `mcp-session-id`.
+
+Case 2: MCP diagnostic route
+
 * [ ] Jalankan `npm run dev`.
+* [ ] Buka [`/api/debug/mcp`](app/api/debug/mcp/route.ts:1).
+* [ ] Konfirmasi `initializeOk = true`.
+* [ ] Konfirmasi `sessionIdReceived = true`.
+* [ ] Konfirmasi `toolsListOk = true`.
+* [ ] Konfirmasi `snapshotOk = true` bila browser MCP sudah tersedia.
+
+Case 3: Autopilot MCP runner
+
 * [ ] Start campaign lagi.
-* [ ] Konfirmasi preflight menulis `mcp.preflight_ok`.
-* [ ] Konfirmasi log fase search jelas (`campaign.phase_search_started`, `campaign.phase_search_completed`).
-* [ ] Konfirmasi log fase apply jelas (`mcp_ai.connect_*`, `mcp_ai.navigate_*`, `mcp_ai.snapshot_*`, planner/action).
-* [ ] Konfirmasi jika MCP gagal pada satu tahap, log menyertakan `stage`, `toolName`, dan `mcpUrl`.
+* [ ] Konfirmasi log menulis `mcp_ai.connect_started` lalu `mcp_ai.connect_ok`.
+* [ ] Konfirmasi log menulis `mcp_ai.navigate_started` lalu `mcp_ai.navigate_ok`.
+* [ ] Konfirmasi tidak ada HTTP 400 pada tool call pertama.
+* [ ] Jika masih gagal, konfirmasi local log menyimpan `responseBodyPreview`, `sessionIdPresent`, dan `protocolVersion`.
 
 Catatan:
 * Verifikasi manual live belum dijalankan pada task ini.
-* Fokus task ini adalah observability + MCP preflight, bukan bypass captcha atau stealth automation.
+* Fokus task ini adalah memperbaiki compliance client MCP Streamable HTTP, bukan bypass captcha atau stealth automation.
 * Browser tetap visible.
 * Tidak ada bypass captcha, stealth automation, atau proxy rotation.
 
@@ -433,6 +440,7 @@ Catatan:
 | ------- | ----- | --------------- | ------ | ------------ |
 | 2026-06-02 | Resume campaign belum melanjutkan browser automation yang sebelumnya terhenti | Route resume masih hanya mengubah status dan menulis log | Open | `app/api/campaigns/[id]/resume/route.ts` |
 | 2026-06-02 | Raw error `fetch failed` dari MCP sebelumnya terlalu mentah untuk user | Sudah diperbaiki: pesan utama sekarang pause bersih `Playwright MCP belum aktif...`, detail teknis dipindah ke expandable UI + metadata log | Fixed (Perlu verifikasi manual) | `lib/mcp/mcp-health.ts`, `lib/mcp/playwright-mcp-client.ts`, `lib/browser/mcp-ai-apply-runner.ts`, `app/api/campaigns/[id]/status/route.ts`, `components/campaign-actions.tsx` |
+| 2026-06-02 | MCP aktif tetapi tool call pertama gagal HTTP 400 | Root cause manual client tidak menyimpan `Mcp-Session-Id`, tidak mengirim `MCP-Protocol-Version`, dan parser respons belum aman untuk `text/event-stream` | Fixed (Perlu verifikasi manual) | `lib/mcp/playwright-mcp-client.ts`, `lib/browser/mcp-ai-apply-runner.ts`, `app/api/debug/mcp/route.ts`, `README.md` |
 | 2026-06-02 | Autopilot dulu bisa search sampai 20 job sebelum tahu MCP mati | Sudah diperbaiki dengan preflight sebelum `ensureJobsExist()` untuk mode `mcp_ai_first` | Fixed (Perlu verifikasi manual) | `lib/campaign/autopilot-runner.ts`, `lib/mcp/mcp-health.ts` |
 | 2026-06-02 | False manual_intervention pada langkah normal `/apply/profile` Jobstreet | Sudah diperbaiki dengan URL-step detector sebagai source of truth, reject false positive manual detector pada URL apply internal normal, dan force AI/MCP mencari tombol Continue pada `update_profile` | Fixed (Perlu verifikasi browser nyata) | `lib/browser/jobstreet-apply-step-detector.ts`, `lib/browser/page-detector.ts`, `lib/browser/jobstreet-apply-step-runner.ts`, `lib/browser/ai-first-apply-runner.ts`, `lib/browser/mcp-ai-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts` |
 | 2026-06-02 | Mapping keputusan in-app ke jawaban final backend belum sepenuhnya matang | UI sudah diarahkan ke Accept/Reject/Yes/No, tetapi penyimpanan jawaban/edit answer/remember masih perlu pendalaman | Open | `components/campaign-actions.tsx`, `app/api/campaigns/[id]/autopilot/decision/route.ts` |
@@ -483,10 +491,10 @@ Checklist fitur yang belum selesai:
 
 Tuliskan 3–5 langkah paling masuk akal berikutnya.
 
-1. Jalankan verifikasi manual MCP preflight: pastikan saat MCP mati kampanye pause sebelum search, menulis `mcp.preflight_failed`, dan local log campaign terbentuk.
-2. Jalankan verifikasi manual MCP running: pastikan `mcp.preflight_ok`, log fase search/apply jelas, dan kegagalan MCP menampilkan `stage`, `toolName`, dan `mcpUrl`.
-3. Verifikasi manual flow kampanye `.net` untuk memastikan URL pencarian Jobstreet benar-benar memakai `https://id.jobstreet.com/.net-jobs/in-West-Jakarta-Jakarta`.
-4. Matangkan keputusan in-app agar Accept/Reject/Yes/No/Edit Answer benar-benar tersimpan, bisa diingat per kampanye, dan melanjutkan loop otomatis.
+1. Jalankan verifikasi manual route [`/api/debug/mcp`](app/api/debug/mcp/route.ts:1) untuk memastikan `initializeOk`, `sessionIdReceived`, `toolsListOk`, dan `snapshotOk` bernilai benar saat sidecar aktif.
+2. Jalankan verifikasi manual campaign MCP AI-first untuk memastikan urutan log `mcp_ai.connect_ok` → `mcp_ai.navigate_ok` muncul tanpa HTTP 400 pada tool call pertama.
+3. Jika masih gagal, gunakan local log MCP untuk memeriksa `responseBodyPreview`, `sessionIdPresent`, dan `protocolVersion` sebelum menyentuh flow Jobstreet yang lebih jauh.
+4. Verifikasi manual flow kampanye `.net` untuk memastikan URL pencarian Jobstreet benar-benar memakai `https://id.jobstreet.com/.net-jobs/in-West-Jakarta-Jakarta`.
 5. Selesaikan resume automation setelah intervensi manual agar bukan hanya status-level, tetapi benar-benar melanjutkan browser session yang sama.
 
 ## 19. Prompt Lanjutan yang Direkomendasikan

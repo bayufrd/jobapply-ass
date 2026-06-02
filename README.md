@@ -186,6 +186,40 @@ npx playwright install chromium
 
 The browser manager in [`lib/browser/playwright-manager.ts`](lib/browser/playwright-manager.ts:1) enforces visible non-headless mode. If [`PLAYWRIGHT_HEADLESS`](.env:8) is set to `true`, the app will throw an error by design.
 
+## Playwright MCP startup
+
+Start the MCP sidecar in a separate terminal:
+
+```bash
+npm run mcp:playwright
+```
+
+Expected startup output includes:
+
+```txt
+Listening on http://localhost:8931
+```
+
+Manual initialize check:
+
+```bash
+curl -i -X POST http://localhost:8931/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"manual-check","version":"0.1.0"}}}'
+```
+
+Confirm the response headers include `mcp-session-id`.
+
+Subsequent MCP requests must send:
+
+```txt
+Mcp-Session-Id: <value>
+MCP-Protocol-Version: 2025-06-18
+```
+
+The MCP client in [`PlaywrightMcpClient`](lib/mcp/playwright-mcp-client.ts:240) now preserves the returned session id, forwards [`MCP-Protocol-Version`](lib/mcp/playwright-mcp-client.ts:444) on subsequent requests, retries once after session-invalidating `404`, and parses both JSON and `text/event-stream` responses.
+
 ## Run the app
 
 ```bash
@@ -194,6 +228,8 @@ npm run dev
 
 Open `http://localhost:3000`. The root route in [`app/page.tsx`](app/page.tsx:1) redirects to [`/dashboard`](app/dashboard/page.tsx:1).
 
+MCP diagnostics are available at [`/api/debug/mcp`](app/api/debug/mcp/route.ts:1).
+
 ## Login and session save behavior
 
 - Session path is configured by [`PLAYWRIGHT_SESSION_PATH`](.env:9)
@@ -201,6 +237,7 @@ Open `http://localhost:3000`. The root route in [`app/page.tsx`](app/page.tsx:1)
 - Visible browser launch is handled by [`launchManagedBrowser()`](lib/browser/playwright-manager.ts:24)
 - The current worker stub opens Jobstreet in visible mode and records the session path in the database
 - If a saved session is invalid, missing, or a verification challenge appears, the system must pause and require manual action
+- MCP HTTP session state is tracked separately inside [`PlaywrightMcpClient`](lib/mcp/playwright-mcp-client.ts:240) via `Mcp-Session-Id` and negotiated protocol version
 
 ## Manual intervention behavior
 
@@ -262,6 +299,7 @@ Submission must only happen after explicit user approval.
 - Manual intervention requires restarting the campaign after resolving login/captcha/OTP in the visible browser
 - Session validation and login reuse are basic and need deeper site-specific handling
 - Form filling is intentionally conservative and only fills obvious known fields in [`fillKnownApplicationFields()`](lib/browser/form-filler.ts:18)
+- MCP diagnostics help validate transport/session issues, but live browser verification is still required through [`/api/debug/mcp`](app/api/debug/mcp/route.ts:1)
 
 ## Safety notes
 
