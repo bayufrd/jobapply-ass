@@ -315,7 +315,9 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
   }
 
   const maxConsecutiveUnavailableJobs = 5;
+  const maxConsecutiveStuckJobs = 5;
   let consecutiveUnavailableJobs = 0;
+  let consecutiveStuckJobs = 0;
 
   while (consecutiveUnavailableJobs < maxConsecutiveUnavailableJobs) {
     const nextJob = await pickNextJob(campaignId);
@@ -488,6 +490,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       });
 
       consecutiveUnavailableJobs = 0;
+      consecutiveStuckJobs = 0;
 
       const refreshedCampaign = await prisma.campaign.findUnique({
         where: { id: campaignId },
@@ -579,41 +582,66 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       };
     }
 
-    if (applyResult.status === "apply_unavailable") {
-      await prisma.jobListing.update({
-        where: { id: job.id },
-        data: { status: "apply_unavailable" },
-      });
-
-      const alreadyLogged = await hasRecentApplyUnavailableLog(campaignId, job.id);
-      if (!alreadyLogged) {
-        await writeAutomationLog({
-          campaignId,
-          jobListingId: job.id,
-          event: "campaign.autopilot_job_apply_unavailable",
-          message: "Lowongan dilewati karena tombol lamar tidak ditemukan. Autopilot melanjutkan ke lowongan berikutnya.",
-        });
-      }
+    if (["apply_unavailable", "stuck_no_progress", "submit_not_found_timeout"].includes(applyResult.status)) {
+      const mappedStatus = applyResult.status === "apply_unavailable" ? "apply_unavailable" : "failed";
+      await prisma.jobListing.update({ where: { id: job.id }, data: { status: mappedStatus } });
 
       await writeAutomationLog({
         campaignId,
         jobListingId: job.id,
-        event: "campaign.autopilot_next_job",
-        message: "Lowongan dilewati. Lanjut lowongan berikutnya.",
+        level: "warn",
+        event: "application.job_stuck_skipped",
+        message:
+          applyResult.status === "submit_not_found_timeout"
+            ? "Submit tidak ditemukan dalam batas waktu. Lowongan dilewati."
+            : applyResult.status === "stuck_no_progress"
+              ? "Halaman tidak berubah setelah 2 aksi. Lowongan dilewati."
+              : "Lowongan dilewati karena tidak ada aksi aman yang berguna.",
+        metadata: { resultStatus: applyResult.status, applicationId: applyResult.applicationId ?? null },
       });
+
+      await writeAutomationLog({
+        campaignId,
+        jobListingId: job.id,
+        event: "campaign.autopilot_continue_after_stuck",
+        message: "Autopilot lanjut ke lowongan berikutnya.",
+        metadata: { resultStatus: applyResult.status, consecutiveStuckJobs: consecutiveStuckJobs + 1 },
+      });
+
+      consecutiveUnavailableJobs += applyResult.status === "apply_unavailable" ? 1 : 0;
+      consecutiveStuckJobs += 1;
+
+      if (consecutiveStuckJobs >= maxConsecutiveStuckJobs) {
+        await setCampaignRuntimeState(campaignId, {
+          status: "paused",
+          currentStep: "too_many_unusable_jobs",
+          currentJobId: job.id,
+          currentQuestion: "Terlalu banyak lowongan stuck berturut-turut. Periksa filter kampanye atau jalankan ulang nanti.",
+          decisionStatus: "paused",
+          decisionPayloadJson: null,
+        });
+
+        return {
+          status: "paused",
+          message: "Terlalu banyak lowongan stuck berturut-turut. Periksa filter kampanye atau jalankan ulang nanti.",
+          campaignId,
+          currentStep: "too_many_unusable_jobs",
+          currentJobId: job.id,
+        };
+      }
 
       await setCampaignRuntimeState(campaignId, {
         status: "running",
         currentStep: "next_job",
         currentJobId: job.id,
+        currentQuestion: applyResult.message,
         decisionStatus: null,
         decisionPayloadJson: null,
       });
 
-      consecutiveUnavailableJobs += 1;
       return {
         status: "skipped_continue",
-        message: "Lowongan dilewati. Lanjut lowongan berikutnya.",
+        message: "Autopilot lanjut ke lowongan berikutnya.",
         campaignId,
         currentStep: "next_job",
         currentJobId: job.id,
@@ -656,14 +684,14 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
   await setCampaignRuntimeState(campaignId, {
     status: "paused",
     currentStep: "too_many_unusable_jobs",
-    currentQuestion: `Autopilot menemukan ${maxConsecutiveUnavailableJobs} lowongan beruntun yang tidak bisa dilamar otomatis. Periksa browser atau jalankan pencarian baru.`,
+    currentQuestion: "Terlalu banyak lowongan stuck berturut-turut. Periksa filter kampanye atau jalankan ulang nanti.",
     decisionStatus: null,
     decisionPayloadJson: null,
   });
 
   return {
     status: "completed",
-    message: `Autopilot berhenti setelah ${maxConsecutiveUnavailableJobs} lowongan beruntun tidak bisa dilamar otomatis.`,
+    message: "Terlalu banyak lowongan stuck berturut-turut. Periksa filter kampanye atau jalankan ulang nanti.",
     campaignId,
     currentStep: "too_many_unusable_jobs",
   };

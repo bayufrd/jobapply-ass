@@ -41,6 +41,16 @@ type CampaignStatusResponse = {
     matchScore: number | null;
     status: string;
   } | null;
+  watchdog?: {
+    stepLabel: string | null;
+    stepElapsedSeconds: number;
+    maxStepSeconds: number;
+    noProgressCount: number;
+    aiFallbackAttempts: number;
+    nextAutomaticAction: string | null;
+    lastEvent: string | null;
+    lastMessage: string | null;
+  };
   lastDecisionRequired: {
     type?: string;
     jobId?: string;
@@ -355,6 +365,37 @@ export function CampaignActions({
           </div>
           <div className="mt-2 h-3 w-full rounded-full bg-slate-800">
             <div className={`h-3 rounded-full transition-all ${targetReached ? "bg-emerald-500" : "bg-cyan-500"}`} style={{ width: `${progressWidth}%` }} />
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 text-sm text-slate-200">
+          <p className="text-xs uppercase tracking-wide text-cyan-300">Watchdog Autopilot</p>
+          <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div>
+              <p className="text-slate-400">Status langkah</p>
+              <p className="mt-1 font-medium text-white">
+                {statusData?.watchdog?.stepLabel ?? stepLabel(statusData?.currentStep)}
+                {" — "}
+                {statusData?.watchdog?.stepElapsedSeconds ?? 0}/{statusData?.watchdog?.maxStepSeconds ?? 8} detik
+              </p>
+            </div>
+            <div>
+              <p className="text-slate-400">No-progress</p>
+              <p className="mt-1 font-medium text-white">{statusData?.watchdog?.noProgressCount ?? 0} aksi</p>
+            </div>
+            <div>
+              <p className="text-slate-400">AI fallback</p>
+              <p className="mt-1 font-medium text-white">{statusData?.watchdog?.aiFallbackAttempts ?? 0} kali</p>
+            </div>
+            <div className="md:col-span-2 xl:col-span-3">
+              <p className="text-slate-400">Tindakan otomatis berikutnya</p>
+              <p className="mt-1 font-medium text-cyan-200">{statusData?.watchdog?.nextAutomaticAction ?? "Autopilot lanjut ke lowongan berikutnya."}</p>
+            </div>
+            {statusData?.watchdog?.lastMessage && (
+              <div className="md:col-span-2 xl:col-span-3 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-slate-300">
+                {statusData.watchdog.lastMessage}
+              </div>
+            )}
           </div>
         </div>
 

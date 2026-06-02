@@ -2,6 +2,8 @@ export const TERMINAL_JOB_STATUSES = [
   "submitted",
   "failed",
   "apply_unavailable",
+  "stuck_no_progress",
+  "submit_not_found_timeout",
   "external_review_required",
   "manual_intervention_required",
 ] as const;

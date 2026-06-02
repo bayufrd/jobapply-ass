@@ -7,6 +7,12 @@ import { planUiNextActions } from "@/lib/ai/ui-action-planner";
 import { executeUiActionPlan } from "@/lib/browser/ui-action-executor";
 import { answerApplicationQuestion } from "@/lib/ai/question-answerer";
 import type { CandidateProfileResult, QuestionAnswerResult } from "@/lib/ai/schemas";
+import {
+  capturePageSignature,
+  createWatchdogRuntime,
+  isSamePageSignature,
+  logWatchdogEvent,
+} from "@/lib/browser/apply-watchdog";
 
 const SUBMIT_SUCCESS_MARKERS = [
   "application submitted",
@@ -73,7 +79,7 @@ type ProfileData = {
 };
 
 type ApplyResult = {
-  status: "submitted" | "pending_review" | "paused" | "failed" | "apply_unavailable";
+  status: "submitted" | "pending_review" | "paused" | "failed" | "apply_unavailable" | "stuck_no_progress" | "submit_not_found_timeout";
   message: string;
   applicationId?: string;
   error?: string;
@@ -294,9 +300,8 @@ export async function runAiFirstApplyRunner({
 }): Promise<ApplyResult> {
   const profile = buildCandidateProfile(candidateProfile);
   const questionMemory = await getQuestionMemory();
-  const startedAt = Date.now();
+  const watchdog = createWatchdogRuntime();
   let previousFingerprint: string | null = null;
-  let noProgressCount = 0;
   let aiRetryCount = 0;
   let applicationId: string | undefined;
 
@@ -307,104 +312,97 @@ export async function runAiFirstApplyRunner({
     aiUi: { history: [] },
   };
 
+  const createStuckResult = async (status: "apply_unavailable" | "stuck_no_progress" | "submit_not_found_timeout", message: string) => {
+    await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: status as never } });
+    return { status, message, applicationId } as ApplyResult;
+  };
+
   for (let step = 1; step <= MAX_STEPS_PER_JOB; step += 1) {
-    if (Date.now() - startedAt > MAX_JOB_DURATION_MS) {
+    watchdog.startStep({
+      key: `ai_first_step_${step}`,
+      label: "AI membaca form",
+      nextAutomaticAction: "AI membaca form lalu memilih aksi aman.",
+    });
+
+    await logWatchdogEvent({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      event: "application.step_timer_started",
+      message: `AI membaca form — ${watchdog.getStatus().stepElapsedSeconds}/${watchdog.getStatus().maxStepSeconds} detik.`,
+      metadata: { step, watchdog: watchdog.getStatus() },
+    });
+
+    if (watchdog.shouldTimeoutJob()) {
       const failed = await prisma.application.create({
         data: {
           campaignId: campaign.id,
           jobListingId: jobListing.id,
           status: "failed",
           submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
-          notes: "AI-first apply runner mencapai batas durasi per lowongan.",
+          notes: "Batas total 3 menit per lowongan tercapai.",
           answersJson: JSON.stringify(answersJson),
         },
       });
-
-      return {
-        status: "failed",
-        message: "AI-first apply runner mencapai batas durasi per lowongan.",
-        applicationId: failed.id,
-      };
+      return { status: "failed", message: "Batas total 3 menit per lowongan tercapai.", applicationId: failed.id };
     }
 
-    await writeAutomationLog({
-      campaignId: campaign.id,
-      jobListingId: jobListing.id,
-      event: step === 1 ? "ai_form.reading_page" : "ai_form.reading_page",
-      message: `AI membaca form pada langkah ${step}.`,
-      metadata: { step },
-    });
-
-    const intervention = await detectManualIntervention(page);
-    if (intervention.detected && intervention.reason) {
-      const paused = await createPausedApplication({
-        campaign,
-        jobListing,
-        note: "Verifikasi manual terdeteksi",
-        answersJson,
-      });
-      applicationId = paused.id;
-      return {
-        status: "paused",
-        message: "Verifikasi manual terdeteksi",
-        applicationId,
-      };
-    }
-
-    const success = await verifySubmitSuccess(page);
-    if (success.submitSuccessDetected) {
-      await writeAutomationLog({
-        campaignId: campaign.id,
-        jobListingId: jobListing.id,
-        event: "ai_form.submit_verified",
-        message: "Submit berhasil diverifikasi.",
-        metadata: { step, currentUrl: success.currentUrl },
-      });
-
-      const submitted = await markSubmitted({
-        campaign,
-        jobListing,
-        note: "Lamaran berhasil diverifikasi oleh AI-first apply runner.",
-        answersJson,
-      });
-
-      return {
-        status: "submitted",
-        message: "Lamaran berhasil dikirim.",
-        applicationId: submitted.id,
-      };
-    }
-
+    const beforeSignature = await capturePageSignature(page).catch(() => null);
     const snapshot = await captureVisibleDomSnapshot(page);
     const snapshotFingerprint = fingerprintSnapshot(snapshot);
     const snapshotSummary = snapshot.visibleTextSummary.slice(0, 500);
 
     if (previousFingerprint === snapshotFingerprint) {
-      noProgressCount += 1;
-    } else {
-      noProgressCount = 0;
+      watchdog.recordNoProgress(beforeSignature ?? watchdog.getLastSignature()!);
+      await logWatchdogEvent({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        level: "warn",
+        event: "application.no_progress_detected",
+        message: `Tidak ada perubahan setelah aksi ke-${watchdog.getStatus().noProgressCount}.`,
+        metadata: { step, watchdog: watchdog.getStatus() },
+      });
+    } else if (beforeSignature) {
+      watchdog.recordProgress(beforeSignature);
     }
     previousFingerprint = snapshotFingerprint;
 
-    if (noProgressCount >= MAX_NO_PROGRESS) {
-      const paused = await createPausedApplication({
-        campaign,
-        jobListing,
-        note: "AI tidak melihat progres pada halaman form.",
-        answersJson: {
-          ...answersJson,
-          aiUi: {
-            ...answersJson.aiUi,
-            lastSnapshotSummary: snapshotSummary,
-          },
-        },
+    if (watchdog.shouldTimeoutCurrentStep() || watchdog.shouldTriggerNoProgressFallback()) {
+      await logWatchdogEvent({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        level: "warn",
+        event: watchdog.shouldTriggerNoProgressFallback() ? "application.no_progress_limit_reached" : "application.step_timeout",
+        message: watchdog.shouldTriggerNoProgressFallback()
+          ? "Halaman tidak berubah setelah 2 aksi. AI fallback dicoba."
+          : "Batas 8 detik pada langkah ini tercapai. AI fallback dicoba.",
+        metadata: { step, watchdog: watchdog.getStatus(), snapshotSummary },
       });
+
+      if (!watchdog.canUseAiFallback()) {
+        return await createStuckResult("stuck_no_progress", "Halaman tidak berubah setelah 2 aksi. Lowongan dilewati.");
+      }
+
+      watchdog.markAiFallbackStarted();
+      await logWatchdogEvent({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "application.ai_fallback_once_started",
+        message: "AI fallback dicoba satu kali.",
+        metadata: { step, intent: "What is the next safe action?", watchdog: watchdog.getStatus() },
+      });
+    }
+
+    const intervention = await detectManualIntervention(page);
+    if (intervention.detected && intervention.reason) {
+      const paused = await createPausedApplication({ campaign, jobListing, note: "Verifikasi manual terdeteksi", answersJson });
       applicationId = paused.id;
-      return {
-        status: "paused",
-        message: "Sistem membutuhkan keputusan Anda.",
-        applicationId,
-      };
+      return { status: "paused", message: "Verifikasi manual terdeteksi", applicationId };
+    }
+
+    const success = await verifySubmitSuccess(page);
+    if (success.submitSuccessDetected) {
+      const submitted = await markSubmitted({ campaign, jobListing, note: "Lamaran berhasil diverifikasi oleh AI-first apply runner.", answersJson });
+      return { status: "submitted", message: "Lamaran berhasil dikirim.", applicationId: submitted.id };
     }
 
     const plan = await planUiNextActions({
@@ -438,7 +436,7 @@ export async function runAiFirstApplyRunner({
         mode,
         previousGoal: answersJson.aiUi?.lastGoal ?? null,
         previousReason: answersJson.aiUi?.lastReason ?? null,
-        repeatedFingerprintCount: noProgressCount,
+        repeatedFingerprintCount: watchdog.getStatus().noProgressCount,
         externalRedirect: !snapshot.currentUrl.includes("jobstreet") && !snapshot.currentUrl.includes("jobsdb"),
         wizardHistory: answersJson.aiUi?.history ?? [],
       },
@@ -454,172 +452,70 @@ export async function runAiFirstApplyRunner({
       history: [...(answersJson.aiUi?.history ?? []), { step, goal: plan.goal, reason: plan.userFacingReason }].slice(-12),
     };
 
-    await writeAutomationLog({
-      campaignId: campaign.id,
-      jobListingId: jobListing.id,
-      event: "ai_form.action_selected",
-      message: `AI memilih aksi ${plan.goal}.`,
-      metadata: {
-        step,
-        goal: plan.goal,
-        confidence: plan.confidence,
-        safeToExecute: plan.safeToExecute,
-        safeToSubmit: plan.safeToSubmit,
-      },
-    });
-
     if (plan.goal === "ask_user") {
-      const extractedQuestion = plan.userQuestion || "Pertanyaan tambahan ditemukan";
-      let suggestedAnswer = plan.suggestedAnswer;
-      let confidence: number | undefined;
-      let evidence: string[] | undefined;
-
-      try {
-        const maybeAnswer = await maybeAnswerQuestionFromMemoryOrAi({
-          question: extractedQuestion,
-          profile,
-          campaign,
-        });
-        suggestedAnswer = suggestedAnswer ?? maybeAnswer.answer;
-        confidence = maybeAnswer.confidence;
-        evidence = maybeAnswer.evidence;
-      } catch {
-        // ignore AI suggestion failure here
-      }
-
-      answersJson.pendingQuestions.push({
-        question: extractedQuestion,
-        reason: plan.reason || plan.userFacingReason || "Sistem membutuhkan keputusan Anda.",
-        suggestedAnswer,
-        confidence,
-        evidence,
-        answerOptions: plan.answerOptions,
-      });
-
-      await writeAutomationLog({
-        campaignId: campaign.id,
-        jobListingId: jobListing.id,
-        level: "warn",
-        event: "ai_form.question_needs_user",
-        message: "Sistem membutuhkan keputusan Anda.",
-        metadata: {
-          step,
-          question: extractedQuestion,
-          suggestedAnswer: suggestedAnswer ?? null,
-          answerOptions: plan.answerOptions ?? null,
-        },
-      });
-
-      const paused = await createPausedApplication({
-        campaign,
-        jobListing,
-        note: "Sistem membutuhkan keputusan Anda.",
-        answersJson,
-      });
+      const paused = await createPausedApplication({ campaign, jobListing, note: "Sistem membutuhkan keputusan Anda.", answersJson });
       applicationId = paused.id;
-      return {
-        status: "paused",
-        message: "Sistem membutuhkan keputusan Anda.",
-        applicationId,
-      };
+      return { status: "paused", message: "Sistem membutuhkan keputusan Anda.", applicationId };
     }
 
     if (plan.goal === "manual_intervention") {
-      const paused = await createPausedApplication({
-        campaign,
-        jobListing,
-        note: "Verifikasi manual terdeteksi",
-        answersJson,
-      });
+      const paused = await createPausedApplication({ campaign, jobListing, note: "Verifikasi manual terdeteksi", answersJson });
       applicationId = paused.id;
-      return {
-        status: "paused",
-        message: "Verifikasi manual terdeteksi",
-        applicationId,
-      };
+      return { status: "paused", message: "Verifikasi manual terdeteksi", applicationId };
     }
 
     if (plan.goal === "skip_job") {
-      await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "apply_unavailable" as never } });
-      return {
-        status: "apply_unavailable",
-        message: plan.userFacingReason || "Lowongan dilewati oleh AI.",
-      };
+      return await createStuckResult("apply_unavailable", plan.userFacingReason || "Lowongan dilewati oleh AI.");
     }
 
     if (plan.goal === "wait") {
-      await page.waitForTimeout(700);
-      continue;
+      return await createStuckResult("stuck_no_progress", "Halaman tidak berubah setelah 2 aksi. Lowongan dilewati.");
     }
 
     if (plan.goal === "final_submit" && mode === "review_each_application") {
-      const review = await createReviewApplication({
-        campaign,
-        jobListing,
-        note: "Submit final memerlukan review user.",
-        answersJson,
-      });
+      const review = await createReviewApplication({ campaign, jobListing, note: "Submit final memerlukan review user.", answersJson });
       applicationId = review.id;
-      return {
-        status: "pending_review",
-        message: "Submit final memerlukan review user.",
-        applicationId,
-      };
+      return { status: "pending_review", message: "Submit final memerlukan review user.", applicationId };
     }
 
     if (!plan.safeToExecute || plan.actions.length === 0) {
       aiRetryCount += 1;
       if (aiRetryCount > MAX_AI_RETRIES) {
-        const paused = await createPausedApplication({
-          campaign,
-          jobListing,
-          note: plan.userFacingReason || "AI tidak yakin dengan aksi berikutnya.",
-          answersJson,
+        await logWatchdogEvent({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          level: "warn",
+          event: "application.ai_fallback_once_failed",
+          message: "AI fallback gagal menghasilkan progres. Lowongan dilewati.",
+          metadata: { step, watchdog: watchdog.getStatus() },
         });
-        applicationId = paused.id;
-        return {
-          status: "paused",
-          message: "AI tidak yakin dengan aksi berikutnya.",
-          applicationId,
-        };
+        return await createStuckResult("apply_unavailable", "AI fallback gagal menghasilkan progres. Lowongan dilewati.");
       }
-      await page.waitForTimeout(800);
+      await page.waitForTimeout(300);
       continue;
     }
 
     await executeUiActionPlan(page, plan, snapshot);
     aiRetryCount = 0;
 
-    await writeAutomationLog({
-      campaignId: campaign.id,
-      jobListingId: jobListing.id,
-      event: plan.goal === "final_submit" ? "ai_form.auto_submit_clicked" : "ai_form.action_executed",
-      message: plan.goal === "final_submit" ? "AI mengklik submit otomatis yang aman." : "AI menjalankan aksi pada form.",
-      metadata: {
-        step,
-        goal: plan.goal,
-        targetElementId: plan.actions[0]?.elementId ?? null,
-      },
-    });
-
-    if (plan.goal === "answer_question") {
-      await writeAutomationLog({
-        campaignId: campaign.id,
-        jobListingId: jobListing.id,
-        event: "ai_form.yes_no_answered",
-        message: "AI memilih jawaban untuk pertanyaan pada form.",
-        metadata: { step },
-      });
-    }
-
-    if (plan.goal === "final_submit") {
-      await writeAutomationLog({
-        campaignId: campaign.id,
-        jobListingId: jobListing.id,
-        event: "ai_form.submit_ready",
-        message: "Submit final terdeteksi aman dan sedang diverifikasi.",
-        metadata: { step },
-      });
+    const afterSignature = await capturePageSignature(page).catch(() => null);
+    if (isSamePageSignature(beforeSignature, afterSignature)) {
+      if (afterSignature) {
+        watchdog.recordNoProgress(afterSignature);
+      }
+      if (watchdog.shouldTriggerNoProgressFallback()) {
+        await logWatchdogEvent({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          level: "warn",
+          event: "application.no_progress_limit_reached",
+          message: "Halaman tidak berubah setelah 2 aksi. Lowongan dilewati.",
+          metadata: { step, watchdog: watchdog.getStatus() },
+        });
+        return await createStuckResult("stuck_no_progress", "Halaman tidak berubah setelah 2 aksi. Lowongan dilewati.");
+      }
+    } else if (afterSignature) {
+      watchdog.recordProgress(afterSignature);
     }
   }
 
@@ -634,9 +530,5 @@ export async function runAiFirstApplyRunner({
     },
   });
 
-  return {
-    status: "failed",
-    message: "AI-first apply runner mencapai batas langkah maksimum.",
-    applicationId: failed.id,
-  };
+  return { status: "failed", message: "AI-first apply runner mencapai batas langkah maksimum.", applicationId: failed.id };
 }

@@ -178,7 +178,7 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
             setSubmitStatus("success");
           } else if (appData.status === "paused") {
             setSubmitResult(
-              data.message || "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
+              data.message || "Submit diklik tetapi status akhir belum terverifikasi.",
             );
             setSubmitStatus("paused");
           } else {
@@ -348,8 +348,8 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
             <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
               <p className="font-medium">⚠️ Perlu perhatian manual</p>
               <p className="mt-1">Lamaran ini memerlukan tindakan manual Anda sebelum dapat dilanjutkan.</p>
-              <p className="mt-1 text-amber-200">Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.</p>
-              <p className="mt-2 text-amber-100">Jika masih belum yakin, gunakan keputusan in-app: Coba Lagi, Scroll dan Cari Submit, Lewati Lowongan, atau Buka Browser.</p>
+              <p className="mt-1 text-amber-200">Submit diklik tetapi status akhir belum terverifikasi.</p>
+              <p className="mt-2 text-amber-100">Gunakan tindakan in-app yang tersedia untuk memutuskan langkah berikutnya.</p>
             </div>
           )}
 
@@ -491,7 +491,7 @@ export default function ApplicationReviewPage({ params }: { params: Promise<{ id
                   ? "Lamaran sudah berhasil dikirim otomatis dan diverifikasi oleh Auto Submit Aman."
                   : "Lamaran sudah berhasil dikirim."
                 : application.status === "paused"
-                  ? "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit. Jika masih belum yakin, gunakan keputusan in-app yang tersedia."
+                  ? "Submit diklik tetapi status akhir belum terverifikasi. Gunakan tindakan in-app yang tersedia."
                   : application.status === "failed"
                     ? "Lamaran gagal dikirim. Periksa screenshot dan log untuk detail."
                     : application.status === "skipped"

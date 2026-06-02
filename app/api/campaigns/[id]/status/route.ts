@@ -86,6 +86,21 @@ export async function GET(
 
   const latestAiLog = campaign.logs.find((log) => log.event.startsWith("ai_ui.")) ?? null;
   const latestAiMetadata = parseJson<Record<string, unknown> | null>(latestAiLog?.metadataJson, null);
+  const latestWatchdogLog = campaign.logs.find((log) => log.event.startsWith("application.") || log.event.startsWith("campaign.autopilot_continue_after_stuck")) ?? null;
+  const latestWatchdogMetadata = parseJson<Record<string, unknown> | null>(latestWatchdogLog?.metadataJson, null);
+  const watchdogState = (latestWatchdogMetadata?.watchdog ?? null) as Record<string, unknown> | null;
+  const nextRecommendedAction =
+    campaign.status === "paused" && runtimeCampaign.decisionStatus === "low_score"
+      ? "decision_required"
+      : campaign.status === "paused" && runtimeCampaign.decisionStatus === "question_required"
+        ? "question_required"
+        : campaign.status === "paused" && runtimeCampaign.decisionStatus === "review_required"
+          ? "review_required"
+          : campaign.status === "paused" && runtimeCampaign.decisionStatus === "submit_unverified"
+            ? "submit_unverified"
+            : campaign.appliedCount >= campaign.targetApplyCount || isCampaignTerminal(campaign.status)
+              ? "completed"
+              : "safe_continue";
 
   return NextResponse.json({
     campaign,
@@ -99,6 +114,21 @@ export async function GET(
       snapshotSummary: latestAiMetadata?.snapshotSummary ?? null,
       pausedReason: campaign.status === "paused" ? (runtimeCampaign.currentQuestion ?? runtimeCampaign.decisionStatus ?? null) : null,
     },
+    watchdog: {
+      stepLabel: typeof watchdogState?.stepLabel === "string" ? watchdogState.stepLabel : null,
+      stepElapsedSeconds: typeof watchdogState?.stepElapsedSeconds === "number" ? watchdogState.stepElapsedSeconds : 0,
+      maxStepSeconds: typeof watchdogState?.maxStepSeconds === "number" ? watchdogState.maxStepSeconds : 8,
+      noProgressCount: typeof watchdogState?.noProgressCount === "number" ? watchdogState.noProgressCount : 0,
+      aiFallbackAttempts: typeof watchdogState?.aiFallbackAttempts === "number" ? watchdogState.aiFallbackAttempts : 0,
+      nextAutomaticAction:
+        typeof watchdogState?.nextAutomaticAction === "string"
+          ? watchdogState.nextAutomaticAction
+          : nextRecommendedAction === "safe_continue"
+            ? "Autopilot lanjut ke lowongan berikutnya."
+            : null,
+      lastEvent: latestWatchdogLog?.event ?? null,
+      lastMessage: latestWatchdogLog?.message ?? null,
+    },
     lastDecisionRequired: parseJson(runtimeCampaign.decisionPayloadJson, null),
     latestLogs: campaign.logs.map((log) => ({
       id: log.id,
@@ -110,15 +140,6 @@ export async function GET(
       jobTitle: log.jobListing?.title ?? null,
     })),
     canContinue: canContinueAutopilot(campaign.status) || canStartAutopilot(campaign.status),
-    nextRecommendedAction:
-      campaign.status === "paused" && runtimeCampaign.decisionStatus === "low_score"
-        ? "decision_required"
-        : campaign.status === "paused" && runtimeCampaign.decisionStatus === "question_required"
-          ? "question_required"
-          : campaign.status === "paused" && runtimeCampaign.decisionStatus === "review_required"
-            ? "review_required"
-            : campaign.appliedCount >= campaign.targetApplyCount || isCampaignTerminal(campaign.status)
-              ? "completed"
-              : "safe_continue",
+    nextRecommendedAction,
   });
 }

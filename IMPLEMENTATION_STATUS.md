@@ -59,14 +59,14 @@ Project sekarang sudah berjalan sebagai fondasi MVP lokal yang jujur dengan Camp
 | Extract Info Lowongan              | Selesai | Agent membuka halaman detail setiap lowongan dan mengekstrak title, company, location, salary, workType, description. Mendukung multiple selector strategies dengan fallback. | `lib/browser/jobstreet-agent.ts` |
 | Simpan JobListing                  | Selesai | Setiap lowongan disimpan ke Prisma `JobListing` dengan deduplication berdasarkan URL (`@unique`). Lowongan duplikat diupdate, bukan dibuat ulang. Relasi `campaignId` ditambahkan. | `lib/browser/jobstreet-agent.ts`, `prisma/schema.prisma` |
 | AI Job Scoring                     | Selesai | Fungsi scoring AI sudah terintegrasi ke flow campaign automation. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold. | `lib/ai/job-scorer.ts`, `lib/browser/jobstreet-agent.ts` |
-| Assisted Form Filling              | Partial | Flow apply Jobstreet kini memakai wizard stateful sebagai jalur utama: deteksi state halaman, isi field known, lanjut satu aksi aman per iterasi, pantau watchdog no-progress, lalu fallback ke AI UI Agent hanya bila wizard deterministic stuck atau layout tidak dikenal. AI tetap hanya boleh memilih elemen visible dari snapshot Playwright. Masih perlu verifikasi manual terhadap slide Jobstreet nyata. | `lib/browser/form-filler.ts`, `lib/browser/dom-snapshot.ts`, `lib/ai/ui-action-planner.ts`, `lib/browser/ui-action-executor.ts`, `lib/browser/ai-apply-wizard.ts`, `lib/browser/apply-wizard-state.ts`, `lib/browser/jobstreet-apply-agent.ts` |
+| Assisted Form Filling              | Partial | Flow apply Jobstreet kini memakai watchdog ketat: step timeout 8 detik, no-progress limit 2 aksi, AI fallback hanya 1 kali, scroll scan maksimal 2 pass, dan hard timeout 3 menit per lowongan. Jika slide/form pertama tidak berubah, sistem mengambil screenshot + DOM snapshot, meminta AI satu kali dengan intent aman, lalu wajib mengambil keputusan bounded: lanjut bila ada progres, atau tandai `apply_unavailable` / `stuck_no_progress` dan lanjut ke lowongan berikutnya bila aman. AI tetap hanya boleh memilih elemen visible dari snapshot Playwright. Masih perlu verifikasi manual terhadap slide Jobstreet nyata. | `lib/browser/form-filler.ts`, `lib/browser/dom-snapshot.ts`, `lib/ai/ui-action-planner.ts`, `lib/browser/ui-action-executor.ts`, `lib/browser/ai-apply-wizard.ts`, `lib/browser/apply-wizard-state.ts`, `lib/browser/jobstreet-apply-agent.ts`, `lib/browser/apply-watchdog.ts` |
 | Modal Pertanyaan Tambahan          | Partial | Question handling lama tetap ada. AI wizard baru juga bisa pause saat butuh jawaban user, menyimpan pending question + suggested answer/evidence, dan menyiapkan payload agar pertanyaan serupa bisa dipakai ulang. UI popup detail tombol khusus belum selesai dihubungkan penuh. | `lib/browser/ai-apply-wizard.ts`, `lib/ai/question-answerer.ts`, `app/applications/[id]/review/page.tsx` |
 | Memori Pertanyaan                  | Partial | `QuestionMemory` lama tetap dipakai. Fondasi `FormInteractionMemory` sudah ditambahkan ke schema untuk menyimpan pola field/button hasil identifikasi AI pada form serupa, tetapi migrasi/generate Prisma dan penyimpanan runtime suksesnya belum selesai diverifikasi. | `app/api/questions/answer/route.ts`, `prisma/schema.prisma`, `lib/browser/ai-apply-wizard.ts` |
 | Modal Captcha/Verifikasi           | Selesai | Guardrail tetap keras: captcha, OTP, login/password, security verification, permission dialog, dan elemen sensitif diblokir. AI tidak bisa override blok ini dan browser tetap visible. | `lib/browser/page-detector.ts`, `lib/security/safe-automation.ts`, `lib/browser/ui-action-executor.ts`, `lib/ai/ui-action-planner.ts` |
 | Review Lamaran Sebelum Submit      | Partial | Mode `review_each_application` tetap pause di `pending_review`, tetapi mode `auto_submit_safe_only` tidak lagi turun ke review saat `final_submit_ready`. Review page lama tetap ada untuk kasus manual/external/question-required. | `app/applications/[id]/review/page.tsx`, `app/api/campaigns/[id]/status/route.ts`, `lib/browser/ai-apply-wizard.ts`, `lib/browser/jobstreet-apply-agent.ts` |
-| Submit Lamaran                     | Partial | Submit akhir kini digate oleh state `final_submit_ready`, verifikasi field wajib, confidence kandidat tombol submit, screenshot, marker sukses pasca-klik, dan mode kampanye. Untuk `auto_submit_safe_only`, submit final diklik otomatis di page Playwright yang sama; `appliedCount` hanya naik setelah verifikasi sukses. Jika submit tidak bisa diverifikasi, status pause dengan warning pemeriksaan browser. Masih perlu uji manual Jobstreet nyata. | `lib/browser/jobstreet-apply-agent.ts`, `lib/browser/ai-apply-wizard.ts`, `lib/browser/apply-wizard-state.ts`, `lib/browser/ui-action-executor.ts`, `app/api/applications/[id]/submit/route.ts` |
+| Submit Lamaran                     | Partial | Submit akhir kini strictly bounded. Resolver submit final dibatasi 8 detik: scan viewport, scroll ke bawah, scan kandidat tombol, minta planner AI final submit satu kali, lalu berhenti dengan status `submit_not_found_timeout` bila tidak ada kandidat high-confidence. Pesan normal-flow browser-check yang ambigu dihapus; user kini mendapat keputusan in-app yang jelas seperti `Coba Lagi`, `Lewati Lowongan`, `Anggap Sudah Terkirim`, dan opsional `Buka Browser`. `appliedCount` hanya naik setelah verifikasi sukses; submit yang sudah diklik tetapi belum terverifikasi tetap `paused`, bukan false success. Masih perlu uji manual Jobstreet nyata. | `lib/browser/jobstreet-apply-agent.ts`, `lib/browser/final-submit-resolver.ts`, `lib/browser/ai-apply-wizard.ts`, `lib/browser/apply-wizard-state.ts`, `lib/browser/ui-action-executor.ts`, `app/api/applications/[id]/submit/route.ts` |
 | Skip Lamaran                       | Selesai | Tombol "Lewati Lamaran" di halaman review mengubah status ke `skipped` dan mengembalikan job ke `shortlisted`. | `app/applications/[id]/review/page.tsx`, `app/api/applications/[id]/skip/route.ts` |
-| Campaign Loop / Autopilot v2       | Partial | Autopilot v2 tetap menjadi orchestrator utama. Apply flow kini memprioritaskan wizard stateful dengan watchdog bounded, lalu memanggil AI UI Agent hanya sebagai fallback saat tidak ada progres atau state unknown. Kampanye berstatus `stopped` kini bisa dijalankan ulang lewat tombol `Jalankan Kampanye Autopilot`; restart hanya membersihkan state runtime transien, tidak menghapus submit/appliedCount/question memory/aturan keputusan, dan job terminal tetap tidak diambil ulang otomatis. Propagasi UI status lanjutannya masih perlu verifikasi manual end-to-end. | `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/autopilot/start/route.ts`, `app/api/campaigns/[id]/autopilot/continue/route.ts`, `app/api/campaigns/[id]/autopilot/decision/route.ts`, `app/api/campaigns/[id]/status/route.ts`, `components/campaign-actions.tsx`, `lib/browser/jobstreet-apply-agent.ts`, `lib/browser/apply-wizard-state.ts`, `lib/campaign/campaign-state.ts` |
+| Campaign Loop / Autopilot v2       | Partial | Autopilot v2 kini wajib continue setelah job-level stuck yang bounded. Jika satu lowongan berakhir sebagai `apply_unavailable`, `stuck_no_progress`, atau `submit_not_found_timeout`, sistem menulis log terstruktur, menandai lowongan terminal untuk kampanye saat ini, lalu otomatis lanjut ke lowongan berikutnya. Kampanye hanya pause untuk captcha, OTP, login/security verification, pertanyaan wajib yang tidak dikenal, submit sudah diklik tetapi belum terverifikasi, atau terlalu banyak stuck berturut-turut. Limit stuck berturut-turut kini 5 lowongan dengan pesan pause eksplisit. UI status kampanye juga mulai menampilkan countdown step, no-progress count, AI fallback count, dan next automatic action. Propagasi UI status lanjutannya masih perlu verifikasi manual end-to-end. | `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/autopilot/start/route.ts`, `app/api/campaigns/[id]/autopilot/continue/route.ts`, `app/api/campaigns/[id]/autopilot/decision/route.ts`, `app/api/campaigns/[id]/status/route.ts`, `components/campaign-actions.tsx`, `lib/browser/jobstreet-apply-agent.ts`, `lib/browser/apply-wizard-state.ts`, `lib/campaign/campaign-state.ts`, `lib/browser/apply-watchdog.ts` |
 | Apply Calibration / Dry Run        | Selesai (Perlu Verifikasi Manual) | One-time dry run apply untuk mendeteksi flow type, platform, form fields, buttons, questions, dan submit candidates tanpa melakukan submit. Mendukung deteksi internal Jobstreet, external redirect, email apply, WhatsApp apply. Manual intervention (login/captcha/OTP) menghentikan flow dan membiarkan browser terbuka. | `lib/browser/jobstreet-apply-calibrator.ts`, `app/api/jobs/[id]/apply/calibrate/route.ts`, `app/api/jobs/[id]/calibration/route.ts`, `app/jobs/[id]/calibration/page.tsx` |
 | Log Aktivitas                      | Selesai | Dashboard dan halaman `/logs` kini membaca `AutomationLog` nyata dari database. Log search Jobstreet, assisted apply, dan kalibrasi lengkap dengan semua event. | `lib/logging/automation-log.ts`, `prisma/schema.prisma`, `app/logs/page.tsx`, `app/dashboard/page.tsx` |
 | Pause/Resume/Stop Campaign         | Partial | API route status update dan log nyata sudah ada, tetapi resume belum melanjutkan automation session sesungguhnya. Kontrol kampanye di halaman detail kini terintegrasi dengan campaign loop. | `app/api/campaigns/[id]/pause/route.ts`, `app/api/campaigns/[id]/resume/route.ts`, `app/api/campaigns/[id]/stop/route.ts`, `components/campaign-actions.tsx` |
@@ -254,15 +254,15 @@ Jelaskan status browser automation:
 * Save to DB: Sudah diimplementasikan dengan deduplication berdasarkan URL (`@unique`).
 * AI job scoring: Sudah diimplementasikan. Skor rendah tidak lagi memblokir tombol lamar; perilaku ditentukan oleh `lowScoreMode`.
 * Form automation default: Default kampanye baru sekarang `formAutomationMode = ai_first` dan `automationMode = auto_submit_safe_only`.
-* AI-first apply runner: Jalur baru [`runAiFirstApplyRunner()`](lib/browser/ai-first-apply-runner.ts:1) sudah dibuat sebagai runner AI-first bounded dengan `maxStepsPerJob = 30`, `maxJobDurationMs = 5 menit`, `maxNoProgress = 3`, dan `maxAiRetries = 2`.
+* AI-first apply runner: Jalur baru [`runAiFirstApplyRunner()`](lib/browser/ai-first-apply-runner.ts:1) kini memakai watchdog ketat dengan default `maxSameStepDurationMs = 8000`, `maxSubmitResolverDurationMs = 8000`, `maxNoProgressActions = 2`, `maxAiFallbackAttempts = 1`, `maxScrollScanAttempts = 2`, dan `maxTotalJobDurationMs = 180000`. Semua limit mendukung override ENV `APPLY_MAX_*`.
 * AI planner: Planner menerima visible DOM snapshot, profil kandidat, kampanye, lowongan, `QuestionMemory`, dan wizard history. Output wajib JSON-only dan hanya boleh memakai `elementId` yang benar-benar terlihat.
 * Question detection: Pertanyaan normal kini diarahkan ke keputusan in-app, bukan instruksi umum untuk memeriksa browser.
 * Yes/No handling: Bila jawaban diketahui dari CV/default/memory, AI dapat menjawab. Bila tidak yakin, status harus pause ke keputusan user di halaman kampanye.
 * Captcha/manual intervention pause: Tetap ada dan hanya untuk kasus keamanan/manual yang sah.
 * Calibration in Autopilot: Dihapus dari jalur utama Autopilot. Kalibrasi tetap dipertahankan sebagai tool manual/debug di [`/jobs/[id]/calibration`](app/jobs/[id]/calibration/page.tsx).
-* Final submit: Untuk `auto_submit_safe_only`, submit final diarahkan untuk diklik otomatis di page Playwright yang sama bila safety gate lolos.
-* Submit verification: Status `submitted` hanya boleh di-set setelah marker sukses terverifikasi. Bila belum terverifikasi, kampanye pause ke status `submit_unverified`.
-* Campaign Loop / Autopilot v2: Sedang digeser dari wizard/calibration-first menjadi AI-first campaign loop. Target status per langkah sekarang mencakup `submitted_continue`, `skipped_continue`, `decision_required`, `question_required`, `manual_intervention_required`, `submit_unverified`, `completed`, dan `error`.
+* Final submit: Untuk `auto_submit_safe_only`, submit final diarahkan untuk diklik otomatis di page Playwright yang sama bila safety gate lolos, tetapi pencarian tombol submit sekarang dibatasi maksimal 8 detik dan tidak boleh loop tanpa akhir.
+* Submit verification: Status `submitted` hanya boleh di-set setelah marker sukses terverifikasi. Bila belum terverifikasi, kampanye pause ke status `submit_unverified`; bila tombol submit tidak ditemukan dalam 8 detik, hasilnya `submit_not_found_timeout` dengan keputusan in-app yang eksplisit.
+* Campaign Loop / Autopilot v2: Jalur apply kini menerapkan bounded decisions per langkah. Target status per langkah sekarang juga mencakup `stuck_no_progress` dan `submit_not_found_timeout`, sementara log baru menandai `application.step_timer_started`, `application.step_timeout`, `application.no_progress_detected`, `application.no_progress_limit_reached`, `application.ai_fallback_once_started`, `application.ai_fallback_once_failed`, `application.submit_resolver_timeout`, `application.job_stuck_skipped`, dan `campaign.autopilot_continue_after_stuck`.
 * Screenshot on submit: Sudah diimplementasikan untuk alur submit aman dan kasus error/intervensi.
 * Apply calibration dry run: Tetap tersedia sebagai tool developer/debugging, bukan blocker jalur Autopilot.
 * Resume after intervention: Belum ada flow resume browser session yang benar-benar melanjutkan konteks halaman yang sama.
@@ -379,7 +379,7 @@ campaign.applied_count_incremented
 
 Tuliskan hasil testing manual terakhir:
 
-Tanggal: 2026-06-02 (update dokumentasi setelah refactor AI-first, sebelum verifikasi final)
+Tanggal: 2026-06-02 (update dokumentasi setelah strict watchdog bounded-flow fix, sebelum verifikasi final)
 Command yang dijalankan:
 
 ```bash
@@ -394,12 +394,12 @@ Hasil target verifikasi manual:
 * [ ] Klik `Jalankan Kampanye Autopilot` sekali dari halaman kampanye.
 * [ ] Konfirmasi sistem mencari Jobstreet lalu langsung memproses lowongan berikutnya satu per satu.
 * [ ] Konfirmasi sistem membuka lowongan dan melamar tanpa kalibrasi manual di jalur utama.
-* [ ] Konfirmasi AI membaca visible form dan mengisi field dari CV/profile/default kampanye.
-* [ ] Konfirmasi pertanyaan Yes/No dijawab otomatis bila diketahui, atau muncul sebagai keputusan in-app bila tidak yakin.
-* [ ] Konfirmasi user bisa memilih Accept/Reject/Yes/No/Edit Answer/Skip Job dari halaman kampanye.
-* [ ] Konfirmasi final submit diklik otomatis bila aman, termasuk bila tombol baru muncul setelah scroll/read ulang halaman, dan status `submitted` hanya muncul setelah verifikasi sukses.
-* [ ] Konfirmasi Autopilot lanjut ke lowongan berikutnya otomatis.
-* [ ] Konfirmasi tidak ada bahasa normal-flow seperti "cek browser" atau "periksa browser" selain kasus captcha/login/OTP/security.
+* [ ] Konfirmasi slide/form pertama tidak pernah diam lebih dari 8 detik; UI menampilkan countdown seperti `AI membaca form — 4/8 detik`.
+* [ ] Konfirmasi no-progress count bertambah saat DOM/form/URL tidak berubah dan AI fallback dicoba tepat satu kali.
+* [ ] Konfirmasi jika tetap tidak ada progres setelah fallback, lowongan ditandai `apply_unavailable` atau `stuck_no_progress`, lalu autopilot lanjut ke lowongan berikutnya bila aman.
+* [ ] Konfirmasi final submit resolver berhenti maksimal 8 detik bila tombol submit tidak ditemukan dan menampilkan keputusan in-app `Coba Lagi`, `Lewati Lowongan`, `Anggap Sudah Terkirim`, dan opsional `Buka Browser`.
+* [ ] Konfirmasi status `submitted` hanya muncul setelah verifikasi sukses, dan tidak ada false success setelah submit ambigu.
+* [ ] Konfirmasi tidak ada bahasa normal-flow seperti `cek browser`, `periksa browser`, atau `sistem akan mencoba membaca ulang halaman` selain kasus captcha/login/OTP/security.
 
 Catatan:
 * Kalibrasi tidak lagi menjadi blocker jalur utama Autopilot.
@@ -411,12 +411,12 @@ Catatan:
 | Tanggal | Error | Penyebab Dugaan | Status | File Terkait |
 | ------- | ----- | --------------- | ------ | ------------ |
 | 2026-06-02 | Resume campaign belum melanjutkan browser automation yang sebelumnya terhenti | Route resume masih hanya mengubah status dan menulis log | Open | `app/api/campaigns/[id]/resume/route.ts` |
-| 2026-06-02 | AI-first Autopilot belum diverifikasi end-to-end terhadap Jobstreet nyata | Refactor baru selesai di level wiring, belum diuji pada flow real browser | Open | `lib/browser/ai-first-apply-runner.ts`, `lib/campaign/autopilot-runner.ts`, `components/campaign-actions.tsx` |
+| 2026-06-02 | Strict watchdog bounded-flow belum diverifikasi end-to-end terhadap Jobstreet nyata | Wiring timeout/no-progress/UI status sudah ditambahkan, tetapi belum diuji pada flow real browser | Open | `lib/browser/apply-watchdog.ts`, `lib/browser/ai-first-apply-runner.ts`, `lib/campaign/autopilot-runner.ts`, `components/campaign-actions.tsx` |
 | 2026-06-02 | Mapping keputusan in-app ke jawaban final backend belum sepenuhnya matang | UI sudah diarahkan ke Accept/Reject/Yes/No, tetapi penyimpanan jawaban/edit answer/remember masih perlu pendalaman | Open | `components/campaign-actions.tsx`, `app/api/campaigns/[id]/autopilot/decision/route.ts` |
 | 2026-06-02 | Selector Jobstreet bisa rusak jika UI berubah | Jobstreet UI dapat berubah sewaktu-waktu | Open/Risk | `lib/browser/jobstreet-agent.ts` |
 | 2026-06-02 | Browser tetap terbuka saat manual intervention | Ini sesuai kebijakan keamanan, tetapi resume session sesudah intervensi belum penuh | Open/Limitation | `lib/browser/jobstreet-agent.ts` |
 | 2026-06-02 | External redirect flow belum selesai untuk submit akhir | Default arah produk adalah pause keputusan in-app untuk website eksternal | Open/Limitation | `lib/browser/ai-first-apply-runner.ts`, `lib/browser/jobstreet-apply-calibrator.ts` |
-| 2026-06-02 | Submit flow belum diverifikasi end-to-end terhadap Jobstreet nyata | Resolver submit final full-page sudah ditambahkan, tetapi masih perlu testing manual dengan browser visible pada halaman Jobstreet asli | Open | `lib/browser/final-submit-resolver.ts`, `lib/browser/ai-first-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts` |
+| 2026-06-02 | Submit flow bounded belum diverifikasi end-to-end terhadap Jobstreet nyata | Resolver submit final 8 detik sudah ditambahkan, tetapi masih perlu testing manual dengan browser visible pada halaman Jobstreet asli | Open | `lib/browser/final-submit-resolver.ts`, `lib/browser/ai-first-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts` |
 
 ## 16. Risiko / Batasan
 
@@ -428,7 +428,7 @@ Tuliskan batasan saat ini:
 * Maksimal 10-20 lowongan diperiksa per run.
 * Hanya halaman pertama hasil pencarian yang diambil (tidak ada paginasi).
 * Jobstreet UI dapat berubah sewaktu-waktu sehingga selector Playwright bisa rusak.
-* Submit final harus melalui approval user, tetapi setelah approval sistem kini mencoba scroll, membaca ulang halaman, mencari tombol submit final, klik bila aman, lalu memverifikasi hasil sebelum lanjut.
+* Submit final harus melalui approval user atau jalur submit aman, tetapi pencarian tombol submit kini dibatasi 8 detik dan wajib berakhir dengan keputusan bounded, bukan loop tunggu tanpa akhir.
 * App hanya untuk penggunaan pribadi/lokal.
 * Selector extraction menggunakan multiple strategies untuk ketahanan, tetapi perubahan besar pada UI Jobstreet mungkin memerlukan update manual.
 * Form filling menggunakan defensive selector strategy, tetapi form yang sangat berbeda dari ekspektasi mungkin tidak terisi penuh.
@@ -458,11 +458,11 @@ Checklist fitur yang belum selesai:
 
 Tuliskan 3–5 langkah paling masuk akal berikutnya.
 
-1. Verifikasi manual end-to-end AI-first campaign loop pada Jobstreet nyata dari satu klik `Jalankan Kampanye Autopilot` sampai lanjut ke lowongan berikutnya.
-2. Matangkan keputusan in-app agar Accept/Reject/Yes/No/Edit Answer benar-benar tersimpan, bisa diingat per kampanye, dan melanjutkan loop otomatis.
-3. Matangkan status `submit_unverified` dan keputusan `Accept as Submitted` / `Retry Verification` / `Skip Job` / `Open Browser`.
+1. Verifikasi manual end-to-end strict watchdog pada Jobstreet nyata, terutama kasus stuck di slide pertama dan stuck di form pertama.
+2. Verifikasi manual submit resolver bounded 8 detik pada halaman final submit Jobstreet nyata dan pastikan tidak ada false success.
+3. Matangkan keputusan in-app agar Accept/Reject/Yes/No/Edit Answer benar-benar tersimpan, bisa diingat per kampanye, dan melanjutkan loop otomatis.
 4. Implementasikan mode pengisian dan keputusan in-app untuk external redirect sampai batas aman.
-5. Rapikan sisa copy/UI lama yang masih berorientasi review page atau browser-check di normal flow.
+5. Rapikan sisa wiring runtime agar status watchdog yang tampil di UI selalu sinkron dengan langkah browser terakhir.
 
 ## 19. Prompt Lanjutan yang Direkomendasikan
 

@@ -25,6 +25,12 @@ import {
 } from "@/lib/browser/apply-wizard-state";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import {
+  capturePageSignature,
+  createWatchdogRuntime,
+  isSamePageSignature,
+  logWatchdogEvent,
+} from "@/lib/browser/apply-watchdog";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -74,7 +80,7 @@ type ProfileData = {
 };
 
 type ApplyResult = {
-  status: "submitted" | "pending_review" | "paused" | "failed" | "apply_unavailable";
+  status: "submitted" | "pending_review" | "paused" | "failed" | "apply_unavailable" | "stuck_no_progress" | "submit_not_found_timeout";
   message: string;
   applicationId?: string;
   error?: string;
@@ -82,7 +88,7 @@ type ApplyResult = {
 };
 
 type SubmitResult = {
-  status: "submitted" | "failed" | "paused";
+  status: "submitted" | "failed" | "paused" | "submit_not_found_timeout";
   message: string;
   screenshotPath?: string;
   error?: string;
@@ -571,7 +577,7 @@ async function runJobstreetApplyWizard({
           campaignId: campaign.id,
           jobListingId: jobListing.id,
           event: "application.searching_apply_button",
-          message: "Mencari tombol lamar...",
+          message: "Mencari tombol lamar maksimal 8 detik.",
           metadata: { step: wizardStep, state: snapshot.state },
         });
 
@@ -876,29 +882,41 @@ async function runJobstreetApplyWizard({
             campaignId: campaign.id,
             jobListingId: jobListing.id,
             event: "application.final_submit_recheck",
-            message: "Sistem membaca ulang halaman dan mencari tombol submit final di seluruh halaman.",
+            message: "Mencari tombol submit maksimal 8 detik.",
             metadata: {
               applicationId: app.id,
               previousCandidate: activeFinalSubmitCandidate,
               resolvedCandidate,
               scannedCandidates: resolvedFinalSubmit.scannedCandidates,
               pageSummary: resolvedFinalSubmit.pageSummary,
+              resolverStatus: resolvedFinalSubmit.status ?? "resolved",
+              nextActions: resolvedFinalSubmit.nextActions ?? null,
             },
           });
 
           if (!resolvedCandidate || resolvedCandidate.confidence !== "high") {
+            await logWatchdogEvent({
+              campaignId: campaign.id,
+              jobListingId: jobListing.id,
+              level: "warn",
+              event: "application.submit_resolver_timeout",
+              message: "Submit tidak ditemukan dalam batas waktu. Pilih tindakan berikut.",
+              metadata: {
+                applicationId: app.id,
+                pageSummary: resolvedFinalSubmit.pageSummary,
+                nextActions: resolvedFinalSubmit.nextActions ?? null,
+              },
+            });
             await prisma.application.update({
               where: { id: app.id },
               data: {
                 status: "paused",
-                notes:
-                  "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit. Jika tetap belum yakin, gunakan keputusan in-app: Coba Lagi, Scroll dan Cari Submit, Lewati Lowongan, atau Buka Browser.",
+                notes: "Submit tidak ditemukan dalam batas waktu. Pilih tindakan berikut: Coba Lagi, Lewati Lowongan, Anggap Sudah Terkirim, atau Buka Browser.",
               },
             });
             return {
-              status: "paused",
-              message:
-                "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
+              status: "submit_not_found_timeout",
+              message: "Submit tidak ditemukan dalam batas waktu. Pilih tindakan berikut.",
               applicationId: app.id,
             };
           }
@@ -965,7 +983,7 @@ async function runJobstreetApplyWizard({
           await prisma.application.update({ where: { id: app.id }, data: { status: "paused", screenshotPath } });
           return {
             status: "paused",
-            message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
+            message: "Submit diklik tetapi masih perlu verifikasi manual.",
             applicationId: app.id,
             screenshotPath: screenshotPath ?? undefined,
           };
@@ -978,8 +996,7 @@ async function runJobstreetApplyWizard({
             data: {
               status: "paused",
               screenshotPath,
-              notes:
-                "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit. Jika tetap belum yakin, gunakan keputusan in-app: Coba Lagi, Scroll dan Cari Submit, Lewati Lowongan, atau Buka Browser.",
+              notes: "Submit diklik tetapi status akhir belum terverifikasi. Pilih tindakan berikut di aplikasi.",
             },
           });
           await writeAutomationLog({
@@ -987,12 +1004,12 @@ async function runJobstreetApplyWizard({
             jobListingId: jobListing.id,
             level: "warn",
             event: "application.submit_unverified",
-            message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
+            message: "Submit diklik tetapi status akhir belum terverifikasi.",
             metadata: { applicationId: app.id, screenshotPath },
           });
           return {
             status: "paused",
-            message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
+            message: "Submit diklik tetapi status akhir belum terverifikasi.",
             applicationId: app.id,
             screenshotPath: screenshotPath ?? undefined,
           };
@@ -1323,12 +1340,12 @@ export async function submitApplication({
     if (!submitClicked || !resolvedCandidate) {
       screenshotPath = await saveScreenshot(page, "submit_not_found", applicationId);
 
-      await writeAutomationLog({
+      await logWatchdogEvent({
         campaignId,
         jobListingId,
-        level: "error",
-        event: "application.submit_failed",
-        message: "Tombol submit final belum bisa dipastikan setelah membaca ulang halaman.",
+        level: "warn",
+        event: "application.submit_resolver_timeout",
+        message: "Submit tidak ditemukan dalam batas waktu. Pilih tindakan berikut.",
         metadata: {
           screenshotPath,
           currentUrl: page.url(),
@@ -1336,6 +1353,7 @@ export async function submitApplication({
           resolvedCandidate: resolvedFinalSubmit.candidate,
           scannedCandidates: resolvedFinalSubmit.scannedCandidates,
           pageSummary: resolvedFinalSubmit.pageSummary,
+          nextActions: resolvedFinalSubmit.nextActions ?? null,
         },
       });
 
@@ -1344,14 +1362,13 @@ export async function submitApplication({
         data: {
           status: "paused",
           screenshotPath,
-          notes:
-            "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit. Jika tetap belum yakin, gunakan keputusan in-app: Coba Lagi, Scroll dan Cari Submit, Lewati Lowongan, atau Buka Browser.",
+          notes: "Submit tidak ditemukan dalam batas waktu. Pilih tindakan berikut: Coba Lagi, Lewati Lowongan, Anggap Sudah Terkirim, atau Buka Browser.",
         },
       });
 
       return {
-        status: "paused",
-        message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
+        status: "submit_not_found_timeout",
+        message: "Submit tidak ditemukan dalam batas waktu. Pilih tindakan berikut.",
         screenshotPath: screenshotPath ?? undefined,
       };
     }
@@ -1430,7 +1447,7 @@ export async function submitApplication({
         jobListingId,
         level: "warn",
         event: "application.submit_unverified",
-        message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
+        message: "Submit diklik tetapi status akhir belum terverifikasi.",
         metadata: {
           applicationId,
           screenshotPath,
@@ -1445,14 +1462,13 @@ export async function submitApplication({
         data: {
           status: "paused",
           screenshotPath,
-          notes:
-            "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit. Jika tetap belum yakin, gunakan keputusan in-app: Coba Lagi, Scroll dan Cari Submit, Lewati Lowongan, atau Buka Browser.",
+          notes: "Submit diklik tetapi status akhir belum terverifikasi. Pilih tindakan berikut di aplikasi.",
         },
       });
 
       return {
         status: "paused",
-        message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
+        message: "Submit diklik tetapi status akhir belum terverifikasi.",
         screenshotPath: screenshotPath ?? undefined,
       };
     }

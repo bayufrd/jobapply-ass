@@ -1,4 +1,5 @@
 import type { Locator, Page } from "playwright";
+import { capturePageSignature, getApplyWatchdogConfig } from "@/lib/browser/apply-watchdog";
 
 const ALLOWED_SUBMIT_LABELS = [
   "submit application",
@@ -89,11 +90,17 @@ export type FinalSubmitCandidate = {
 export type FinalSubmitResolution = {
   candidate: FinalSubmitCandidate | null;
   scannedCandidates: FinalSubmitCandidate[];
+  status?: "resolved" | "submit_not_found_timeout";
+  nextActions?: ["Coba Lagi", "Lewati Lowongan", "Anggap Sudah Terkirim", "Buka Browser"];
+  userMessage?: string;
   pageSummary: {
     url: string;
     title: string;
     bodyPreview: string;
     scrollAttempts: number;
+    elapsedMs?: number;
+    beforeSignature?: Awaited<ReturnType<typeof capturePageSignature>> | null;
+    afterSignature?: Awaited<ReturnType<typeof capturePageSignature>> | null;
   };
 };
 
@@ -199,12 +206,12 @@ async function collectVisibleCandidates(page: Page, expectedLabels: string[], re
     .slice(0, 12);
 }
 
-async function progressiveScroll(page: Page) {
+async function progressiveScroll(page: Page, maxScrollScanAttempts: number) {
   let scrollAttempts = 0;
-  for (let step = 0; step < 5; step += 1) {
+  for (let step = 0; step < maxScrollScanAttempts; step += 1) {
     const before = await page.evaluate(() => window.scrollY).catch(() => 0);
-    await page.mouse.wheel(0, 900).catch(() => undefined);
-    await page.waitForTimeout(700);
+    await page.mouse.wheel(0, 1400).catch(() => undefined);
+    await page.waitForTimeout(500);
     const after = await page.evaluate(() => window.scrollY).catch(() => before);
     scrollAttempts += 1;
     if (after <= before) {
@@ -215,6 +222,8 @@ async function progressiveScroll(page: Page) {
 }
 
 export async function resolveFinalSubmitButton(page: Page, context: FinalSubmitResolverContext = {}): Promise<FinalSubmitResolution> {
+  const watchdog = getApplyWatchdogConfig();
+  const startedAt = Date.now();
   const expectedLabels = [...ALLOWED_SUBMIT_LABELS, ...(context.expectedLabels ?? []).map(normalizeText)].filter(Boolean);
   const reviewKeywords = [
     ...CONTAINER_HINTS,
@@ -223,29 +232,61 @@ export async function resolveFinalSubmitButton(page: Page, context: FinalSubmitR
     ...((context.reviewKeywords ?? []).map(normalizeText)),
   ].filter(Boolean);
 
-  await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
-  await page.waitForTimeout(1200);
+  await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => undefined);
+  const beforeSignature = await capturePageSignature(page).catch(() => null);
 
   let scannedCandidates = await collectVisibleCandidates(page, expectedLabels, reviewKeywords);
   let scrollAttempts = 0;
 
-  if (scannedCandidates.length === 0 || scannedCandidates[0]?.confidence !== "high") {
-    scrollAttempts = await progressiveScroll(page);
+  const withinTimeout = () => Date.now() - startedAt < watchdog.maxSubmitResolverDurationMs;
+
+  if ((scannedCandidates.length === 0 || scannedCandidates[0]?.confidence !== "high") && withinTimeout()) {
+    scrollAttempts = await progressiveScroll(page, watchdog.maxScrollScanAttempts);
     scannedCandidates = await collectVisibleCandidates(page, expectedLabels, reviewKeywords);
   }
 
+  if ((scannedCandidates.length === 0 || scannedCandidates[0]?.confidence !== "high") && withinTimeout()) {
+    await page.waitForTimeout(250);
+    scannedCandidates = await collectVisibleCandidates(page, expectedLabels, reviewKeywords);
+  }
+
+  const afterSignature = await capturePageSignature(page).catch(() => null);
   const candidate = scannedCandidates[0] ?? null;
   const title = await page.title().catch(() => "");
   const bodyPreview = normalizeText((await page.textContent("body").catch(() => ""))?.slice(0, 4000));
+  const elapsedMs = Date.now() - startedAt;
+
+  if (!candidate || candidate.confidence !== "high") {
+    return {
+      candidate,
+      scannedCandidates,
+      status: "submit_not_found_timeout",
+      nextActions: ["Coba Lagi", "Lewati Lowongan", "Anggap Sudah Terkirim", "Buka Browser"],
+      userMessage: "Submit tidak ditemukan dalam batas waktu. Pilih tindakan berikut.",
+      pageSummary: {
+        url: page.url(),
+        title,
+        bodyPreview,
+        scrollAttempts,
+        elapsedMs,
+        beforeSignature,
+        afterSignature,
+      },
+    };
+  }
 
   return {
     candidate,
     scannedCandidates,
+    status: "resolved",
     pageSummary: {
       url: page.url(),
       title,
       bodyPreview,
       scrollAttempts,
+      elapsedMs,
+      beforeSignature,
+      afterSignature,
     },
   };
 }
