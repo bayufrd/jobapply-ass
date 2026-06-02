@@ -29,6 +29,7 @@ enum JobListingStatus {
   applying
   submitted
   failed
+  apply_unavailable
 }
 
 enum ApplicationStatus {

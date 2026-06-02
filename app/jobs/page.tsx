@@ -136,6 +136,8 @@ function statusLabel(status: string) {
       return "Lamaran terkirim";
     case "failed":
       return "Gagal";
+    case "apply_unavailable":
+      return "Tombol lamar tidak ditemukan";
     default:
       return status;
   }
@@ -155,6 +157,8 @@ function statusColor(status: string) {
       return "text-green-300";
     case "failed":
       return "text-rose-300";
+    case "apply_unavailable":
+      return "text-amber-300";
     default:
       return "text-slate-300";
   }
@@ -308,6 +312,37 @@ export default function JobsPage() {
     }
   }
 
+  async function handleRetry(jobId: string) {
+    if (skippingJobId) return;
+
+    const confirmed = window.confirm("Tandai lowongan ini untuk dicoba lagi secara manual atau oleh autopilot setelah Anda melanjutkan?");
+    if (!confirmed) return;
+
+    setSkippingJobId(jobId);
+    try {
+      const response = await fetch(`/api/jobs/${jobId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "shortlisted",
+          reason: "Lowongan ditandai untuk dicoba lagi oleh user.",
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        alert(result.error || "Gagal menandai lowongan untuk dicoba lagi");
+        return;
+      }
+
+      await refreshJobs();
+    } catch {
+      alert("Terjadi kesalahan saat menandai lowongan untuk dicoba lagi");
+    } finally {
+      setSkippingJobId(null);
+    }
+  }
+
   async function handleSkip(jobId: string) {
     if (skippingJobId) return;
 
@@ -448,7 +483,7 @@ export default function JobsPage() {
                     )}
 
                     {/* Calibration status badge */}
-                    {(job.status === "shortlisted" || job.status === "skipped" || job.status === "discovered" || job.status === "applying" || job.status === "failed") && (
+                    {(job.status === "shortlisted" || job.status === "skipped" || job.status === "discovered" || job.status === "applying" || job.status === "failed" || job.status === "apply_unavailable") && (
                       <div className="flex items-center gap-2">
                         <span
                           className={`inline-block rounded-lg border px-2.5 py-1 text-[11px] font-medium ${calibrationStatusColor(calStatus, calFlowType)}`}
@@ -476,42 +511,71 @@ export default function JobsPage() {
                         )}
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={() => handleApply(job.id)}
-                          disabled={applyingJobId !== null}
-                          className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {applyingJobId === job.id ? "Memproses..." : "Lamar"}
-                        </button>
-                        <button
-                          onClick={() => handleCalibrate(job.id)}
-                          disabled={calibratingJobId !== null}
-                          className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {calibratingJobId === job.id ? "Mengkalibrasi..." : "Kalibrasi"}
-                        </button>
-                        <button
-                          onClick={() => handleApply(job.id, true)}
-                          disabled={applyingJobId !== null}
-                          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {applyingJobId === job.id ? "Memproses..." : "Paksa Lamar"}
-                        </button>
-                        <button
-                          onClick={() => handleSkip(job.id)}
-                          disabled={skippingJobId !== null}
-                          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {skippingJobId === job.id ? "Melewati..." : "Lewati"}
-                        </button>
-                        <a
-                          href={job.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/20"
-                        >
-                          Buka Jobstreet
-                        </a>
+                        {job.status === "apply_unavailable" || job.status === "failed" ? (
+                          <>
+                            <button
+                              onClick={() => handleRetry(job.id)}
+                              disabled={skippingJobId !== null}
+                              className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {skippingJobId === job.id ? "Memproses..." : "Coba Lagi"}
+                            </button>
+                            <a
+                              href={job.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/20"
+                            >
+                              Buka Jobstreet
+                            </a>
+                            <button
+                              onClick={() => handleSkip(job.id)}
+                              disabled={skippingJobId !== null}
+                              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {skippingJobId === job.id ? "Melewati..." : "Lewati"}
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleApply(job.id)}
+                              disabled={applyingJobId !== null}
+                              className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {applyingJobId === job.id ? "Memproses..." : "Lamar"}
+                            </button>
+                            <button
+                              onClick={() => handleCalibrate(job.id)}
+                              disabled={calibratingJobId !== null}
+                              className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {calibratingJobId === job.id ? "Mengkalibrasi..." : "Kalibrasi"}
+                            </button>
+                            <button
+                              onClick={() => handleApply(job.id, true)}
+                              disabled={applyingJobId !== null}
+                              className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {applyingJobId === job.id ? "Memproses..." : "Paksa Lamar"}
+                            </button>
+                            <button
+                              onClick={() => handleSkip(job.id)}
+                              disabled={skippingJobId !== null}
+                              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {skippingJobId === job.id ? "Melewati..." : "Lewati"}
+                            </button>
+                            <a
+                              href={job.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/20"
+                            >
+                              Buka Jobstreet
+                            </a>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

@@ -99,6 +99,10 @@ function stepLabel(step: string | null | undefined) {
       return "Menunggu review submit";
     case "external_redirect":
       return "Butuh tindakan manual pada lowongan eksternal";
+    case "apply_unavailable_skipped":
+      return "Lowongan dilewati karena tombol lamar tidak ditemukan";
+    case "too_many_unusable_jobs":
+      return "Terlalu banyak lowongan tidak bisa dilamar";
     case "manual_intervention":
       return "Butuh tindakan manual";
     case "target_reached":

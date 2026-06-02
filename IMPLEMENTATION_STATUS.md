@@ -66,7 +66,7 @@ Project sekarang sudah berjalan sebagai fondasi MVP lokal yang jujur dengan Camp
 | Review Lamaran Sebelum Submit      | Selesai | Halaman `/applications/[id]/review` menampilkan detail lengkap: info lowongan, skor AI, field yang diisi, pertanyaan dijawab, pertanyaan pending, dan catatan. Tombol "Setujui dan Kirim" aktif, tombol "Lewati Lamaran" aktif. | `app/applications/[id]/review/page.tsx`, `app/api/applications/[id]/route.ts` |
 | Submit Lamaran                     | Selesai (Perlu Verifikasi Manual) | Final submit diimplementasikan dengan approval user eksplisit. Browser visible membuka halaman, re-fill field, deteksi captcha/login/OTP/pertanyaan baru, screenshot sebelum submit, safe submit button matching. Berhenti otomatis jika intervensi terdeteksi. | `lib/browser/jobstreet-apply-agent.ts`, `app/api/applications/[id]/submit/route.ts` |
 | Skip Lamaran                       | Selesai | Tombol "Lewati Lamaran" di halaman review mengubah status ke `skipped` dan mengembalikan job ke `shortlisted`. | `app/applications/[id]/review/page.tsx`, `app/api/applications/[id]/skip/route.ts` |
-| Campaign Loop / Autopilot v2       | Selesai (Perlu Verifikasi Manual) | Loop satu-per-satu lama digantikan oleh Autopilot v2. Kampanye kini dapat mencari lowongan, scoring, meminta keputusan low score, mengingat rule per kampanye, kalibrasi internal, assisted apply, pause saat question/review/manual intervention, lalu lanjut lagi lewat endpoint bounded per request. | `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/autopilot/start/route.ts`, `app/api/campaigns/[id]/autopilot/continue/route.ts`, `app/api/campaigns/[id]/autopilot/decision/route.ts`, `app/api/campaigns/[id]/status/route.ts`, `components/campaign-actions.tsx` |
+| Campaign Loop / Autopilot v2       | Selesai (Perlu Verifikasi Manual) | Loop satu-per-satu lama digantikan oleh Autopilot v2. Kampanye kini dapat mencari lowongan, scoring, meminta keputusan low score, mengingat rule per kampanye, kalibrasi internal, assisted apply, pause saat question/review/manual intervention, lalu lanjut lagi lewat endpoint bounded per request. Lowongan tanpa tombol lamar kini ditandai `apply_unavailable`, dilewati pada level job, dan tidak dipilih ulang otomatis kecuali user menekan `Coba Lagi`. | `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/autopilot/start/route.ts`, `app/api/campaigns/[id]/autopilot/continue/route.ts`, `app/api/campaigns/[id]/autopilot/decision/route.ts`, `app/api/campaigns/[id]/status/route.ts`, `components/campaign-actions.tsx`, `app/jobs/page.tsx` |
 | Apply Calibration / Dry Run        | Selesai (Perlu Verifikasi Manual) | One-time dry run apply untuk mendeteksi flow type, platform, form fields, buttons, questions, dan submit candidates tanpa melakukan submit. Mendukung deteksi internal Jobstreet, external redirect, email apply, WhatsApp apply. Manual intervention (login/captcha/OTP) menghentikan flow dan membiarkan browser terbuka. | `lib/browser/jobstreet-apply-calibrator.ts`, `app/api/jobs/[id]/apply/calibrate/route.ts`, `app/api/jobs/[id]/calibration/route.ts`, `app/jobs/[id]/calibration/page.tsx` |
 | Log Aktivitas                      | Selesai | Dashboard dan halaman `/logs` kini membaca `AutomationLog` nyata dari database. Log search Jobstreet, assisted apply, dan kalibrasi lengkap dengan semua event. | `lib/logging/automation-log.ts`, `prisma/schema.prisma`, `app/logs/page.tsx`, `app/dashboard/page.tsx` |
 | Pause/Resume/Stop Campaign         | Partial | API route status update dan log nyata sudah ada, tetapi resume belum melanjutkan automation session sesungguhnya. Kontrol kampanye di halaman detail kini terintegrasi dengan campaign loop. | `app/api/campaigns/[id]/pause/route.ts`, `app/api/campaigns/[id]/resume/route.ts`, `app/api/campaigns/[id]/stop/route.ts`, `components/campaign-actions.tsx` |
@@ -262,6 +262,7 @@ Jelaskan status browser automation:
 * Pending questions: Pertanyaan dengan confidence rendah atau requiresHumanReview disimpan ke Application.answersJson sebagai pending questions. Status Application menjadi `paused`.
 * Captcha/manual intervention pause: Sudah ada deteksi dan hasil `requiresManualIntervention(...)`. Deteksi login page ditambahkan. Pesan Indonesia yang jelas dikembalikan.
 * Apply button detection: Sudah diimplementasikan dengan 4 strategy: text-based, data-automation, href matching, dan generic fallback.
+* Missing apply button handling: Jika tombol lamar tidak ditemukan saat kalibrasi autopilot, job ditandai `apply_unavailable`, timeline menulis event skip sekali, dan autopilot lanjut ke lowongan berikutnya tanpa pause campaign.
 * Submit button detection: Diperketat. Prioritas selector kini fokus ke area review/form final, label submit final yang diizinkan, dan menghindari tombol navigasi seperti `Continue`, `Next`, `Review`, `Back`, `Cancel`, atau `Save`.
 * Final submit: Diperketat. `submitApplication()` di `jobstreet-apply-agent.ts` hanya menganggap berhasil bila klik submit final terjadi dan sistem menemukan marker verifikasi seperti `Application submitted`, `Lamaran terkirim`, `Terima kasih telah melamar`, atau indikator sukses setara. Jika klik terjadi tetapi verifikasi gagal, status harus `paused`, bukan `submitted`.
 * Skip application: Sudah diimplementasikan. Mengubah status ke `skipped`, mengembalikan JobListing ke `shortlisted`.
@@ -389,45 +390,30 @@ campaign.applied_count_incremented
 
 Tuliskan hasil testing manual terakhir:
 
-Tanggal: 2026-06-02 (05:29 WIB)
+Tanggal: 2026-06-02 (update dokumentasi sebelum verifikasi final)
 Command yang dijalankan:
 
 ```bash
-npx prisma generate
-npx tsc --noEmit
 npm run lint
+npx tsc --noEmit
+npx prisma generate
 ```
 
 Hasil:
 
-* [x] Previous verification items all still pass
-* [x] `ApplicationCalibration` model added to Prisma schema with all required fields
-* [x] `npx prisma migrate dev --name add_application_calibration` succeeded
-* [x] `calibrateJobApply()` created at `lib/browser/jobstreet-apply-calibrator.ts`
-* [x] Apply button detection with 6 strategies (role button, role link, CSS text, href, data-automation, generic scan)
-* [x] Flow type classification (jobstreet_internal/external_redirect/email_apply/whatsapp_apply/unknown)
-* [x] Platform detection (jobstreet/google_form/greenhouse/lever/workday/company_site/unknown)
-* [x] Form snapshot: inputs, textareas, selects, buttons, questions, submit candidates
-* [x] Final submit risk assessment (low/medium/high)
-* [x] `POST /api/jobs/[id]/apply/calibrate/route.ts` created
-* [x] `GET /api/jobs/[id]/calibration/route.ts` created
-* [x] `/jobs/[id]/calibration` page created with Bahasa Indonesia labels
-* [x] `/jobs` page updated with "Kalibrasi Apply" button and calibration status badges
-* [x] All calibration log events added (started, job_opened, apply_button_found/clicked/not_found, flow_classified, form_snapshot_saved, external_redirect, manual_intervention, failed)
-* [x] `npx tsc --noEmit` passes (no TypeScript errors)
-* [x] `npm run lint` passes (no ESLint errors)
-* [x] `npx prisma generate` passes
-* [ ] Calibration flow not verified end-to-end against live Jobstreet (requires manual testing with visible browser)
-* [ ] External redirect flow not verified end-to-end
-* [ ] Manual intervention (login/captcha/OTP) handling not verified
+* [ ] Menunggu verifikasi final command pada task ini.
+* [x] Status `apply_unavailable` ditambahkan untuk lowongan yang tidak memiliki tombol lamar.
+* [x] `pickNextJob()` tidak lagi memasukkan job `failed` atau `apply_unavailable` ke seleksi normal autopilot.
+* [x] Autopilot memakai bounded skip loop dengan batas 5 lowongan unusable per run.
+* [x] Jika kalibrasi gagal karena tombol lamar tidak ditemukan, job ditandai `apply_unavailable` dan autopilot lanjut ke lowongan berikutnya.
+* [x] Timeline menambahkan event `campaign.autopilot_job_apply_unavailable` dengan pesan Bahasa Indonesia.
+* [x] Halaman `/jobs` menambahkan aksi manual `Coba Lagi`, `Buka Jobstreet`, dan `Lewati` untuk job `apply_unavailable` atau `failed`.
+* [ ] Belum diverifikasi manual terhadap Jobstreet nyata pada task ini.
 
 Catatan:
-* Calibration dry run tidak melakukan submit. Browser tetap terbuka untuk review user.
-* Jika login/captcha/OTP terdeteksi, flow berhenti dan pesan dikembalikan ke user.
-* External redirect hanya menyimpan metadata, tidak mencoba submit.
-* Safe submit button matching menggunakan allowed labels (Kirim, Submit, Apply, dll) dan blocked labels (Search, Simpan, Next, dll) untuk menghindari klik yang tidak aman.
-* Submit berhenti otomatis jika captcha, login, OTP, security check, atau pertanyaan baru terdeteksi.
-* Campaign loop menyiapkan satu lamaran per iterasi dan menunggu approval user sebelum submit.
+* Lowongan dengan status `apply_unavailable` tidak di-retry otomatis oleh autopilot.
+* Retry hanya terjadi jika user menekan `Coba Lagi` dari halaman `/jobs`.
+* Jika 5 lowongan berturut-turut tidak bisa dilamar, kampanye dijeda dengan langkah `too_many_unusable_jobs`.
 * Tidak ada bypass captcha, stealth automation, atau proxy rotation.
 
 ## 15. Error / Bug Saat Ini
@@ -436,6 +422,7 @@ Catatan:
 | ------- | ----- | --------------- | ------ | ------------ |
 | 2026-06-02 | `sourceType` does not exist in Prisma type for `CandidateProfileCreateInput` and `UploadedCVUpdateInput` | Schema Prisma belum memiliki field source tracking | Resolved | `prisma/schema.prisma`, `app/api/cv/analyze/route.ts` |
 | 2026-06-02 | Resume campaign belum melanjutkan browser automation yang sebelumnya terhenti | Route resume masih hanya mengubah status dan menulis log | Open | `app/api/campaigns/[id]/resume/route.ts` |
+| 2026-06-02 | Campaign Autopilot sempat memilih ulang job `failed` dan mengulang log `Tombol lamar tidak ditemukan` | `pickNextJob()` memasukkan status `failed` dan kegagalan tombol lamar diperlakukan sebagai blocker kampanye | Resolved | `lib/campaign/autopilot-runner.ts`, `components/campaign-actions.tsx`, `app/api/campaigns/[id]/status/route.ts`, `app/jobs/page.tsx` |
 | 2026-06-02 | Screenshot submit sudah ditautkan ke record aplikasi | Screenshot sebelum/submit/error disimpan dan ditautkan ke `Application.screenshotPath` | Resolved | `lib/browser/jobstreet-apply-agent.ts` |
 | 2026-06-02 | Menjalankan `npm run dev` kedua menghasilkan error server duplikat | Sudah ada dev server aktif di port `3000` | Resolved/Informational | `package.json` |
 | 2026-06-02 | Health check dan model discovery 9router belum diverifikasi end-to-end ke server eksternal pada task ini | Perubahan fokus pada wiring, route, dan UI; belum ada uji manual terhadap instance 9router target | Open | `app/api/settings/9router/health/route.ts`, `app/api/settings/9router/models/route.ts` |
@@ -487,9 +474,9 @@ Checklist fitur yang belum selesai:
 
 Tuliskan 3–5 langkah paling masuk akal berikutnya.
 
-1. Verifikasi manual end-to-end: jalankan apply calibration pada shortlisted job, pastikan flow type dan platform terdeteksi dengan benar, form fields tersnapshot, dan browser tidak melakukan submit.
-2. Verifikasi manual end-to-end: submit lamaran dengan browser visible terhadap Jobstreet nyata, pastikan captcha/login detection berfungsi.
-3. Verifikasi manual campaign loop: jalankan loop hingga target tercapai atau berhenti karena intervensi.
+1. Verifikasi manual end-to-end: paksa satu job tanpa tombol lamar, jalankan Autopilot, lalu pastikan status menjadi `apply_unavailable`, kampanye tidak pause, dan lowongan berikutnya diproses.
+2. Verifikasi manual end-to-end: jalankan apply calibration pada shortlisted job normal, pastikan flow type dan platform terdeteksi dengan benar, form fields tersnapshot, dan browser tidak melakukan submit.
+3. Verifikasi manual end-to-end: submit lamaran dengan browser visible terhadap Jobstreet nyata, pastikan captcha/login detection berfungsi.
 4. Implementasikan mode pengisian eksternal untuk flow external redirect (google_form, greenhouse, lever, workday, company_site).
 5. Implementasikan edit jawaban dari halaman review.
 
@@ -498,13 +485,13 @@ Tuliskan 3–5 langkah paling masuk akal berikutnya.
 Tuliskan prompt pendek untuk task berikutnya.
 
 ```txt
-Continue from IMPLEMENTATION_STATUS.md. Focus on verification and remaining features:
-1. Manual verification: test apply calibration dry run against live Jobstreet with visible browser. Pick 1 shortlisted job, click "Kalibrasi Apply", verify flow type/platform detection, form snapshot, and that no submit occurs.
-2. Manual verification: test submit flow against live Jobstreet with visible browser.
-3. Manual verification: test campaign loop until target reached or intervention.
-4. Implement external form filling mode for external redirect flows (google_form, greenhouse, lever, workday, company_site).
-5. Implement edit answer from review page.
-6. Add form multi-step/accordion handling for complex application forms.
+Continue from IMPLEMENTATION_STATUS.md. Focus on verifying the apply_unavailable autopilot fix and the remaining live browser flows:
+1. Manual verification: force or pick 1 job without an apply button, run Autopilot, and confirm the job becomes apply_unavailable, campaign does not pause, and autopilot continues to the next job.
+2. Manual verification: confirm repeated polling does not re-pick the same apply_unavailable/failed job automatically.
+3. Manual verification: test apply calibration dry run against live Jobstreet with visible browser on a normal job.
+4. Manual verification: test submit flow against live Jobstreet with visible browser.
+5. Implement external form filling mode for external redirect flows (google_form, greenhouse, lever, workday, company_site).
+6. Implement edit answer from review page.
 7. Keep UI in Bahasa Indonesia.
 8. Update IMPLEMENTATION_STATUS.md after finishing.
 9. Follow the mandatory GitHub workflow.

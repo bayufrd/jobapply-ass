@@ -14,6 +14,7 @@ function translateEvent(event: string) {
   const map: Record<string, string> = {
     "campaign.autopilot_search_started": "Autopilot mulai mencari lowongan baru.",
     "campaign.autopilot_auto_skip": "Lowongan dilewati otomatis oleh aturan kampanye.",
+    "campaign.autopilot_job_apply_unavailable": "Lowongan dilewati karena tombol lamar tidak ditemukan. Lanjut ke lowongan berikutnya.",
     "campaign.loop_next_job": "Autopilot memilih lowongan berikutnya.",
     "application.review_required": "Lamaran siap direview sebelum submit.",
     "application.question_needs_user_input": "Autopilot menunggu jawaban Anda untuk pertanyaan lowongan.",

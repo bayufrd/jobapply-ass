@@ -179,26 +179,43 @@ async function scoreJobIfNeeded(campaignId: string, jobId: string) {
   });
 }
 
-async function pickNextJob(campaignId: string) {
+async function pickNextJob(campaignId: string, options?: { allowSkipped?: boolean }) {
   const blockedJobIds = (
     await prisma.application.findMany({
       where: {
         campaignId,
-        status: { in: ["submitted", "pending_review", "paused"] },
+        status: { in: ["submitted", "pending_review", "paused", "failed"] },
       },
       select: { jobListingId: true },
     })
   ).map((item) => item.jobListingId);
 
+  const candidateStatuses: Array<"discovered" | "shortlisted" | "skipped"> = options?.allowSkipped
+    ? ["discovered", "shortlisted", "skipped"]
+    : ["discovered", "shortlisted"];
+
   return prisma.jobListing.findFirst({
     where: {
       campaignId,
-      status: { in: ["discovered", "shortlisted", "skipped", "failed"] },
+      status: { in: candidateStatuses },
       id: { notIn: blockedJobIds },
     },
     orderBy: [{ matchScore: "desc" }, { createdAt: "asc" }],
     include: { campaign: true },
   });
+}
+
+async function hasRecentApplyUnavailableLog(campaignId: string, jobId: string) {
+  const existingLog = await prisma.automationLog.findFirst({
+    where: {
+      campaignId,
+      jobListingId: jobId,
+      event: "campaign.autopilot_job_apply_unavailable",
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return Boolean(existingLog);
 }
 
 async function findMatchingLowScoreRule(campaignId: string, jobTitle: string) {
@@ -253,261 +270,307 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     };
   }
 
-  const nextJob = await pickNextJob(campaignId);
-  if (!nextJob || !nextJob.campaign) {
-    await setCampaignRuntimeState(campaignId, {
-      status: "paused",
-      currentStep: "no_jobs_remaining",
-      decisionStatus: null,
-      decisionPayloadJson: null,
-      currentJobId: null,
-    });
-    return {
-      status: "paused",
-      message: "Tidak ada lowongan lagi yang bisa diproses saat ini.",
-      campaignId,
-      currentStep: "no_jobs_remaining",
-    };
-  }
+  const maxSkippableFailuresPerRun = 5;
+  let consecutiveSkippableFailures = 0;
 
-  await setCampaignRuntimeState(campaignId, {
-    currentStep: "scoring_job",
-    currentJobId: nextJob.id,
-    currentJobTitle: nextJob.title,
-    currentJobCompany: nextJob.company,
-  });
-
-  const job = await scoreJobIfNeeded(campaignId, nextJob.id);
-  if (!job || !job.campaign) {
-    return { status: "error", message: "Lowongan gagal diproses.", campaignId };
-  }
-
-  const score = job.matchScore ?? 0;
-  const threshold = job.campaign.matchThreshold;
-
-  if (score < threshold) {
-    const rule = await findMatchingLowScoreRule(campaignId, job.title);
-    if (rule?.action === "auto_skip") {
-      await prisma.jobListing.update({ where: { id: job.id }, data: { status: "skipped" } });
-      await writeAutomationLog({
-        campaignId,
-        jobListingId: job.id,
-        event: "campaign.autopilot_auto_skip",
-        message: `Lowongan otomatis dilewati oleh aturan kampanye: ${job.title} di ${job.company}.`,
-      });
-      return runCampaignAutopilot(campaignId);
-    }
-
-    if (campaign.lowScoreMode === "auto_skip") {
-      await prisma.jobListing.update({ where: { id: job.id }, data: { status: "skipped" } });
-      return runCampaignAutopilot(campaignId);
-    }
-
-    const decisionPayload = {
-      type: "low_score",
-      campaignId,
-      jobId: job.id,
-      title: job.title,
-      company: job.company,
-      score,
-      threshold,
-      reason: job.matchReason ?? "AI menyarankan lowongan ini dilewati.",
-    };
-
-    await setCampaignRuntimeState(campaignId, {
-      status: "paused",
-      currentStep: "decision_required",
-      decisionStatus: "low_score",
-      decisionPayloadJson: JSON.stringify(decisionPayload),
-      currentJobId: job.id,
-      currentJobTitle: job.title,
-      currentJobCompany: job.company,
-    });
-
-    return {
-      status: "decision_required",
-      message: "AI menyarankan lowongan ini dilewati. Menunggu keputusan Anda.",
-      campaignId,
-      currentStep: "decision_required",
-      currentJobId: job.id,
-      decisionRequired: decisionPayload,
-    };
-  }
-
-  await setCampaignRuntimeState(campaignId, {
-    currentStep: "calibrating_apply_flow",
-    currentJobId: job.id,
-  });
-
-  const calibration = await prisma.applicationCalibration.findFirst({
-    where: { jobListingId: job.id },
-    orderBy: { createdAt: "desc" },
-  });
-  const shouldCalibrate = !calibration || calibration.status !== "calibrated";
-
-  if (shouldCalibrate) {
-    const calibrationResult = await calibrateJobApply({
-      jobListingId: job.id,
-      jobUrl: job.url,
-      campaignId,
-    });
-
-    if (calibrationResult.status === "manual_intervention") {
+  while (consecutiveSkippableFailures < maxSkippableFailuresPerRun) {
+    const nextJob = await pickNextJob(campaignId);
+    if (!nextJob || !nextJob.campaign) {
       await setCampaignRuntimeState(campaignId, {
         status: "paused",
-        currentStep: "manual_intervention",
-        decisionStatus: "manual_intervention",
+        currentStep: "no_jobs_remaining",
+        decisionStatus: null,
+        decisionPayloadJson: null,
+        currentJobId: null,
       });
       return {
         status: "paused",
-        message: calibrationResult.message,
+        message: "Tidak ada lowongan lagi yang bisa diproses saat ini.",
         campaignId,
-        currentStep: "manual_intervention",
-        currentJobId: job.id,
+        currentStep: "no_jobs_remaining",
       };
     }
 
-    if (calibrationResult.status === "failed") {
-      await prisma.jobListing.update({ where: { id: job.id }, data: { status: "failed" } });
-      return {
-        status: "paused",
-        message: calibrationResult.message,
-        campaignId,
-        currentStep: "calibration_failed",
-        currentJobId: job.id,
-      };
+    await setCampaignRuntimeState(campaignId, {
+      currentStep: "scoring_job",
+      currentJobId: nextJob.id,
+      currentJobTitle: nextJob.title,
+      currentJobCompany: nextJob.company,
+    });
+
+    const job = await scoreJobIfNeeded(campaignId, nextJob.id);
+    if (!job || !job.campaign) {
+      return { status: "error", message: "Lowongan gagal diproses.", campaignId };
     }
 
-    if (calibrationResult.flowType && calibrationResult.flowType !== "jobstreet_internal") {
-      await setCampaignRuntimeState(campaignId, {
-        status: "paused",
-        currentStep: "external_redirect",
-        decisionStatus: "external_redirect",
-        decisionPayloadJson: JSON.stringify({
-          type: "external_redirect",
+    const score = job.matchScore ?? 0;
+    const threshold = job.campaign.matchThreshold;
+
+    if (score < threshold) {
+      const rule = await findMatchingLowScoreRule(campaignId, job.title);
+      if (rule?.action === "auto_skip") {
+        await prisma.jobListing.update({ where: { id: job.id }, data: { status: "skipped" } });
+        await writeAutomationLog({
           campaignId,
-          jobId: job.id,
-          title: job.title,
-          company: job.company,
-          flowType: calibrationResult.flowType,
-          platform: calibrationResult.platform ?? "unknown",
-          reason: calibrationResult.message,
+          jobListingId: job.id,
+          event: "campaign.autopilot_auto_skip",
+          message: `Lowongan otomatis dilewati oleh aturan kampanye: ${job.title} di ${job.company}.`,
+        });
+        consecutiveSkippableFailures += 1;
+        continue;
+      }
+
+      if (campaign.lowScoreMode === "auto_skip") {
+        await prisma.jobListing.update({ where: { id: job.id }, data: { status: "skipped" } });
+        consecutiveSkippableFailures += 1;
+        continue;
+      }
+
+      const decisionPayload = {
+        type: "low_score",
+        campaignId,
+        jobId: job.id,
+        title: job.title,
+        company: job.company,
+        score,
+        threshold,
+        reason: job.matchReason ?? "AI menyarankan lowongan ini dilewati.",
+      };
+
+      await setCampaignRuntimeState(campaignId, {
+        status: "paused",
+        currentStep: "decision_required",
+        decisionStatus: "low_score",
+        decisionPayloadJson: JSON.stringify(decisionPayload),
+        currentJobId: job.id,
+        currentJobTitle: job.title,
+        currentJobCompany: job.company,
+      });
+
+      return {
+        status: "decision_required",
+        message: "AI menyarankan lowongan ini dilewati. Menunggu keputusan Anda.",
+        campaignId,
+        currentStep: "decision_required",
+        currentJobId: job.id,
+        decisionRequired: decisionPayload,
+      };
+    }
+
+    await setCampaignRuntimeState(campaignId, {
+      currentStep: "calibrating_apply_flow",
+      currentJobId: job.id,
+    });
+
+    const calibration = await prisma.applicationCalibration.findFirst({
+      where: { jobListingId: job.id },
+      orderBy: { createdAt: "desc" },
+    });
+    const shouldCalibrate = !calibration || calibration.status !== "calibrated";
+
+    if (shouldCalibrate) {
+      const calibrationResult = await calibrateJobApply({
+        jobListingId: job.id,
+        jobUrl: job.url,
+        campaignId,
+      });
+
+      if (calibrationResult.status === "manual_intervention") {
+        await setCampaignRuntimeState(campaignId, {
+          status: "paused",
+          currentStep: "manual_intervention",
+          decisionStatus: "manual_intervention",
+        });
+        return {
+          status: "paused",
+          message: calibrationResult.message,
+          campaignId,
+          currentStep: "manual_intervention",
+          currentJobId: job.id,
+        };
+      }
+
+      if (calibrationResult.status === "failed") {
+        if (calibrationResult.message.includes("Tombol lamar tidak ditemukan")) {
+          await prisma.jobListing.update({ where: { id: job.id }, data: { status: "apply_unavailable" } });
+
+          const alreadyLogged = await hasRecentApplyUnavailableLog(campaignId, job.id);
+          if (!alreadyLogged) {
+            await writeAutomationLog({
+              campaignId,
+              jobListingId: job.id,
+              event: "campaign.autopilot_job_apply_unavailable",
+              message: "Lowongan dilewati karena tombol lamar tidak ditemukan. Autopilot melanjutkan ke lowongan berikutnya.",
+            });
+          }
+
+          await setCampaignRuntimeState(campaignId, {
+            status: "running",
+            currentStep: "apply_unavailable_skipped",
+            currentJobId: job.id,
+            decisionStatus: null,
+            decisionPayloadJson: null,
+          });
+
+          consecutiveSkippableFailures += 1;
+          continue;
+        }
+
+        await prisma.jobListing.update({ where: { id: job.id }, data: { status: "failed" } });
+        return {
+          status: "paused",
+          message: calibrationResult.message,
+          campaignId,
+          currentStep: "calibration_failed",
+          currentJobId: job.id,
+        };
+      }
+
+      if (calibrationResult.flowType && calibrationResult.flowType !== "jobstreet_internal") {
+        await setCampaignRuntimeState(campaignId, {
+          status: "paused",
+          currentStep: "external_redirect",
+          decisionStatus: "external_redirect",
+          decisionPayloadJson: JSON.stringify({
+            type: "external_redirect",
+            campaignId,
+            jobId: job.id,
+            title: job.title,
+            company: job.company,
+            flowType: calibrationResult.flowType,
+            platform: calibrationResult.platform ?? "unknown",
+            reason: calibrationResult.message,
+          }),
+        });
+        return {
+          status: "paused",
+          message: calibrationResult.message,
+          campaignId,
+          currentStep: "external_redirect",
+          currentJobId: job.id,
+        };
+      }
+    }
+
+    const profile = await getLatestProfile();
+    await setCampaignRuntimeState(campaignId, {
+      currentStep: "starting_apply",
+      currentJobId: job.id,
+    });
+
+    const applyResult = await startJobApplication({
+      jobListing: {
+        id: job.id,
+        campaignId: job.campaignId,
+        title: job.title,
+        company: job.company,
+        location: job.location,
+        salaryText: job.salaryText,
+        workType: job.workType,
+        url: job.url,
+        description: job.description,
+        matchScore: job.matchScore,
+        matchReason: job.matchReason,
+        status: job.status,
+      },
+      campaign: {
+        id: job.campaign.id,
+        name: job.campaign.name,
+        submitMode: job.campaign.submitMode,
+        defaultCurrentSalary: job.campaign.defaultCurrentSalary,
+        defaultExpectedSalary: job.campaign.defaultExpectedSalary,
+        defaultNoticePeriod: job.campaign.defaultNoticePeriod,
+        defaultAvailability: job.campaign.defaultAvailability,
+        workModePreference: job.campaign.workModePreference,
+      },
+      profile: {
+        fullName: profile.fullName ?? "",
+        email: profile.email ?? "",
+        phone: profile.phone ?? "",
+        location: profile.location ?? "",
+        summary: profile.summary ?? "",
+        skillsJson: profile.skillsJson ?? "[]",
+        experienceJson: profile.experienceJson ?? "[]",
+        educationJson: profile.educationJson ?? "[]",
+        projectsJson: profile.projectsJson ?? "[]",
+        certificationsJson: profile.certificationsJson ?? "[]",
+      },
+    });
+
+    if (applyResult.status === "paused") {
+      const application = applyResult.applicationId
+        ? await prisma.application.findUnique({ where: { id: applyResult.applicationId } })
+        : null;
+      const answers = parseJson<{ pendingQuestions?: Array<{ question: string }> }>(application?.answersJson, {});
+      const pendingQuestion = answers.pendingQuestions?.[0]?.question ?? null;
+
+      await setCampaignRuntimeState(campaignId, {
+        status: "paused",
+        currentStep: pendingQuestion ? "question_required" : "apply_paused",
+        currentQuestion: pendingQuestion,
+        decisionStatus: pendingQuestion ? "question_required" : "paused",
+        decisionPayloadJson: JSON.stringify({
+          type: pendingQuestion ? "question_required" : "paused",
+          applicationId: application?.id ?? null,
+          question: pendingQuestion,
+          message: applyResult.message,
         }),
       });
+
       return {
-        status: "paused",
-        message: calibrationResult.message,
+        status: pendingQuestion ? "question_required" : "paused",
+        message: applyResult.message,
         campaignId,
-        currentStep: "external_redirect",
+        currentStep: pendingQuestion ? "question_required" : "apply_paused",
         currentJobId: job.id,
+        applicationId: application?.id,
       };
     }
+
+    if (applyResult.status === "pending_review") {
+      await setCampaignRuntimeState(campaignId, {
+        status: "paused",
+        currentStep: "review_required",
+        decisionStatus: "review_required",
+        decisionPayloadJson: JSON.stringify({
+          type: "review_required",
+          applicationId: applyResult.applicationId ?? null,
+          message: applyResult.message,
+        }),
+        currentQuestion: null,
+      });
+
+      return {
+        status: "review_required",
+        message: applyResult.message,
+        campaignId,
+        currentStep: "review_required",
+        currentJobId: job.id,
+        applicationId: applyResult.applicationId,
+      };
+    }
+
+    return {
+      status: "paused",
+      message: applyResult.message,
+      campaignId,
+      currentStep: "apply_failed",
+      currentJobId: job.id,
+    };
   }
 
-  const profile = await getLatestProfile();
   await setCampaignRuntimeState(campaignId, {
-    currentStep: "starting_apply",
-    currentJobId: job.id,
+    status: "paused",
+    currentStep: "too_many_unusable_jobs",
+    decisionStatus: null,
+    decisionPayloadJson: null,
   });
-
-  const applyResult = await startJobApplication({
-    jobListing: {
-      id: job.id,
-      campaignId: job.campaignId,
-      title: job.title,
-      company: job.company,
-      location: job.location,
-      salaryText: job.salaryText,
-      workType: job.workType,
-      url: job.url,
-      description: job.description,
-      matchScore: job.matchScore,
-      matchReason: job.matchReason,
-      status: job.status,
-    },
-    campaign: {
-      id: job.campaign.id,
-      name: job.campaign.name,
-      submitMode: job.campaign.submitMode,
-      defaultCurrentSalary: job.campaign.defaultCurrentSalary,
-      defaultExpectedSalary: job.campaign.defaultExpectedSalary,
-      defaultNoticePeriod: job.campaign.defaultNoticePeriod,
-      defaultAvailability: job.campaign.defaultAvailability,
-      workModePreference: job.campaign.workModePreference,
-    },
-    profile: {
-      fullName: profile.fullName ?? "",
-      email: profile.email ?? "",
-      phone: profile.phone ?? "",
-      location: profile.location ?? "",
-      summary: profile.summary ?? "",
-      skillsJson: profile.skillsJson ?? "[]",
-      experienceJson: profile.experienceJson ?? "[]",
-      educationJson: profile.educationJson ?? "[]",
-      projectsJson: profile.projectsJson ?? "[]",
-      certificationsJson: profile.certificationsJson ?? "[]",
-    },
-  });
-
-  if (applyResult.status === "paused") {
-    const application = applyResult.applicationId
-      ? await prisma.application.findUnique({ where: { id: applyResult.applicationId } })
-      : null;
-    const answers = parseJson<{ pendingQuestions?: Array<{ question: string }> }>(application?.answersJson, {});
-    const pendingQuestion = answers.pendingQuestions?.[0]?.question ?? null;
-
-    await setCampaignRuntimeState(campaignId, {
-      status: "paused",
-      currentStep: pendingQuestion ? "question_required" : "apply_paused",
-      currentQuestion: pendingQuestion,
-      decisionStatus: pendingQuestion ? "question_required" : "paused",
-      decisionPayloadJson: JSON.stringify({
-        type: pendingQuestion ? "question_required" : "paused",
-        applicationId: application?.id ?? null,
-        question: pendingQuestion,
-        message: applyResult.message,
-      }),
-    });
-
-    return {
-      status: pendingQuestion ? "question_required" : "paused",
-      message: applyResult.message,
-      campaignId,
-      currentStep: pendingQuestion ? "question_required" : "apply_paused",
-      currentJobId: job.id,
-      applicationId: application?.id,
-    };
-  }
-
-  if (applyResult.status === "pending_review") {
-    await setCampaignRuntimeState(campaignId, {
-      status: "paused",
-      currentStep: "review_required",
-      decisionStatus: "review_required",
-      decisionPayloadJson: JSON.stringify({
-        type: "review_required",
-        applicationId: applyResult.applicationId ?? null,
-        message: applyResult.message,
-      }),
-      currentQuestion: null,
-    });
-
-    return {
-      status: "review_required",
-      message: applyResult.message,
-      campaignId,
-      currentStep: "review_required",
-      currentJobId: job.id,
-      applicationId: applyResult.applicationId,
-    };
-  }
 
   return {
     status: "paused",
-    message: applyResult.message,
+    message: "Autopilot menemukan beberapa lowongan yang tidak bisa dilamar. Periksa daftar lowongan atau jalankan pencarian baru.",
     campaignId,
-    currentStep: "apply_failed",
-    currentJobId: job.id,
+    currentStep: "too_many_unusable_jobs",
   };
 }
 

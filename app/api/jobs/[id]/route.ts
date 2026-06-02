@@ -9,7 +9,7 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = (await request.json()) as {
-      status?: "discovered" | "skipped" | "shortlisted" | "applying" | "submitted" | "failed";
+      status?: "discovered" | "skipped" | "shortlisted" | "applying" | "submitted" | "failed" | "apply_unavailable";
       reason?: string;
     };
 
@@ -39,7 +39,11 @@ export async function PATCH(
         message:
           body.status === "skipped"
             ? body.reason ?? "Lowongan dilewati oleh user dari halaman lowongan."
-            : `Status lowongan diperbarui menjadi ${body.status}.`,
+            : body.status === "shortlisted" && (job.status === "failed" || job.status === "apply_unavailable")
+              ? body.reason ?? "Lowongan ditandai untuk dicoba lagi oleh user."
+              : body.status === "apply_unavailable"
+                ? body.reason ?? "Lowongan ditandai tidak bisa dilamar karena tombol lamar tidak ditemukan."
+                : `Status lowongan diperbarui menjadi ${body.status}.`,
         metadata: {
           previousStatus: job.status,
           nextStatus: body.status,
