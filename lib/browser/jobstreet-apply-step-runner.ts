@@ -457,6 +457,11 @@ async function handleEmployerQuestions(input: RunInput): Promise<JobstreetStepRu
 async function handleUpdateProfile(input: RunInput): Promise<JobstreetStepRunnerResult> {
   console.info("jobstreet_apply.update_profile_started");
 
+  await input.page.evaluate(() => {
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "instant" as ScrollBehavior });
+  }).catch(() => undefined);
+  await input.page.waitForTimeout(300).catch(() => undefined);
+
   const requiredVisibleFields = await input.page.locator("input, textarea, select").evaluateAll((elements) =>
     elements
       .map((element, index) => {
@@ -501,10 +506,10 @@ async function handleUpdateProfile(input: RunInput): Promise<JobstreetStepRunner
     return {
       status: "stuck_no_progress",
       step: "update_profile",
-      message: "Sistem tidak menemukan aksi aman untuk lanjut dari Update Profile. Pilih tindakan berikut.",
+      message: "Step Update Jobstreet Profile belum berpindah ke Review. Sistem tidak akan menganggap ini login/verifikasi.",
       uiStatus: {
         stepLabel: "Memperbarui profil Jobstreet",
-        detail: "Sistem mencoba mencari tombol Continue dengan AI. Coba Lagi / Lewati Lowongan / Buka Browser.",
+        detail: "Step Update Jobstreet Profile belum berpindah ke Review. Sistem mencoba klik Continue.",
       },
       questionSummary: {
         detected: requiredVisibleFields.length,
@@ -523,10 +528,10 @@ async function handleUpdateProfile(input: RunInput): Promise<JobstreetStepRunner
       return {
         status: "stuck_no_progress",
         step: "update_profile",
-        message: "Step Update Jobstreet Profile belum berpindah ke Review. Sistem mencoba mencari tombol Continue dengan AI.",
+        message: "Step Update Jobstreet Profile belum berpindah ke Review. Sistem tidak akan menganggap ini login/verifikasi.",
         uiStatus: {
           stepLabel: "Memperbarui profil Jobstreet",
-          detail: "Sistem tidak menemukan aksi aman untuk lanjut dari Update Profile. Pilih tindakan berikut.",
+          detail: "Step Update Jobstreet Profile belum berpindah ke Review. Sistem mencoba klik Continue.",
         },
         questionSummary: {
           detected: requiredVisibleFields.length,

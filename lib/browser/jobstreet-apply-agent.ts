@@ -283,6 +283,113 @@ function resolveSubmitMode(campaign: CampaignData, submitMode?: SubmitModeStrate
   return "review_each_application";
 }
 
+async function runUrlStepFlowIfOnJobstreetApplyUrl(params: {
+  page: Page;
+  campaign: CampaignData;
+  jobListing: JobListingData;
+  profile: ProfileData;
+  submitMode: SubmitModeStrategy;
+}): Promise<ApplyResult | null> {
+  const {
+    page,
+    campaign,
+    jobListing,
+    profile,
+    submitMode,
+  } = params;
+
+  if (!isNormalJobstreetApplyUrl(page.url())) {
+    return null;
+  }
+
+  while (isNormalJobstreetApplyUrl(page.url())) {
+    const stepResult = await runJobstreetApplyStep({
+      page,
+      campaign: {
+        id: campaign.id,
+        name: campaign.name,
+        defaultCurrentSalary: campaign.defaultCurrentSalary,
+        defaultExpectedSalary: campaign.defaultExpectedSalary,
+        defaultNoticePeriod: campaign.defaultNoticePeriod,
+        defaultAvailability: campaign.defaultAvailability,
+        workModePreference: campaign.workModePreference,
+      },
+      jobListing: {
+        id: jobListing.id,
+        title: jobListing.title,
+        company: jobListing.company,
+        description: jobListing.description,
+        url: jobListing.url,
+      },
+      candidateProfile: buildCandidateProfile(profile),
+      questionMemory: [],
+      mode: submitMode,
+    });
+
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      event: "jobstreet_apply.step_detected_from_url",
+      message: `Langkah Jobstreet dari URL terdeteksi: ${stepResult.step}.`,
+      metadata: { url: page.url(), step: stepResult.step, status: stepResult.status, nextStep: stepResult.nextStep ?? null },
+    });
+
+    if (stepResult.status === "submitted") {
+      const app = await prisma.application.create({
+        data: {
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          status: "submitted",
+          submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
+          notes: stepResult.message,
+          submittedAt: new Date(),
+          userApproved: true,
+        },
+      });
+      await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "submitted" } });
+      await prisma.campaign.update({ where: { id: campaign.id }, data: { appliedCount: { increment: 1 } } });
+      return { status: "submitted", message: stepResult.message, applicationId: app.id };
+    }
+
+    if (stepResult.status === "manual_intervention" || stepResult.status === "question_required") {
+      const paused = await prisma.application.create({
+        data: {
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          status: "paused",
+          submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
+          notes: stepResult.message,
+        },
+      });
+      return { status: "paused", message: stepResult.message, applicationId: paused.id };
+    }
+
+    if (
+      stepResult.status === "stuck_no_progress"
+      || stepResult.status === "submit_not_found_timeout"
+      || stepResult.status === "apply_unavailable"
+    ) {
+      await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: stepResult.status as never } });
+      return { status: stepResult.status, message: stepResult.message };
+    }
+
+    if (stepResult.status !== "advanced" || !stepResult.nextStep) {
+      break;
+    }
+
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      event: "jobstreet_apply.url_step_advanced",
+      message: stepResult.message,
+      metadata: { fromStep: stepResult.step, toStep: stepResult.nextStep, url: page.url() },
+    });
+    await page.waitForTimeout(1200);
+  }
+
+  return null;
+}
+
 async function verifySubmitSuccess(page: Page) {
   await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
   await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
@@ -495,6 +602,15 @@ async function runJobstreetApplyWizard({
     await page.goto(jobListing.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForTimeout(1500);
 
+    const initialUrlStepResult = await runUrlStepFlowIfOnJobstreetApplyUrl({
+      page,
+      campaign,
+      jobListing,
+      profile,
+      submitMode,
+    });
+    if (initialUrlStepResult) return initialUrlStepResult;
+
     const initialIntervention = await checkAndHandleIntervention(
       page,
       jobListing.id,
@@ -502,100 +618,6 @@ async function runJobstreetApplyWizard({
       "halaman_lowongan",
     );
     if (initialIntervention) return initialIntervention;
-
-    while (isNormalJobstreetApplyUrl(page.url())) {
-      const stepResult = await runJobstreetApplyStep({
-        page,
-        campaign: {
-          id: campaign.id,
-          name: campaign.name,
-          defaultCurrentSalary: campaign.defaultCurrentSalary,
-          defaultExpectedSalary: campaign.defaultExpectedSalary,
-          defaultNoticePeriod: campaign.defaultNoticePeriod,
-          defaultAvailability: campaign.defaultAvailability,
-          workModePreference: campaign.workModePreference,
-        },
-        jobListing: {
-          id: jobListing.id,
-          title: jobListing.title,
-          company: jobListing.company,
-          description: jobListing.description,
-          url: jobListing.url,
-        },
-        candidateProfile: buildCandidateProfile(profile),
-        questionMemory: [],
-        mode: submitMode,
-      });
-
-      await writeAutomationLog({
-        campaignId: campaign.id,
-        jobListingId: jobListing.id,
-        event: "jobstreet_apply.step_detected_from_url",
-        message: `Langkah Jobstreet dari URL terdeteksi: ${stepResult.step}.`,
-        metadata: { url: page.url(), step: stepResult.step, status: stepResult.status, nextStep: stepResult.nextStep ?? null },
-      });
-
-      if (stepResult.status === "submitted") {
-        const app = await prisma.application.create({
-          data: {
-            campaignId: campaign.id,
-            jobListingId: jobListing.id,
-            status: "submitted",
-            submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
-            notes: stepResult.message,
-            submittedAt: new Date(),
-            userApproved: true,
-          },
-        });
-        await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "submitted" } });
-        await prisma.campaign.update({ where: { id: campaign.id }, data: { appliedCount: { increment: 1 } } });
-        return { status: "submitted", message: stepResult.message, applicationId: app.id };
-      }
-
-      if (stepResult.status === "manual_intervention") {
-        const paused = await prisma.application.create({
-          data: {
-            campaignId: campaign.id,
-            jobListingId: jobListing.id,
-            status: "paused",
-            submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
-            notes: stepResult.message,
-          },
-        });
-        return { status: "paused", message: stepResult.message, applicationId: paused.id };
-      }
-
-      if (stepResult.status === "question_required") {
-        const paused = await prisma.application.create({
-          data: {
-            campaignId: campaign.id,
-            jobListingId: jobListing.id,
-            status: "paused",
-            submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
-            notes: stepResult.message,
-          },
-        });
-        return { status: "paused", message: stepResult.message, applicationId: paused.id };
-      }
-
-      if (stepResult.status === "stuck_no_progress" || stepResult.status === "submit_not_found_timeout" || stepResult.status === "apply_unavailable") {
-        await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: stepResult.status as never } });
-        return { status: stepResult.status, message: stepResult.message };
-      }
-
-      if (stepResult.status !== "advanced" || !stepResult.nextStep) {
-        break;
-      }
-
-      await writeAutomationLog({
-        campaignId: campaign.id,
-        jobListingId: jobListing.id,
-        event: "jobstreet_apply.url_step_advanced",
-        message: stepResult.message,
-        metadata: { fromStep: stepResult.step, toStep: stepResult.nextStep, url: page.url() },
-      });
-      await page.waitForTimeout(1200);
-    }
 
     const filledFields: FilledField[] = [];
     const questionAnswers: AnswersJson["questionAnswers"] = [];
@@ -627,6 +649,15 @@ async function runJobstreetApplyWizard({
     };
 
     for (wizardStep = 1; wizardStep <= 8; wizardStep += 1) {
+      const urlStepResult = await runUrlStepFlowIfOnJobstreetApplyUrl({
+        page,
+        campaign,
+        jobListing,
+        profile,
+        submitMode,
+      });
+      if (urlStepResult) return urlStepResult;
+
       const snapshot = await detectApplyWizardState(page);
       const progress = hasWizardProgress(previousSnapshot, snapshot);
       watchdogNoProgress = progress ? 0 : watchdogNoProgress + 1;
@@ -669,10 +700,21 @@ async function runJobstreetApplyWizard({
       }
 
       if (snapshot.state === "manual_intervention") {
+        if (isNormalJobstreetApplyUrl(page.url())) {
+          const urlStepResult = await runUrlStepFlowIfOnJobstreetApplyUrl({
+            page,
+            campaign,
+            jobListing,
+            profile,
+            submitMode,
+          });
+          if (urlStepResult) return urlStepResult;
+        }
+
         return (await checkAndHandleIntervention(page, jobListing.id, campaign.id, `wizard_${wizardStep}`))
           ?? await persistPausedApplication(
             "Wizard mendeteksi login/verifikasi manual.",
-            "Jobstreet meminta login atau verifikasi manual. Selesaikan di browser yang terbuka, lalu klik Lanjutkan.",
+            "Halaman tidak berubah setelah beberapa aksi. Pilih Coba Lagi atau Lewati Lowongan.",
           );
       }
 
@@ -716,7 +758,17 @@ async function runJobstreetApplyWizard({
           message: "Tombol lamar berhasil diklik.",
           metadata: { step: wizardStep },
         });
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(1200);
+
+        const urlStepResult = await runUrlStepFlowIfOnJobstreetApplyUrl({
+          page,
+          campaign,
+          jobListing,
+          profile,
+          submitMode,
+        });
+        if (urlStepResult) return urlStepResult;
+
         previousSnapshot = snapshot;
         continue;
       }

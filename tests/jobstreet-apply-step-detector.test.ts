@@ -29,6 +29,10 @@ test("detects update profile URL", () => {
     detectJobstreetApplyStep("https://www.jobstreet.co.id/job/92275484/apply/profile?sol=abc"),
     "update_profile",
   );
+  assert.equal(
+    detectJobstreetApplyStep("https://www.jobstreet.co.id/job/92231298/apply/profile?sol=abc"),
+    "update_profile",
+  );
 });
 
 test("detects review submit URL", () => {
@@ -87,6 +91,20 @@ test("does not flag manual intervention on update profile page with weak sign-in
     }),
   );
 
+  assert.equal(result.detected, false);
+  assert.equal(shouldPauseForManualIntervention(result), false);
+});
+
+test("does not flag manual intervention on update profile page with normal visible profile copy", () => {
+  const result = detectManualInterventionFromSignals(
+    "https://id.jobstreet.com/job/92231298/apply/profile?sol=abc",
+    createSignals({
+      visibleText: "Skip to content Your Jobstreet Profile is part of your application Make sure it's up-to-date Profile Avatar SIGN_IN_PAGE",
+      interactiveTexts: ["continue", "skip to content"],
+    }),
+  );
+
+  assert.equal(detectJobstreetApplyStep("https://id.jobstreet.com/job/92231298/apply/profile?sol=abc"), "update_profile");
   assert.equal(result.detected, false);
   assert.equal(shouldPauseForManualIntervention(result), false);
 });
