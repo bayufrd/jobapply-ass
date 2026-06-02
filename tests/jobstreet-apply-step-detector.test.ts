@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { detectJobstreetApplyStep } from "../lib/browser/jobstreet-apply-step-detector";
+import { findJobstreetContinueButtonWithAi } from "../lib/browser/jobstreet-apply-step-runner";
 import {
   detectManualInterventionFromSignals,
   shouldPauseForManualIntervention,
@@ -77,6 +78,19 @@ test("does not flag manual intervention on update profile page with avatar and o
   assert.equal(shouldPauseForManualIntervention(result), false);
 });
 
+test("does not flag manual intervention on update profile page with weak sign-in markers only", () => {
+  const result = detectManualInterventionFromSignals(
+    "https://id.jobstreet.com/job/92231298/apply/profile?sol=abc",
+    createSignals({
+      visibleText: "update jobstreet profile your jobstreet profile sign_in_page /oauth/login profile avatar open app",
+      interactiveTexts: ["open app", "profile"],
+    }),
+  );
+
+  assert.equal(result.detected, false);
+  assert.equal(shouldPauseForManualIntervention(result), false);
+});
+
 test("flags OTP on update profile page only when strong visible evidence exists", () => {
   const result = detectManualInterventionFromSignals(
     "https://id.jobstreet.com/job/92231298/apply/profile?sol=abc",
@@ -128,4 +142,47 @@ test("fixture pages are present with expected markers", () => {
   assert.match(successHtml, /Nice work/i);
   assert.match(successHtml, /Your application has been sent/i);
   assert.match(reviewHtml, /Submit application/i);
+});
+
+test("AI continue finder accepts visible Continue button on update profile", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                found: true,
+                elementId: "pw-1",
+                label: "Continue",
+                confidence: 0.92,
+                reason: "Tombol Continue terlihat jelas pada langkah update profile.",
+              }),
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+
+  process.env.NINEROUTER_URL = "http://localhost:3000";
+  process.env.NINEROUTER_KEY = "test-key";
+  process.env.NINEROUTER_CHAT_MODEL = "test-model";
+
+  try {
+    const result = await findJobstreetContinueButtonWithAi({
+      currentUrl: "https://id.jobstreet.com/job/92231298/apply/profile?sol=abc",
+      visibleText: "Update Jobstreet Profile Your Jobstreet Profile is part of your application.",
+      visibleButtons: [{ elementId: "pw-1", label: "continue", role: "button" }],
+      step: "update_profile",
+    });
+
+    assert.equal(result.found, true);
+    assert.equal(result.label, "Continue");
+    assert.equal(result.elementId, "pw-1");
+    assert.equal(result.confidence >= 0.75, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

@@ -1,6 +1,8 @@
 import type { Page } from "playwright";
+import { getNineRouterChatModel, getNineRouterClient } from "@/lib/ai/9router-client";
+import { extractJsonObject } from "@/lib/ai/json";
 import type { CandidateProfileResult } from "@/lib/ai/schemas";
-import type { McpSnapshot } from "@/lib/mcp/playwright-mcp-client";
+import type { McpElement, McpSnapshot } from "@/lib/mcp/playwright-mcp-client";
 import { detectJobstreetApplyStep, type JobstreetApplyStep } from "@/lib/browser/jobstreet-apply-step-detector";
 
 export type JobstreetStepRunnerMode = "review_each_application" | "auto_submit_safe_only";
@@ -54,6 +56,14 @@ type QuestionMemoryItem = {
   source?: string;
 };
 
+export type JobstreetContinueButtonAiResult = {
+  found: boolean;
+  elementId?: string;
+  label?: string;
+  confidence: number;
+  reason: string;
+};
+
 type RunInput = {
   page: Page;
   mcpSnapshot?: McpSnapshot | null;
@@ -78,6 +88,37 @@ const SUCCESS_MARKERS = [
 
 function normalizeText(value: string | null | undefined) {
   return (value ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function toMcpElementButton(element: McpElement, index: number) {
+  const label = normalizeText(element.name || element.text || element.role || `element-${index + 1}`);
+  return {
+    elementId: element.elementId,
+    label,
+    disabled: element.disabled ?? false,
+    role: normalizeText(element.role),
+  };
+}
+
+async function capturePageButtons(page: Page) {
+  return page.locator("button, input[type='submit'], input[type='button'], a[role='button']").evaluateAll((elements) =>
+    elements
+      .map((element, index) => {
+        const node = element as HTMLButtonElement | HTMLInputElement | HTMLAnchorElement;
+        const hidden = (node as HTMLElement).offsetParent === null;
+        const disabled = "disabled" in node ? Boolean(node.disabled) : node.hasAttribute("aria-disabled");
+        const text = ((node.textContent || node.getAttribute("value") || node.getAttribute("aria-label") || "").trim());
+        const role = (node.getAttribute("role") || node.tagName || "").toLowerCase();
+        return {
+          elementId: `pw-${index + 1}`,
+          label: text.toLowerCase().replace(/\s+/g, " ").trim(),
+          disabled,
+          hidden,
+          role,
+        };
+      })
+      .filter((item) => !item.hidden && item.label),
+  ).catch(() => [] as Array<{ elementId: string; label: string; disabled: boolean; role: string }>);
 }
 
 async function getPageText(page: Page) {
@@ -162,6 +203,79 @@ async function waitForStepChange(page: Page, expected: JobstreetApplyStep, timeo
     }
   }
   return false;
+}
+
+export async function findJobstreetContinueButtonWithAi(input: {
+  currentUrl: string;
+  visibleText: string;
+  visibleButtons: Array<{ elementId: string; label: string; disabled?: boolean; role?: string }>;
+  step: "update_profile";
+}): Promise<JobstreetContinueButtonAiResult> {
+  const client = getNineRouterClient();
+  const model = getNineRouterChatModel();
+  const completion = await client.chat.completions.create({
+    model,
+    temperature: 0.1,
+    messages: [
+      {
+        role: "system",
+        content:
+          'You are on Jobstreet update profile step. Find the Continue button only. Do not classify this as login/security unless there is visible captcha/OTP/password/security challenge. Return valid JSON only with keys found, elementId, label, confidence, reason.',
+      },
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            currentUrl: input.currentUrl,
+            step: input.step,
+            visibleText: input.visibleText.slice(0, 3000),
+            visibleButtons: input.visibleButtons,
+            allowedLabels: ["Continue", "Lanjut"],
+            outputSchema: {
+              found: "boolean",
+              elementId: "string optional",
+              label: "string optional",
+              confidence: "number 0-1",
+              reason: "string",
+            },
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  });
+
+  const raw = completion.choices[0]?.message?.content ?? "{}";
+  const parsed = extractJsonObject(raw) as JobstreetContinueButtonAiResult;
+  return {
+    found: Boolean(parsed.found),
+    elementId: parsed.elementId,
+    label: parsed.label,
+    confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0,
+    reason: parsed.reason || "AI tidak memberikan alasan.",
+  };
+}
+
+async function clickContinueWithAi(page: Page, mcpSnapshot?: McpSnapshot | null) {
+  const visibleText = await getPageText(page);
+  const visibleButtons = mcpSnapshot
+    ? mcpSnapshot.elements.map(toMcpElementButton).filter((item) => item.label && !item.disabled)
+    : await capturePageButtons(page);
+
+  const aiResult = await findJobstreetContinueButtonWithAi({
+    currentUrl: page.url(),
+    visibleText,
+    visibleButtons,
+    step: "update_profile",
+  });
+
+  if (!aiResult.found || aiResult.confidence < 0.75 || !aiResult.label || !["continue", "lanjut"].includes(normalizeText(aiResult.label))) {
+    return { clicked: false, aiResult };
+  }
+
+  const clicked = await clickByLabels(page, [normalizeText(aiResult.label)]);
+  return { clicked, aiResult };
 }
 
 async function handleChooseDocuments(input: RunInput): Promise<JobstreetStepRunnerResult> {
@@ -341,6 +455,8 @@ async function handleEmployerQuestions(input: RunInput): Promise<JobstreetStepRu
 }
 
 async function handleUpdateProfile(input: RunInput): Promise<JobstreetStepRunnerResult> {
+  console.info("jobstreet_apply.update_profile_started");
+
   const requiredVisibleFields = await input.page.locator("input, textarea, select").evaluateAll((elements) =>
     elements
       .map((element, index) => {
@@ -378,19 +494,17 @@ async function handleUpdateProfile(input: RunInput): Promise<JobstreetStepRunner
 
   const unresolvedRequired = Math.max(emptyRequiredFields.length - filledRequired, 0);
 
-  if (emptyRequiredFields.length === 0) {
-    console.info("jobstreet_apply.update_profile_no_required_fields");
-  }
+  console.info("jobstreet_apply.update_profile_ai_continue_search");
+  const firstAttempt = await clickContinueWithAi(input.page, input.mcpSnapshot);
 
-  const clicked = await clickByLabels(input.page, CONTINUE_LABELS);
-  if (!clicked) {
+  if (!firstAttempt.clicked) {
     return {
       status: "stuck_no_progress",
       step: "update_profile",
-      message: "Step Update Jobstreet Profile belum berpindah ke Review. Sistem akan mencoba klik Continue lagi atau meminta keputusan Anda.",
+      message: "Sistem tidak menemukan aksi aman untuk lanjut dari Update Profile. Pilih tindakan berikut.",
       uiStatus: {
         stepLabel: "Memperbarui profil Jobstreet",
-        detail: "Tombol Continue tidak ditemukan.",
+        detail: "Sistem mencoba mencari tombol Continue dengan AI. Coba Lagi / Lewati Lowongan / Buka Browser.",
       },
       questionSummary: {
         detected: requiredVisibleFields.length,
@@ -403,15 +517,16 @@ async function handleUpdateProfile(input: RunInput): Promise<JobstreetStepRunner
   console.info("jobstreet_apply.update_profile_continue_clicked");
 
   if (!(await waitForStepChange(input.page, "review_submit", 8000))) {
-    const retried = await clickByLabels(input.page, CONTINUE_LABELS);
-    if (!retried || !(await waitForStepChange(input.page, "review_submit", 8000))) {
+    console.info("jobstreet_apply.update_profile_ai_continue_search");
+    const retryAttempt = await clickContinueWithAi(input.page, input.mcpSnapshot);
+    if (!retryAttempt.clicked || !(await waitForStepChange(input.page, "review_submit", 8000))) {
       return {
         status: "stuck_no_progress",
         step: "update_profile",
-        message: "Step Update Jobstreet Profile belum berpindah ke Review. Sistem akan mencoba klik Continue lagi atau meminta keputusan Anda.",
+        message: "Step Update Jobstreet Profile belum berpindah ke Review. Sistem mencoba mencari tombol Continue dengan AI.",
         uiStatus: {
           stepLabel: "Memperbarui profil Jobstreet",
-          detail: "Coba Lagi / Lewati Lowongan / Buka Browser.",
+          detail: "Sistem tidak menemukan aksi aman untuk lanjut dari Update Profile. Pilih tindakan berikut.",
         },
         questionSummary: {
           detected: requiredVisibleFields.length,

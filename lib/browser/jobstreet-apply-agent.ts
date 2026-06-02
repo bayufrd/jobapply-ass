@@ -6,7 +6,7 @@ import {
   detectSubmitButton,
   type FilledField,
 } from "@/lib/browser/form-filler";
-import { detectManualIntervention } from "@/lib/browser/page-detector";
+import { detectManualIntervention, shouldPauseForManualIntervention } from "@/lib/browser/page-detector";
 import {
   clickResolvedFinalSubmit,
   resolveFinalSubmitButton,
@@ -23,6 +23,8 @@ import {
   hasWizardProgress,
   type ApplyWizardSnapshot,
 } from "@/lib/browser/apply-wizard-state";
+import { isNormalJobstreetApplyUrl } from "@/lib/browser/jobstreet-apply-step-detector";
+import { runJobstreetApplyStep } from "@/lib/browser/jobstreet-apply-step-runner";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -229,14 +231,29 @@ async function checkAndHandleIntervention(
   stage: string,
 ): Promise<ApplyResult | null> {
   const detection = await detectManualIntervention(page);
-  if (detection.detected && detection.reason) {
+  const internalApplyUrl = isNormalJobstreetApplyUrl(page.url());
+
+  if (internalApplyUrl && !shouldPauseForManualIntervention(detection)) {
+    if (detection.detected) {
+      await writeAutomationLog({
+        campaignId,
+        jobListingId: jobId,
+        event: "manual_intervention.false_positive_rejected",
+        message: "Deteksi manual intervention lemah di URL apply internal Jobstreet ditolak.",
+        metadata: { stage, url: page.url(), type: detection.type, confidence: detection.confidence, evidence: detection.evidence },
+      });
+    }
+    return null;
+  }
+
+  if (detection.detected && detection.reason && shouldPauseForManualIntervention(detection)) {
     await writeAutomationLog({
       campaignId,
       jobListingId: jobId,
       level: "warn",
-      event: "application.manual_intervention_required",
-      message: `Intervensi manual terdeteksi pada tahap ${stage}: ${detection.details ?? detection.reason}`,
-      metadata: { stage, reason: detection.reason, details: detection.details ?? null },
+      event: "manual_intervention.confirmed",
+      message: `Intervensi manual terkonfirmasi pada tahap ${stage}: ${detection.details ?? detection.reason}`,
+      metadata: { stage, reason: detection.reason, details: detection.details ?? null, url: page.url(), type: detection.type, confidence: detection.confidence, evidence: detection.evidence },
     });
 
     const app = await prisma.application.create({
@@ -485,6 +502,100 @@ async function runJobstreetApplyWizard({
       "halaman_lowongan",
     );
     if (initialIntervention) return initialIntervention;
+
+    while (isNormalJobstreetApplyUrl(page.url())) {
+      const stepResult = await runJobstreetApplyStep({
+        page,
+        campaign: {
+          id: campaign.id,
+          name: campaign.name,
+          defaultCurrentSalary: campaign.defaultCurrentSalary,
+          defaultExpectedSalary: campaign.defaultExpectedSalary,
+          defaultNoticePeriod: campaign.defaultNoticePeriod,
+          defaultAvailability: campaign.defaultAvailability,
+          workModePreference: campaign.workModePreference,
+        },
+        jobListing: {
+          id: jobListing.id,
+          title: jobListing.title,
+          company: jobListing.company,
+          description: jobListing.description,
+          url: jobListing.url,
+        },
+        candidateProfile: buildCandidateProfile(profile),
+        questionMemory: [],
+        mode: submitMode,
+      });
+
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "jobstreet_apply.step_detected_from_url",
+        message: `Langkah Jobstreet dari URL terdeteksi: ${stepResult.step}.`,
+        metadata: { url: page.url(), step: stepResult.step, status: stepResult.status, nextStep: stepResult.nextStep ?? null },
+      });
+
+      if (stepResult.status === "submitted") {
+        const app = await prisma.application.create({
+          data: {
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+            status: "submitted",
+            submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
+            notes: stepResult.message,
+            submittedAt: new Date(),
+            userApproved: true,
+          },
+        });
+        await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "submitted" } });
+        await prisma.campaign.update({ where: { id: campaign.id }, data: { appliedCount: { increment: 1 } } });
+        return { status: "submitted", message: stepResult.message, applicationId: app.id };
+      }
+
+      if (stepResult.status === "manual_intervention") {
+        const paused = await prisma.application.create({
+          data: {
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+            status: "paused",
+            submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
+            notes: stepResult.message,
+          },
+        });
+        return { status: "paused", message: stepResult.message, applicationId: paused.id };
+      }
+
+      if (stepResult.status === "question_required") {
+        const paused = await prisma.application.create({
+          data: {
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+            status: "paused",
+            submitMode: campaign.submitMode as "assisted_auto_apply" | "manual_review_only",
+            notes: stepResult.message,
+          },
+        });
+        return { status: "paused", message: stepResult.message, applicationId: paused.id };
+      }
+
+      if (stepResult.status === "stuck_no_progress" || stepResult.status === "submit_not_found_timeout" || stepResult.status === "apply_unavailable") {
+        await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: stepResult.status as never } });
+        return { status: stepResult.status, message: stepResult.message };
+      }
+
+      if (stepResult.status !== "advanced" || !stepResult.nextStep) {
+        break;
+      }
+
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "jobstreet_apply.url_step_advanced",
+        message: stepResult.message,
+        metadata: { fromStep: stepResult.step, toStep: stepResult.nextStep, url: page.url() },
+      });
+      await page.waitForTimeout(1200);
+    }
 
     const filledFields: FilledField[] = [];
     const questionAnswers: AnswersJson["questionAnswers"] = [];
