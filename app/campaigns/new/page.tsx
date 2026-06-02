@@ -52,10 +52,10 @@ export default function NewCampaignPage() {
       defaultExpectedSalary: parseOptionalNumber(formData.get("defaultExpectedSalary")),
       defaultNoticePeriod: parseOptionalString(formData.get("defaultNoticePeriod")),
       defaultAvailability: parseOptionalString(formData.get("defaultAvailability")),
-      submitMode: String(formData.get("submitMode") || "manual_review_only") as
+      submitMode: String(formData.get("submitMode") || "assisted_auto_apply") as
         | "assisted_auto_apply"
         | "manual_review_only",
-      automationMode: String(formData.get("automationMode") || "review_each_application") as
+      automationMode: String(formData.get("automationMode") || "auto_submit_safe_only") as
         | "review_each_application"
         | "auto_submit_safe_only",
       formAutomationMode: String(formData.get("formAutomationMode") || "ai_fallback") as
@@ -66,7 +66,7 @@ export default function NewCampaignPage() {
         | "ask"
         | "auto_skip"
         | "auto_apply",
-      autoSubmitSafeOnly: String(formData.get("automationMode") || "review_each_application") === "auto_submit_safe_only",
+      autoSubmitSafeOnly: String(formData.get("automationMode") || "auto_submit_safe_only") === "auto_submit_safe_only",
     };
 
     try {
@@ -151,27 +151,27 @@ export default function NewCampaignPage() {
             </label>
             <div className="grid gap-3 text-sm text-slate-300 md:col-span-2">
               <span className="font-medium text-white">Mode Pengiriman Lamaran</span>
-              <label className="rounded-xl border border-slate-700 bg-slate-950 p-4">
-                <div className="flex items-start gap-3">
-                  <input type="radio" name="automationMode" value="review_each_application" defaultChecked className="mt-1" />
-                  <div>
-                    <p className="font-medium text-white">Review Setiap Lamaran</p>
-                    <p className="mt-1 text-sm text-slate-400">Sistem mengisi form, lalu berhenti sebelum submit untuk dicek manual.</p>
-                  </div>
-                </div>
-              </label>
               <label className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
                 <div className="flex items-start gap-3">
-                  <input type="radio" name="automationMode" value="auto_submit_safe_only" className="mt-1" />
+                  <input type="radio" name="automationMode" value="auto_submit_safe_only" defaultChecked className="mt-1" />
                   <div>
                     <p className="font-medium text-cyan-200">Auto Submit Aman</p>
                     <p className="mt-1 text-sm text-slate-300">Sistem langsung klik Submit Application jika tidak ada captcha, pertanyaan baru, external redirect, atau kondisi yang meragukan.</p>
                   </div>
                 </div>
               </label>
+              <label className="rounded-xl border border-slate-700 bg-slate-950 p-4">
+                <div className="flex items-start gap-3">
+                  <input type="radio" name="automationMode" value="review_each_application" className="mt-1" />
+                  <div>
+                    <p className="font-medium text-white">Review Setiap Lamaran</p>
+                    <p className="mt-1 text-sm text-slate-400">Sistem mengisi form, lalu berhenti sebelum submit untuk dicek manual.</p>
+                  </div>
+                </div>
+              </label>
               <input type="hidden" name="submitMode" value="assisted_auto_apply" />
               <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
-                Auto Submit Aman hanya berjalan jika sistem yakin form sudah lengkap dan submit berhasil bisa diverifikasi. Jika ragu, kampanye akan dijeda dan meminta keputusan Anda.
+                Mode ini akan submit otomatis hanya jika aman. Jika ada captcha, pertanyaan baru, external redirect, atau submit tidak bisa diverifikasi, kampanye akan dijeda.
               </p>
             </div>
             <label className="grid gap-2 text-sm text-slate-300 md:col-span-2">

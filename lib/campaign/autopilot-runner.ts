@@ -2,8 +2,12 @@ import { prisma } from "@/lib/db/prisma";
 import { runJobstreetCampaign } from "@/lib/browser/jobstreet-agent";
 import { scoreJobFit } from "@/lib/ai/job-scorer";
 import { startJobApplication } from "@/lib/browser/jobstreet-apply-agent";
-import { calibrateJobApply } from "@/lib/browser/jobstreet-apply-calibrator";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
+import { canStartAutopilot } from "@/lib/campaign/campaign-state";
+import {
+  NON_REPICKABLE_APPLICATION_STATUSES,
+  PICKABLE_JOB_STATUSES,
+} from "@/lib/campaign/job-status";
 
 export type AutopilotAction =
   | "safe_continue"
@@ -67,6 +71,31 @@ async function getLatestProfile() {
     throw new Error("Profil kandidat belum tersedia. Analisis CV terlebih dahulu.");
   }
   return profile;
+}
+
+async function restartCampaignIfStopped(campaignId: string, status: string) {
+  if (status !== "stopped") {
+    return false;
+  }
+
+  await setCampaignRuntimeState(campaignId, {
+    status: "running",
+    currentStep: null,
+    currentJobId: null,
+    currentQuestion: null,
+    decisionStatus: null,
+    decisionPayloadJson: null,
+    currentJobTitle: null,
+    currentJobCompany: null,
+  });
+
+  await writeAutomationLog({
+    campaignId,
+    event: "campaign.restart",
+    message: "Kampanye dijalankan ulang oleh user.",
+  });
+
+  return true;
 }
 
 async function ensureJobsExist(campaignId: string) {
@@ -184,20 +213,20 @@ async function pickNextJob(campaignId: string, options?: { allowSkipped?: boolea
     await prisma.application.findMany({
       where: {
         campaignId,
-        status: { in: ["submitted", "pending_review", "paused", "failed"] },
+        status: { in: [...NON_REPICKABLE_APPLICATION_STATUSES] as Array<"submitted" | "pending_review" | "paused" | "failed"> },
       },
       select: { jobListingId: true },
     })
   ).map((item) => item.jobListingId);
 
-  const candidateStatuses: Array<"discovered" | "shortlisted" | "skipped"> = options?.allowSkipped
-    ? ["discovered", "shortlisted", "skipped"]
-    : ["discovered", "shortlisted"];
+  const candidateStatuses = options?.allowSkipped
+    ? [...PICKABLE_JOB_STATUSES]
+    : PICKABLE_JOB_STATUSES.filter((status) => status !== "skipped");
 
   return prisma.jobListing.findFirst({
     where: {
       campaignId,
-      status: { in: candidateStatuses },
+      status: { in: candidateStatuses as Array<"discovered" | "shortlisted" | "skipped"> },
       id: { notIn: blockedJobIds },
     },
     orderBy: [{ matchScore: "desc" }, { createdAt: "asc" }],
@@ -238,9 +267,15 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     return { status: "error", message: "Kampanye tidak ditemukan.", campaignId };
   }
 
-  if (campaign.status === "stopped") {
-    return { status: "stopped", message: "Kampanye sudah dihentikan.", campaignId };
+  if (!canStartAutopilot(campaign.status) && campaign.status !== "running") {
+    return {
+      status: "error",
+      message: `Status kampanye tidak bisa menjalankan autopilot: ${campaign.status}.`,
+      campaignId,
+    };
   }
+
+  await restartCampaignIfStopped(campaignId, campaign.status);
 
   if (campaign.appliedCount >= campaign.targetApplyCount) {
     await setCampaignRuntimeState(campaignId, {
@@ -274,10 +309,10 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     };
   }
 
-  const maxSkippableFailuresPerRun = 5;
-  let consecutiveSkippableFailures = 0;
+  const maxConsecutiveUnavailableJobs = 5;
+  let consecutiveUnavailableJobs = 0;
 
-  while (consecutiveSkippableFailures < maxSkippableFailuresPerRun) {
+  while (consecutiveUnavailableJobs < maxConsecutiveUnavailableJobs) {
     const nextJob = await pickNextJob(campaignId);
     if (!nextJob || !nextJob.campaign) {
       await setCampaignRuntimeState(campaignId, {
@@ -320,13 +355,13 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
           event: "campaign.autopilot_auto_skip",
           message: `Lowongan otomatis dilewati oleh aturan kampanye: ${job.title} di ${job.company}.`,
         });
-        consecutiveSkippableFailures += 1;
+        consecutiveUnavailableJobs = 0;
         continue;
       }
 
       if ((job.campaign as typeof job.campaign & { lowScoreMode?: string }).lowScoreMode === "auto_skip") {
         await prisma.jobListing.update({ where: { id: job.id }, data: { status: "skipped" } });
-        consecutiveSkippableFailures += 1;
+        consecutiveUnavailableJobs = 0;
         continue;
       }
 
@@ -370,110 +405,17 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       }
     }
 
-    await setCampaignRuntimeState(campaignId, {
-      currentStep: "calibrating_apply_flow",
-      currentJobId: job.id,
+    await prisma.jobListing.update({
+      where: { id: job.id },
+      data: { status: "applying" },
     });
 
-    const calibration = await (prisma as unknown as {
-      applicationCalibration: {
-        findFirst: (args: unknown) => Promise<{ status: string } | null>;
-      };
-    }).applicationCalibration.findFirst({
-      where: { jobListingId: job.id },
-      orderBy: { createdAt: "desc" },
-    });
-    const shouldCalibrate = !calibration || calibration.status !== "calibrated";
-
-    if (shouldCalibrate) {
-      const calibrationResult = await calibrateJobApply({
-        jobListingId: job.id,
-        jobUrl: job.url,
-        campaignId,
-      });
-
-      if (calibrationResult.status === "manual_intervention") {
-        await setCampaignRuntimeState(campaignId, {
-          status: "paused",
-          currentStep: "manual_intervention",
-          decisionStatus: "manual_intervention",
-        });
-        return {
-          status: "paused",
-          message: calibrationResult.message,
-          campaignId,
-          currentStep: "manual_intervention",
-          currentJobId: job.id,
-        };
-      }
-
-      if (calibrationResult.status === "failed") {
-        if (calibrationResult.message.includes("Tombol lamar tidak ditemukan")) {
-          await prisma.jobListing.update({ where: { id: job.id }, data: { status: "apply_unavailable" as never } });
-
-          const alreadyLogged = await hasRecentApplyUnavailableLog(campaignId, job.id);
-          if (!alreadyLogged) {
-            await writeAutomationLog({
-              campaignId,
-              jobListingId: job.id,
-              event: "campaign.autopilot_job_apply_unavailable",
-              message: "Lowongan dilewati karena tombol lamar tidak ditemukan. Autopilot melanjutkan ke lowongan berikutnya.",
-            });
-          }
-
-          await setCampaignRuntimeState(campaignId, {
-            status: "running",
-            currentStep: "apply_unavailable_skipped",
-            currentJobId: job.id,
-            decisionStatus: null,
-            decisionPayloadJson: null,
-          });
-
-          consecutiveSkippableFailures += 1;
-          continue;
-        }
-
-        await prisma.jobListing.update({ where: { id: job.id }, data: { status: "failed" } });
-        return {
-          status: "paused",
-          message: calibrationResult.message,
-          campaignId,
-          currentStep: "calibration_failed",
-          currentJobId: job.id,
-        };
-      }
-
-      if (calibrationResult.flowType && calibrationResult.flowType !== "jobstreet_internal") {
-        await setCampaignRuntimeState(campaignId, {
-          status: "paused",
-          currentStep: "external_redirect",
-          decisionStatus: "external_redirect",
-          decisionPayloadJson: JSON.stringify({
-            type: "external_redirect",
-            campaignId,
-            jobId: job.id,
-            title: job.title,
-            company: job.company,
-            flowType: calibrationResult.flowType,
-            platform: calibrationResult.platform ?? "unknown",
-            reason: calibrationResult.message,
-          }),
-        });
-        return {
-          status: "paused",
-          message: calibrationResult.message,
-          campaignId,
-          currentStep: "external_redirect",
-          currentJobId: job.id,
-        };
-      }
-    }
-
-    const profile = await getLatestProfile();
     await setCampaignRuntimeState(campaignId, {
       currentStep: "starting_apply",
       currentJobId: job.id,
     });
+
+    const profile = await getLatestProfile();
 
     const applyResult = await startJobApplication({
       jobListing: {
@@ -532,7 +474,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         metadata: { applicationId: applyResult.applicationId ?? null },
       });
 
-      consecutiveSkippableFailures = 0;
+      consecutiveUnavailableJobs = 0;
 
       const refreshedCampaign = await prisma.campaign.findUnique({
         where: { id: campaignId },
@@ -608,6 +550,41 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       };
     }
 
+    if (applyResult.status === "apply_unavailable") {
+      await prisma.jobListing.update({
+        where: { id: job.id },
+        data: { status: "apply_unavailable" },
+      });
+
+      const alreadyLogged = await hasRecentApplyUnavailableLog(campaignId, job.id);
+      if (!alreadyLogged) {
+        await writeAutomationLog({
+          campaignId,
+          jobListingId: job.id,
+          event: "campaign.autopilot_job_apply_unavailable",
+          message: "Lowongan dilewati karena tombol lamar tidak ditemukan. Autopilot melanjutkan ke lowongan berikutnya.",
+        });
+      }
+
+      await writeAutomationLog({
+        campaignId,
+        jobListingId: job.id,
+        event: "campaign.autopilot_continue_next_job",
+        message: "Autopilot melanjutkan ke lowongan berikutnya setelah lowongan ini tidak bisa dilamar.",
+      });
+
+      await setCampaignRuntimeState(campaignId, {
+        status: "running",
+        currentStep: "apply_unavailable_skipped",
+        currentJobId: job.id,
+        decisionStatus: null,
+        decisionPayloadJson: null,
+      });
+
+      consecutiveUnavailableJobs += 1;
+      continue;
+    }
+
     if (applyResult.status === "pending_review") {
       await setCampaignRuntimeState(campaignId, {
         status: "paused",
@@ -631,6 +608,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       };
     }
 
+    await prisma.jobListing.update({ where: { id: job.id }, data: { status: "failed" } });
     return {
       status: "paused",
       message: applyResult.message,
@@ -643,13 +621,14 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
   await setCampaignRuntimeState(campaignId, {
     status: "paused",
     currentStep: "too_many_unusable_jobs",
+    currentQuestion: `Autopilot menemukan ${maxConsecutiveUnavailableJobs} lowongan beruntun yang tidak bisa dilamar otomatis. Periksa browser atau jalankan pencarian baru.`,
     decisionStatus: null,
     decisionPayloadJson: null,
   });
 
   return {
     status: "paused",
-    message: "Autopilot menemukan beberapa lowongan yang tidak bisa dilamar. Periksa daftar lowongan atau jalankan pencarian baru.",
+    message: `Autopilot dijeda setelah ${maxConsecutiveUnavailableJobs} lowongan beruntun tidak bisa dilamar otomatis. Periksa browser atau jalankan pencarian baru.`,
     campaignId,
     currentStep: "too_many_unusable_jobs",
   };

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
+import { canContinueAutopilot, canStartAutopilot, isCampaignTerminal } from "@/lib/campaign/campaign-state";
 
 function parseJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -108,7 +109,7 @@ export async function GET(
       readableMessage: translateEvent(log.event),
       jobTitle: log.jobListing?.title ?? null,
     })),
-    canContinue: campaign.status === "running" || campaign.status === "ready" || campaign.status === "paused",
+    canContinue: canContinueAutopilot(campaign.status) || canStartAutopilot(campaign.status),
     nextRecommendedAction:
       campaign.status === "paused" && runtimeCampaign.decisionStatus === "low_score"
         ? "decision_required"
@@ -116,7 +117,7 @@ export async function GET(
           ? "question_required"
           : campaign.status === "paused" && runtimeCampaign.decisionStatus === "review_required"
             ? "review_required"
-            : campaign.appliedCount >= campaign.targetApplyCount
+            : campaign.appliedCount >= campaign.targetApplyCount || isCampaignTerminal(campaign.status)
               ? "completed"
               : "safe_continue",
   });

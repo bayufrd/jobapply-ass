@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ApplicationStatusCount = {
   shortlisted: number;
@@ -127,6 +127,8 @@ export function CampaignActions({
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [resultTone, setResultTone] = useState<"success" | "warning" | "error" | null>(null);
+  const autoContinueCountRef = useRef(0);
+  const autoContinueTimerRef = useRef<number | null>(null);
 
   const fetchStatus = useCallback(async () => {
     const res = await fetch(`/api/campaigns/${campaignId}/status`, { cache: "no-store" });
@@ -182,7 +184,19 @@ export function CampaignActions({
     }
   }
 
-  async function runAutopilot(path: "start" | "continue") {
+  function clearAutoContinueTimer() {
+    if (autoContinueTimerRef.current !== null) {
+      window.clearTimeout(autoContinueTimerRef.current);
+      autoContinueTimerRef.current = null;
+    }
+  }
+
+  async function runAutopilot(path: "start" | "continue", options?: { autoSequence?: boolean; resetCounter?: boolean }) {
+    if (options?.resetCounter) {
+      autoContinueCountRef.current = 0;
+      clearAutoContinueTimer();
+    }
+
     setLoadingAction(path);
     setResultMessage(null);
     try {
@@ -196,7 +210,28 @@ export function CampaignActions({
         data.status === "error" ? "error" : data.status === "paused" || data.status === "decision_required" || data.status === "question_required" || data.status === "review_required" ? "warning" : "success",
       );
       await fetchStatus();
+
+      const shouldAutoContinue = ["safe_continue", "submitted", "job_skipped_continue", "apply_unavailable_continue"].includes(data.status);
+      if (options?.autoSequence && shouldAutoContinue && autoContinueCountRef.current < 50) {
+        autoContinueCountRef.current += 1;
+        const delay = 500 + Math.floor(Math.random() * 1000);
+        clearAutoContinueTimer();
+        autoContinueTimerRef.current = window.setTimeout(async () => {
+          const latestStatus = await fetch(`/api/campaigns/${campaignId}/status`, { cache: "no-store" })
+            .then((response) => response.json())
+            .catch(() => null);
+
+          const latestCampaignStatus = latestStatus?.campaign?.status;
+          if (["stopped", "paused", "completed"].includes(latestCampaignStatus)) {
+            clearAutoContinueTimer();
+            return;
+          }
+
+          await runAutopilot("continue", { autoSequence: true });
+        }, delay);
+      }
     } catch (error) {
+      clearAutoContinueTimer();
       setResultMessage(error instanceof Error ? error.message : "Terjadi kesalahan.");
       setResultTone("error");
     } finally {
@@ -237,6 +272,10 @@ export function CampaignActions({
       setLoadingAction(null);
     }
   }
+
+  useEffect(() => () => {
+    clearAutoContinueTimer();
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -318,7 +357,7 @@ export function CampaignActions({
         <h3 className="text-lg font-semibold">Kontrol Kampanye</h3>
         <div className="mt-4 flex flex-wrap gap-3">
           <button
-            onClick={() => runAutopilot("start")}
+            onClick={() => runAutopilot("start", { autoSequence: true, resetCounter: true })}
             disabled={loadingAction !== null || targetReached}
             className="rounded-xl bg-emerald-500 px-4 py-3 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -332,7 +371,7 @@ export function CampaignActions({
             Jeda
           </button>
           <button
-            onClick={() => runAutopilot("continue")}
+            onClick={() => runAutopilot("continue", { autoSequence: true, resetCounter: true })}
             disabled={loadingAction !== null || !statusData?.canContinue || targetReached}
             className="rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-3 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
           >
