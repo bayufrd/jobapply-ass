@@ -7,6 +7,11 @@ import {
   type FilledField,
 } from "@/lib/browser/form-filler";
 import { detectManualIntervention } from "@/lib/browser/page-detector";
+import {
+  clickResolvedFinalSubmit,
+  resolveFinalSubmitButton,
+  type FinalSubmitCandidate as ResolvedFinalSubmitCandidate,
+} from "@/lib/browser/final-submit-resolver";
 import { answerApplicationQuestion } from "@/lib/ai/question-answerer";
 import type { QuestionAnswerResult } from "@/lib/ai/schemas";
 import { prisma } from "@/lib/db/prisma";
@@ -147,12 +152,7 @@ type AnswersJson = {
   }>;
 };
 
-type FinalSubmitCandidate = {
-  locator: string;
-  text: string;
-  confidence: "high" | "medium" | "low";
-  reason: string;
-};
+type FinalSubmitCandidate = ResolvedFinalSubmitCandidate;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -318,6 +318,7 @@ async function findFinalSubmitButton(page: Page): Promise<FinalSubmitCandidate |
               text,
               confidence: "high",
               reason: "Label submit final cocok persis di area review/form.",
+              score: 10,
             };
           }
 
@@ -327,6 +328,7 @@ async function findFinalSubmitButton(page: Page): Promise<FinalSubmitCandidate |
               text,
               confidence: "high",
               reason: "Button type submit ditemukan di area review/application dengan label submit yang sesuai.",
+              score: 9,
             });
             continue;
           }
@@ -337,6 +339,7 @@ async function findFinalSubmitButton(page: Page): Promise<FinalSubmitCandidate |
               text,
               confidence: "medium",
               reason: "Label mengandung kata submit tetapi tidak cukup spesifik untuk auto-submit.",
+              score: 6,
             });
           }
         }
@@ -859,19 +862,48 @@ async function runJobstreetApplyWizard({
           };
         }
 
-        if (!finalSubmitCandidate || finalSubmitCandidate.confidence !== "high") {
-          await prisma.application.update({
-            where: { id: app.id },
-            data: {
-              status: "paused",
-              notes: `Final submit ditemukan tetapi confidence belum cukup tinggi untuk Auto Submit Aman. ${finalSubmitCandidate?.reason ?? "Tidak ada kandidat final submit yang aman."}`,
+        let activeFinalSubmitCandidate = finalSubmitCandidate;
+
+        if (!activeFinalSubmitCandidate || activeFinalSubmitCandidate.confidence !== "high") {
+          const resolvedFinalSubmit = await resolveFinalSubmitButton(page, {
+            title: jobListing.title,
+            company: jobListing.company,
+            reviewKeywords: ["resume", "cover letter", "stay safe", "submit application", "kirim lamaran"],
+          });
+          const resolvedCandidate = resolvedFinalSubmit.candidate;
+
+          await writeAutomationLog({
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+            event: "application.final_submit_recheck",
+            message: "Sistem membaca ulang halaman dan mencari tombol submit final di seluruh halaman.",
+            metadata: {
+              applicationId: app.id,
+              previousCandidate: activeFinalSubmitCandidate,
+              resolvedCandidate,
+              scannedCandidates: resolvedFinalSubmit.scannedCandidates,
+              pageSummary: resolvedFinalSubmit.pageSummary,
             },
           });
-          return {
-            status: "paused",
-            message: "Final submit belum cukup aman untuk diklik otomatis. Periksa browser.",
-            applicationId: app.id,
-          };
+
+          if (!resolvedCandidate || resolvedCandidate.confidence !== "high") {
+            await prisma.application.update({
+              where: { id: app.id },
+              data: {
+                status: "paused",
+                notes:
+                  "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit. Jika tetap belum yakin, gunakan keputusan in-app: Coba Lagi, Scroll dan Cari Submit, Lewati Lowongan, atau Buka Browser.",
+              },
+            });
+            return {
+              status: "paused",
+              message:
+                "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
+              applicationId: app.id,
+            };
+          }
+
+          activeFinalSubmitCandidate = resolvedCandidate;
         }
 
         const unresolvedRequiredFields = await hasUnresolvedRequiredFields(page, filledFields);
@@ -896,14 +928,10 @@ async function runJobstreetApplyWizard({
           jobListingId: jobListing.id,
           event: "application.auto_submit_safe_started",
           message: "Auto Submit Aman dijalankan pada halaman yang sama.",
-          metadata: { applicationId: app.id, screenshotPath: beforeSubmitScreenshot, submitCandidate: finalSubmitCandidate },
+          metadata: { applicationId: app.id, screenshotPath: beforeSubmitScreenshot, submitCandidate: activeFinalSubmitCandidate },
         });
 
-        const finalButton = page
-          .locator(finalSubmitCandidate.locator)
-          .filter({ hasText: new RegExp(finalSubmitCandidate.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") })
-          .first();
-        await finalButton.click();
+        await clickResolvedFinalSubmit(page, activeFinalSubmitCandidate);
 
         await writeAutomationLog({
           campaignId: campaign.id,
@@ -937,7 +965,7 @@ async function runJobstreetApplyWizard({
           await prisma.application.update({ where: { id: app.id }, data: { status: "paused", screenshotPath } });
           return {
             status: "paused",
-            message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+            message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
             applicationId: app.id,
             screenshotPath: screenshotPath ?? undefined,
           };
@@ -950,7 +978,8 @@ async function runJobstreetApplyWizard({
             data: {
               status: "paused",
               screenshotPath,
-              notes: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+              notes:
+                "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit. Jika tetap belum yakin, gunakan keputusan in-app: Coba Lagi, Scroll dan Cari Submit, Lewati Lowongan, atau Buka Browser.",
             },
           });
           await writeAutomationLog({
@@ -958,12 +987,12 @@ async function runJobstreetApplyWizard({
             jobListingId: jobListing.id,
             level: "warn",
             event: "application.submit_unverified",
-            message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+            message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
             metadata: { applicationId: app.id, screenshotPath },
           });
           return {
             status: "paused",
-            message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+            message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
             applicationId: app.id,
             screenshotPath: screenshotPath ?? undefined,
           };
@@ -1253,6 +1282,12 @@ export async function submitApplication({
     });
 
     // Step 9: Find and click submit button (safe matching)
+    const resolvedFinalSubmit = await resolveFinalSubmitButton(page, {
+      title: profile.fullName,
+      company: null,
+      reviewKeywords: ["resume", "cover letter", "stay safe", "submit application", "kirim lamaran"],
+    });
+
     const submitCandidatesBefore = await page
       .locator("button, input[type='submit'], input[type='button'], a[role='button']")
       .evaluateAll((elements) =>
@@ -1276,12 +1311,16 @@ export async function submitApplication({
         applicationId,
         currentUrl: page.url(),
         submitCandidates: submitCandidatesBefore,
+        resolvedCandidate: resolvedFinalSubmit.candidate,
+        scannedCandidates: resolvedFinalSubmit.scannedCandidates,
+        pageSummary: resolvedFinalSubmit.pageSummary,
       },
     });
 
-    const submitClicked = await findAndClickSafeSubmitButton(page);
+    const resolvedCandidate = resolvedFinalSubmit.candidate;
+    const submitClicked = Boolean(resolvedCandidate && resolvedCandidate.confidence !== "low");
 
-    if (!submitClicked) {
+    if (!submitClicked || !resolvedCandidate) {
       screenshotPath = await saveScreenshot(page, "submit_not_found", applicationId);
 
       await writeAutomationLog({
@@ -1289,21 +1328,35 @@ export async function submitApplication({
         jobListingId,
         level: "error",
         event: "application.submit_failed",
-        message: "Tombol submit final yang aman tidak ditemukan di halaman.",
-        metadata: { screenshotPath, currentUrl: page.url(), submitCandidates: submitCandidatesBefore },
+        message: "Tombol submit final belum bisa dipastikan setelah membaca ulang halaman.",
+        metadata: {
+          screenshotPath,
+          currentUrl: page.url(),
+          submitCandidates: submitCandidatesBefore,
+          resolvedCandidate: resolvedFinalSubmit.candidate,
+          scannedCandidates: resolvedFinalSubmit.scannedCandidates,
+          pageSummary: resolvedFinalSubmit.pageSummary,
+        },
       });
 
       await prisma.application.update({
         where: { id: applicationId },
-        data: { status: "failed", screenshotPath },
+        data: {
+          status: "paused",
+          screenshotPath,
+          notes:
+            "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit. Jika tetap belum yakin, gunakan keputusan in-app: Coba Lagi, Scroll dan Cari Submit, Lewati Lowongan, atau Buka Browser.",
+        },
       });
 
       return {
-        status: "failed",
-        message: "Tombol submit tidak ditemukan atau tidak dapat diklik dengan aman.",
+        status: "paused",
+        message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
         screenshotPath: screenshotPath ?? undefined,
       };
     }
+
+    await clickResolvedFinalSubmit(page, resolvedCandidate);
 
     // Step 10: Wait for response and verify actual submit success
     await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
@@ -1377,7 +1430,7 @@ export async function submitApplication({
         jobListingId,
         level: "warn",
         event: "application.submit_unverified",
-        message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+        message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
         metadata: {
           applicationId,
           screenshotPath,
@@ -1392,13 +1445,14 @@ export async function submitApplication({
         data: {
           status: "paused",
           screenshotPath,
-          notes: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+          notes:
+            "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit. Jika tetap belum yakin, gunakan keputusan in-app: Coba Lagi, Scroll dan Cari Submit, Lewati Lowongan, atau Buka Browser.",
         },
       });
 
       return {
         status: "paused",
-        message: "Klik submit mungkin sudah dilakukan, tetapi sistem belum bisa memverifikasi. Periksa browser.",
+        message: "Submit belum bisa dipastikan. Sistem akan mencoba membaca ulang halaman dan mencari tombol submit.",
         screenshotPath: screenshotPath ?? undefined,
       };
     }
@@ -1442,99 +1496,6 @@ export async function submitApplication({
 
 // ── Safe Submit Button Finder ─────────────────────────────────────────
 
-async function findAndClickSafeSubmitButton(page: Page): Promise<boolean> {
-  const reviewAreaSelectors = [
-    "form",
-    "main form",
-    "[role='form']",
-    "[data-automation*='review' i]",
-    "[data-automation*='application' i]",
-    "[class*='review' i]",
-    "[class*='application' i]",
-  ];
-
-  const exactPriorityLabels = ["submit application", "kirim lamaran"];
-  const genericSelectors = [
-    "button",
-    "button[type='submit']",
-    "input[type='submit']",
-    "input[type='button']",
-    "a[role='button']",
-    "[data-automation*='submit' i]",
-  ];
-
-  async function tryClickCandidate(rootSelector?: string) {
-    for (const selector of genericSelectors) {
-      const scopedSelector = rootSelector ? `${rootSelector} ${selector}` : selector;
-      try {
-        const elements = page.locator(scopedSelector);
-        const count = await elements.count();
-
-        for (let i = 0; i < Math.min(count, 20); i++) {
-          const el = elements.nth(i);
-          try {
-            if (!(await el.isVisible()) || (await el.isDisabled())) continue;
-
-            const text = (((await el.textContent()) ?? (await el.getAttribute("value")) ?? "").toLowerCase().trim());
-            if (!text) continue;
-
-            const isAllowed = ALLOWED_SUBMIT_LABELS.some((label) => text === label || text.includes(label));
-            const isBlocked = BLOCKED_SUBMIT_LABELS.some((label) => text.includes(label));
-            if (!isAllowed || isBlocked) continue;
-
-            const roleHint = await el.evaluate((node) => {
-              const parentText = (node.parentElement?.textContent || "").toLowerCase();
-              const ancestorText = (node.closest("form, main, section, article")?.textContent || "").toLowerCase();
-              return `${parentText} ${ancestorText}`;
-            }).catch(() => "");
-
-            if (rootSelector) {
-              await el.click();
-              return true;
-            }
-
-            if (roleHint.includes("submit") || roleHint.includes("review") || roleHint.includes("application") || roleHint.includes("lamaran")) {
-              await el.click();
-              return true;
-            }
-          } catch {
-            // Try next candidate
-          }
-        }
-      } catch {
-        // Try next selector
-      }
-    }
-
-    return false;
-  }
-
-  for (const label of exactPriorityLabels) {
-    for (const area of reviewAreaSelectors) {
-      try {
-        const exactButton = page.locator(`${area} button`).filter({ hasText: new RegExp(`^\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i") }).first();
-        if ((await exactButton.count()) > 0 && (await exactButton.isVisible()) && !(await exactButton.isDisabled())) {
-          await exactButton.click();
-          return true;
-        }
-      } catch {
-        // Try next area
-      }
-    }
-  }
-
-  for (const area of reviewAreaSelectors) {
-    if (await tryClickCandidate(area)) {
-      return true;
-    }
-  }
-
-  if (await tryClickCandidate()) {
-    return true;
-  }
-
-  return false;
-}
 
 async function clickSafeContinueButton(page: Page): Promise<{ clicked: boolean; label?: string }> {
   const selectors = [

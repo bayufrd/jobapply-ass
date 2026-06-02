@@ -397,9 +397,9 @@ Hasil target verifikasi manual:
 * [ ] Konfirmasi AI membaca visible form dan mengisi field dari CV/profile/default kampanye.
 * [ ] Konfirmasi pertanyaan Yes/No dijawab otomatis bila diketahui, atau muncul sebagai keputusan in-app bila tidak yakin.
 * [ ] Konfirmasi user bisa memilih Accept/Reject/Yes/No/Edit Answer/Skip Job dari halaman kampanye.
-* [ ] Konfirmasi final submit diklik otomatis bila aman dan status `submitted` hanya muncul setelah verifikasi sukses.
+* [ ] Konfirmasi final submit diklik otomatis bila aman, termasuk bila tombol baru muncul setelah scroll/read ulang halaman, dan status `submitted` hanya muncul setelah verifikasi sukses.
 * [ ] Konfirmasi Autopilot lanjut ke lowongan berikutnya otomatis.
-* [ ] Konfirmasi tidak ada bahasa normal-flow seperti "cek browser" selain kasus captcha/login/OTP/security.
+* [ ] Konfirmasi tidak ada bahasa normal-flow seperti "cek browser" atau "periksa browser" selain kasus captcha/login/OTP/security.
 
 Catatan:
 * Kalibrasi tidak lagi menjadi blocker jalur utama Autopilot.
@@ -416,7 +416,7 @@ Catatan:
 | 2026-06-02 | Selector Jobstreet bisa rusak jika UI berubah | Jobstreet UI dapat berubah sewaktu-waktu | Open/Risk | `lib/browser/jobstreet-agent.ts` |
 | 2026-06-02 | Browser tetap terbuka saat manual intervention | Ini sesuai kebijakan keamanan, tetapi resume session sesudah intervensi belum penuh | Open/Limitation | `lib/browser/jobstreet-agent.ts` |
 | 2026-06-02 | External redirect flow belum selesai untuk submit akhir | Default arah produk adalah pause keputusan in-app untuk website eksternal | Open/Limitation | `lib/browser/ai-first-apply-runner.ts`, `lib/browser/jobstreet-apply-calibrator.ts` |
-| 2026-06-02 | Submit flow belum diverifikasi end-to-end terhadap Jobstreet nyata | Memerlukan testing manual dengan browser visible | Open | `lib/browser/ai-first-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts` |
+| 2026-06-02 | Submit flow belum diverifikasi end-to-end terhadap Jobstreet nyata | Resolver submit final full-page sudah ditambahkan, tetapi masih perlu testing manual dengan browser visible pada halaman Jobstreet asli | Open | `lib/browser/final-submit-resolver.ts`, `lib/browser/ai-first-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts` |
 
 ## 16. Risiko / Batasan
 
@@ -428,7 +428,7 @@ Tuliskan batasan saat ini:
 * Maksimal 10-20 lowongan diperiksa per run.
 * Hanya halaman pertama hasil pencarian yang diambil (tidak ada paginasi).
 * Jobstreet UI dapat berubah sewaktu-waktu sehingga selector Playwright bisa rusak.
-* Submit final harus melalui approval user.
+* Submit final harus melalui approval user, tetapi setelah approval sistem kini mencoba scroll, membaca ulang halaman, mencari tombol submit final, klik bila aman, lalu memverifikasi hasil sebelum lanjut.
 * App hanya untuk penggunaan pribadi/lokal.
 * Selector extraction menggunakan multiple strategies untuk ketahanan, tetapi perubahan besar pada UI Jobstreet mungkin memerlukan update manual.
 * Form filling menggunakan defensive selector strategy, tetapi form yang sangat berbeda dari ekspektasi mungkin tidak terisi penuh.
@@ -441,7 +441,7 @@ Tuliskan batasan saat ini:
 Checklist fitur yang belum selesai:
 
 * [ ] Implementasi login Jobstreet otomatis atau semi-otomatis yang benar-benar memakai credential/session secara aman.
-* [x] Final submit lamaran setelah approval user. (Implemented, needs manual verification against live Jobstreet)
+* [x] Final submit lamaran setelah approval user. (Implemented with full-page resolver + re-read flow, still needs manual verification against live Jobstreet)
 * [x] Tautkan screenshot error/intervensi ke record aplikasi yang relevan. (Screenshots now saved and linked)
 * [x] Apply calibration dry run. (Implemented, needs manual verification against live Jobstreet)
 * [ ] Verifikasi end-to-end submit, campaign loop, dan calibration terhadap Jobstreet nyata.

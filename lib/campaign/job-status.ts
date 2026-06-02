@@ -27,6 +27,5 @@ export const NON_REPICKABLE_APPLICATION_STATUSES = [
   "submitted",
   "pending_review",
   "paused",
-  "processing",
   "failed",
 ] as const;
