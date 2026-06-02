@@ -548,22 +548,40 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       const inferredDecisionStatus = pendingQuestion
         ? "question_required"
         : pausedReason === "Verifikasi manual terdeteksi"
-          ? "manual_intervention"
-          : pausedReason === "Submit final eksternal membutuhkan review"
-            ? "review_required"
-            : pausedReason === "AI membutuhkan jawaban Anda"
-              ? "question_required"
-              : "paused";
+          || pausedReason.includes("intervensi manual")
+          || pausedReason.includes("halaman eksternal")
+            ? "manual_intervention"
+            : pausedReason === "Submit final eksternal membutuhkan review"
+              ? "review_required"
+              : pausedReason === "AI membutuhkan jawaban Anda"
+                || pausedReason.includes("butuh jawaban user")
+                || pausedReason.includes("CV belum terpilih")
+                  ? "question_required"
+                  : pausedReason.includes("submit") && pausedReason.includes("verifikasi")
+                    ? "submit_unverified"
+                    : "paused";
+
+      const resolvedCurrentStep = pendingQuestion
+        ? "employer_questions"
+        : pausedReason.includes("CV belum terpilih")
+          ? "choose_documents"
+          : pausedReason.includes("pertanyaan employer")
+            ? "employer_questions"
+            : pausedReason.includes("update profile") || pausedReason.includes("profil Jobstreet")
+              ? "update_profile"
+              : pausedReason.includes("review") || pausedReason.includes("submit application")
+                ? "review_submit"
+                : inferredDecisionStatus === "manual_intervention"
+                  ? "manual_intervention"
+                  : inferredDecisionStatus === "review_required"
+                    ? "review_required"
+                    : inferredDecisionStatus === "submit_unverified"
+                      ? "submit_unverified"
+                      : "apply_paused";
 
       await setCampaignRuntimeState(campaignId, {
         status: "paused",
-        currentStep: pendingQuestion
-          ? "question_required"
-          : inferredDecisionStatus === "manual_intervention"
-            ? "manual_intervention"
-            : inferredDecisionStatus === "review_required"
-              ? "review_required"
-              : "apply_paused",
+        currentStep: resolvedCurrentStep,
         currentQuestion: pendingQuestion ?? pausedReason,
         decisionStatus: inferredDecisionStatus,
         decisionPayloadJson: JSON.stringify({
@@ -571,16 +589,19 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
           applicationId: application?.id ?? null,
           question: pendingQuestion,
           message: applyResult.message,
+          step: resolvedCurrentStep,
         }),
       });
 
       return {
-        status: pendingQuestion ? "question_required" : inferredDecisionStatus === "manual_intervention"
-          ? "manual_intervention_required"
-          : "submit_unverified",
+        status: pendingQuestion || inferredDecisionStatus === "question_required"
+          ? "question_required"
+          : inferredDecisionStatus === "manual_intervention"
+            ? "manual_intervention_required"
+            : "submit_unverified",
         message: applyResult.message,
         campaignId,
-        currentStep: pendingQuestion ? "question_required" : inferredDecisionStatus === "manual_intervention" ? "manual_intervention" : "submit_unverified",
+        currentStep: resolvedCurrentStep,
         currentJobId: job.id,
         applicationId: application?.id,
       };

@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 import { prisma } from "@/lib/db/prisma";
 import { detectManualIntervention } from "@/lib/browser/page-detector";
+import { detectJobstreetApplyStep } from "@/lib/browser/jobstreet-apply-step-detector";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
 import { captureVisibleDomSnapshot, type DomSnapshot } from "@/lib/browser/dom-snapshot";
 import { planUiNextActions } from "@/lib/ai/ui-action-planner";
@@ -392,11 +393,113 @@ export async function runAiFirstApplyRunner({
       });
     }
 
+    const pageText = (await page.textContent("body").catch(() => "")) ?? "";
+    const detectedStep = detectJobstreetApplyStep(page.url(), pageText);
+
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      event: "jobstreet_apply.step_detected_from_url",
+      message: `Langkah Jobstreet dari URL terdeteksi: ${detectedStep}.`,
+      metadata: { step: detectedStep, url: page.url() },
+    });
+
     const intervention = await detectManualIntervention(page);
-    if (intervention.detected && intervention.reason) {
+    if (intervention.detected && intervention.reasonCode && intervention.confidence >= 0.85) {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        level: "warn",
+        event: "manual_intervention.confirmed",
+        message: "Intervensi manual dengan bukti kuat terkonfirmasi.",
+        metadata: {
+          step: detectedStep,
+          url: page.url(),
+          type: intervention.type,
+          confidence: intervention.confidence,
+          evidence: intervention.evidence,
+        },
+      });
       const paused = await createPausedApplication({ campaign, jobListing, note: "Verifikasi manual terdeteksi", answersJson });
       applicationId = paused.id;
-      return { status: "paused", message: "Verifikasi manual terdeteksi", applicationId };
+      return { status: "paused", message: "Jobstreet meminta login/verifikasi keamanan. Selesaikan di browser yang terbuka, lalu klik Lanjutkan.", applicationId };
+    }
+
+    if (intervention.detected) {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        level: "warn",
+        event: "manual_intervention.candidate_detected",
+        message: "Kandidat intervensi manual terdeteksi tetapi belum cukup kuat untuk pause.",
+        metadata: {
+          step: detectedStep,
+          url: page.url(),
+          type: intervention.type,
+          confidence: intervention.confidence,
+          evidence: intervention.evidence,
+        },
+      });
+
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "manual_intervention.false_positive_rejected",
+        message: "Deteksi intervensi manual lemah ditolak dan flow Jobstreet normal dilanjutkan.",
+        metadata: { step: detectedStep, url: page.url(), evidence: intervention.evidence },
+      });
+    }
+
+    if (detectedStep === "success") {
+      const submitted = await markSubmitted({ campaign, jobListing, note: "Lamaran berhasil diverifikasi oleh URL success Jobstreet.", answersJson });
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "jobstreet_apply.success_detected",
+        message: "Halaman success Jobstreet terdeteksi. Lamaran ditandai terkirim.",
+        metadata: { url: page.url() },
+      });
+      return { status: "submitted", message: "Lamaran berhasil dikirim.", applicationId: submitted.id };
+    }
+
+    if (detectedStep === "choose_documents") {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "jobstreet_apply.choose_documents_continue",
+        message: "Langkah memilih dokumen terdeteksi. Sistem mencoba klik Continue.",
+        metadata: { url: page.url() },
+      });
+    }
+
+    if (detectedStep === "employer_questions") {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "jobstreet_apply.employer_questions_started",
+        message: "Langkah pertanyaan employer terdeteksi. AI mulai membaca field yang terlihat.",
+        metadata: { url: page.url() },
+      });
+    }
+
+    if (detectedStep === "update_profile") {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "jobstreet_apply.update_profile_started",
+        message: "Langkah Update Jobstreet Profile terdeteksi. Sistem mulai memeriksa field wajib yang kosong.",
+        metadata: { url: page.url() },
+      });
+    }
+
+    if (detectedStep === "review_submit") {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "jobstreet_apply.review_submit_detected",
+        message: "Langkah review dan submit Jobstreet terdeteksi.",
+        metadata: { url: page.url() },
+      });
     }
 
     const success = await verifySubmitSuccess(page);

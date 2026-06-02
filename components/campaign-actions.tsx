@@ -103,6 +103,16 @@ function stepLabel(step: string | null | undefined) {
       return "Membuka lowongan";
     case "starting_apply":
       return "AI membaca form";
+    case "choose_documents":
+      return "Memilih dokumen";
+    case "employer_questions":
+      return "Menjawab pertanyaan employer";
+    case "update_profile":
+      return "Memperbarui profil Jobstreet";
+    case "review_submit":
+      return "Review dan submit";
+    case "success":
+      return "Lamaran berhasil dikirim";
     case "question_required":
       return "Menunggu keputusan user";
     case "submit_unverified":

@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --test tests/**/*.test.ts",
     "db:seed": "node --experimental-strip-types prisma/seed.ts",
     "mcp:playwright": "npx @playwright/mcp@latest --port 8931 --user-data-dir .mcp-browser-profile --viewport-size 1366x900 --timeout-action 5000 --timeout-navigation 60000"
   },

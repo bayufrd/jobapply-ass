@@ -1,6 +1,7 @@
 import type { ApplicationStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { planMcpUiAction, type McpAiActionPlan } from "@/lib/ai/mcp-ui-action-planner";
+import { detectJobstreetApplyStep } from "@/lib/browser/jobstreet-apply-step-detector";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
 import { executeMcpActionPlan } from "@/lib/mcp/mcp-action-executor";
 import { hasMcpSuccessMarker, normalizeMcpSnapshot, type NormalizedMcpPage } from "@/lib/mcp/mcp-snapshot-normalizer";
@@ -205,6 +206,21 @@ export async function runMcpAiApplyRunner({
         metadata: { applicationId: application.id, step, url: snapshot.url, title: snapshot.title },
       });
 
+      const detectedStep = detectJobstreetApplyStep(snapshot.url, snapshot.accessibilityText);
+
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        event: "jobstreet_apply.step_detected",
+        message: `Langkah Jobstreet terdeteksi: ${detectedStep}.`,
+        metadata: {
+          applicationId: application.id,
+          step,
+          stepName: detectedStep,
+          url: snapshot.url,
+        },
+      });
+
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,
@@ -214,11 +230,52 @@ export async function runMcpAiApplyRunner({
           applicationId: application.id,
           step,
           pageKind: normalized.pageKind,
+          detectedStep,
           submitCandidates: normalized.submitCandidates,
           questions: normalized.questions,
           buttons: normalized.buttons.slice(0, 12),
         },
       });
+
+      if (detectedStep === "choose_documents") {
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          event: "jobstreet_apply.choose_documents_continue",
+          message: "Langkah memilih dokumen terdeteksi. Sistem mencoba klik Continue.",
+          metadata: { applicationId: application.id, step, url: snapshot.url },
+        });
+      }
+
+      if (detectedStep === "employer_questions") {
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          event: "jobstreet_apply.employer_questions_started",
+          message: "Langkah pertanyaan employer terdeteksi. AI mulai membaca field yang terlihat.",
+          metadata: { applicationId: application.id, step, url: snapshot.url, questions: normalized.questions },
+        });
+      }
+
+      if (detectedStep === "update_profile") {
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          event: "jobstreet_apply.update_profile_started",
+          message: "Langkah Update Jobstreet Profile terdeteksi. Sistem mulai memeriksa field wajib yang kosong.",
+          metadata: { applicationId: application.id, step, url: snapshot.url },
+        });
+      }
+
+      if (detectedStep === "review_submit") {
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          event: "jobstreet_apply.review_submit_detected",
+          message: "Langkah review dan submit Jobstreet terdeteksi.",
+          metadata: { applicationId: application.id, step, url: snapshot.url, submitCandidates: normalized.submitCandidates },
+        });
+      }
 
       if (normalized.pageKind === "login_or_security") {
         await prisma.application.update({ where: { id: application.id }, data: { status: "paused", notes: "Perlu login/captcha/OTP/verifikasi keamanan manual." } });
@@ -230,8 +287,15 @@ export async function runMcpAiApplyRunner({
         };
       }
 
-      if (hasMcpSuccessMarker(normalized)) {
+      if (detectedStep === "success" || hasMcpSuccessMarker(normalized)) {
         await verifySubmitted(campaign, jobListing, application.id);
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          event: "jobstreet_apply.success_detected",
+          message: "Halaman success Jobstreet terdeteksi. Lamaran ditandai terkirim.",
+          metadata: { applicationId: application.id, step, url: snapshot.url },
+        });
         await writeAutomationLog({
           campaignId: campaign.id,
           jobListingId: jobListing.id,

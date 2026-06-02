@@ -100,21 +100,21 @@ async function checkIntervention(
   stage: string,
 ): Promise<CampaignRunResult | null> {
   const detection = await detectManualIntervention(page);
-  if (detection.detected && detection.reason) {
-    const message = buildInterventionMessage(detection.reason);
+  if (detection.detected && detection.reasonCode) {
+    const message = buildInterventionMessage(detection.reasonCode);
     await writeAutomationLog({
       campaignId,
       level: "warn",
       event: "jobstreet.search_manual_intervention",
       message: `Intervensi manual terdeteksi pada tahap ${stage}: ${message}`,
-      metadata: { stage, details: detection.details ?? null },
+      metadata: { stage, details: detection.details ?? null, evidence: detection.evidence, confidence: detection.confidence },
     });
-    const manualState = requiresManualIntervention(detection.reason);
+    const manualState = requiresManualIntervention(detection.reasonCode);
     return {
       paused: manualState.paused,
       reason: manualState.reason,
       message:
-        "Jobstreet meminta login atau verifikasi manual. Selesaikan di browser yang terbuka, lalu klik Lanjutkan Kampanye.",
+        "Jobstreet meminta login/verifikasi keamanan. Selesaikan di browser yang terbuka, lalu klik Lanjutkan Kampanye.",
       status: "manual_intervention",
       jobsFound: 0,
       jobsSaved: 0,

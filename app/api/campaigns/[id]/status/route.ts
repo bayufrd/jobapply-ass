@@ -43,6 +43,16 @@ function translateEvent(event: string) {
     "mcp_ai.submit_unverified": "Submit sudah diklik tetapi marker sukses MCP belum muncul.",
     "mcp_ai.runner_failed": "Runner MCP gagal dijalankan.",
     "mcp_ai.server_unavailable": "Playwright MCP belum aktif.",
+    "jobstreet_apply.step_detected": "Langkah apply Jobstreet berhasil dideteksi dari URL.",
+    "jobstreet_apply.choose_documents_continue": "Langkah memilih dokumen terdeteksi dan sistem mencoba lanjut.",
+    "jobstreet_apply.employer_questions_started": "Langkah pertanyaan employer terdeteksi.",
+    "jobstreet_apply.employer_questions_answered": "Pertanyaan employer berhasil dijawab.",
+    "jobstreet_apply.update_profile_continue": "Langkah update profil Jobstreet terdeteksi dan sistem mencoba lanjut.",
+    "jobstreet_apply.review_submit_detected": "Langkah review dan submit Jobstreet terdeteksi.",
+    "jobstreet_apply.submit_clicked": "Tombol submit application berhasil diklik.",
+    "jobstreet_apply.success_detected": "Halaman success Jobstreet terdeteksi.",
+    "jobstreet_apply.step_timeout": "Langkah Jobstreet melebihi batas waktu.",
+    "jobstreet_apply.step_mismatch": "URL Jobstreet tidak cocok dengan langkah yang diharapkan.",
   };
 
   return map[event] ?? event.replace(/\./g, " · ");
