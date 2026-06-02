@@ -51,6 +51,16 @@ type CampaignStatusResponse = {
     lastEvent: string | null;
     lastMessage: string | null;
   };
+  mcpUnavailable: {
+    title: string;
+    body: string;
+    command: string;
+    technicalDetails: string | null;
+  } | null;
+  localLog: {
+    file: string;
+    apiUrl: string;
+  };
   lastDecisionRequired: {
     type?: string;
     jobId?: string;
@@ -62,6 +72,8 @@ type CampaignStatusResponse = {
     applicationId?: string;
     question?: string;
     message?: string;
+    technicalDetails?: string | null;
+    mcpUrl?: string | null;
   } | null;
   latestLogs: Array<{
     id: string;
@@ -133,6 +145,8 @@ function stepLabel(step: string | null | undefined) {
       return "Tidak ada lowongan tersisa";
     case "decision_resolved":
       return "Keputusan diproses, siap lanjut";
+    case "mcp_unavailable":
+      return "Playwright MCP belum aktif";
     default:
       return step ?? "Belum ada status proses";
   }
@@ -422,6 +436,44 @@ export function CampaignActions({
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
         <h3 className="text-lg font-semibold">Kontrol Kampanye</h3>
+
+        {statusData?.mcpUnavailable && (
+          <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 text-sm text-amber-100">
+            <p className="text-xs uppercase tracking-[0.3em] text-amber-300">MCP AI First</p>
+            <h4 className="mt-2 text-lg font-semibold text-white">{statusData.mcpUnavailable.title}</h4>
+            <p className="mt-2 text-slate-200">{statusData.mcpUnavailable.body}</p>
+            <pre className="mt-3 overflow-x-auto rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm text-cyan-300">{statusData.mcpUnavailable.command}</pre>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                onClick={() => fetchStatus().catch(() => undefined)}
+                disabled={loadingAction !== null}
+                className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                Cek Ulang MCP
+              </button>
+              <button
+                onClick={() => runAutopilot("continue", { autoSequence: true, resetCounter: true })}
+                disabled={loadingAction !== null || !statusData?.canContinue}
+                className="rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-50"
+              >
+                Lanjutkan Kampanye
+              </button>
+              <Link href="/logs" className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
+                Buka Log
+              </Link>
+              <Link href={statusData.localLog.apiUrl} target="_blank" className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20">
+                Lihat Local Log
+              </Link>
+            </div>
+            {statusData.mcpUnavailable.technicalDetails && (
+              <details className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-4 text-slate-300">
+                <summary className="cursor-pointer text-sm font-medium text-slate-200">Detail teknis</summary>
+                <p className="mt-3 break-all text-xs text-slate-400">{statusData.mcpUnavailable.technicalDetails}</p>
+              </details>
+            )}
+          </div>
+        )}
+
         <div className="mt-4 flex flex-wrap gap-3">
           <button
             onClick={() => runAutopilot("start", { autoSequence: true, resetCounter: true })}
@@ -453,6 +505,9 @@ export function CampaignActions({
           </button>
           <Link href="/logs" className="rounded-xl border border-slate-700 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800">
             Buka Log
+          </Link>
+          <Link href={statusData?.localLog.apiUrl ?? `/api/campaigns/${campaignId}/local-log?tail=300`} target="_blank" className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20">
+            Lihat Local Log
           </Link>
           <Link href="/jobs" className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20">
             Lihat Lowongan

@@ -1,3 +1,25 @@
+export class PlaywrightMcpError extends Error {
+  stage: string;
+  mcpUrl: string;
+  toolName?: string;
+  causeMessage?: string;
+
+  constructor(input: {
+    message: string;
+    stage: string;
+    mcpUrl: string;
+    toolName?: string;
+    causeMessage?: string;
+  }) {
+    super(input.message);
+    this.name = "PlaywrightMcpError";
+    this.stage = input.stage;
+    this.mcpUrl = input.mcpUrl;
+    this.toolName = input.toolName;
+    this.causeMessage = input.causeMessage;
+  }
+}
+
 type McpToolResponse = {
   content?: Array<{
     type?: string;
@@ -152,39 +174,63 @@ export class PlaywrightMcpClient {
     this.baseUrl = baseUrl;
   }
 
+  getMcpUrl() {
+    return this.baseUrl;
+  }
+
   async connect(): Promise<void> {
     if (this.sessionInitialized) {
       return;
     }
 
-    const response = await fetch(this.baseUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
+    const response = await this.performFetch(
+      {
+        stage: "mcp_connect",
+        methodName: "initialize",
+        toolName: undefined,
       },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: this.nextId(),
-        method: "initialize",
-        params: {
-          protocolVersion: "2024-11-05",
-          capabilities: {},
-          clientInfo: {
-            name: "jobapply-ass",
-            version: "0.1.0",
-          },
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
         },
-      }),
-    });
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: this.nextId(),
+          method: "initialize",
+          params: {
+            protocolVersion: "2024-11-05",
+            capabilities: {},
+            clientInfo: {
+              name: "jobapply-ass",
+              version: "0.1.0",
+            },
+          },
+        }),
+      },
+    );
 
     if (!response.ok) {
-      throw new Error(`Playwright MCP tidak tersedia (${response.status}).`);
+      throw new PlaywrightMcpError({
+        stage: "mcp_connect",
+        mcpUrl: this.baseUrl,
+        causeMessage: `HTTP ${response.status}`,
+        message:
+          response.status >= 500
+            ? `MCP gagal koneksi ke ${this.baseUrl}. Server MCP merespons ${response.status}.`
+            : `MCP gagal koneksi ke ${this.baseUrl}. Pastikan npm run mcp:playwright sedang berjalan.`,
+      });
     }
 
     const data = (await response.json().catch(() => null)) as McpInitializeResponse | null;
     if (data?.error) {
-      throw new Error(data.error.message || "Gagal inisialisasi Playwright MCP.");
+      throw new PlaywrightMcpError({
+        stage: "mcp_connect",
+        mcpUrl: this.baseUrl,
+        causeMessage: data.error.message || "initialize error",
+        message: `MCP gagal pada tahap mcp_connect: ${data.error.message || "initialize error"}. URL MCP: ${this.baseUrl}`,
+      });
     }
 
     this.sessionInitialized = true;
@@ -255,30 +301,52 @@ export class PlaywrightMcpClient {
   private async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     await this.connect();
 
-    const response = await fetch(this.baseUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
+    const response = await this.performFetch(
+      {
+        stage: "mcp_tool_call",
+        methodName: "tools/call",
+        toolName: name,
       },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: this.nextId(),
-        method: "tools/call",
-        params: {
-          name,
-          arguments: args,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
         },
-      }),
-    });
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: this.nextId(),
+          method: "tools/call",
+          params: {
+            name,
+            arguments: args,
+          },
+        }),
+      },
+    );
 
     if (!response.ok) {
-      throw new Error(`Panggilan MCP ${name} gagal (${response.status}).`);
+      throw new PlaywrightMcpError({
+        stage: "mcp_tool_call",
+        mcpUrl: this.baseUrl,
+        toolName: name,
+        causeMessage: `HTTP ${response.status}`,
+        message:
+          response.status >= 500
+            ? `MCP gagal memanggil ${name}. Server MCP merespons ${response.status}.`
+            : `MCP gagal pada tahap mcp_tool_call: HTTP ${response.status}. URL MCP: ${this.baseUrl}`,
+      });
     }
 
     const data = (await response.json().catch(() => null)) as McpCallToolResponse | null;
     if (data?.error) {
-      throw new Error(data.error.message || `Panggilan MCP ${name} gagal.`);
+      throw new PlaywrightMcpError({
+        stage: "mcp_tool_call",
+        mcpUrl: this.baseUrl,
+        toolName: name,
+        causeMessage: data.error.message || `tool error: ${name}`,
+        message: `MCP gagal pada tahap mcp_tool_call: ${data.error.message || `tool error: ${name}`}. URL MCP: ${this.baseUrl}`,
+      });
     }
 
     const blocks = Array.isArray(data?.result?.content) ? data?.result?.content : [];
@@ -288,6 +356,29 @@ export class PlaywrightMcpClient {
       .join("\n");
 
     return safeJsonParse<unknown>(text) ?? data?.result ?? { rawText: text };
+  }
+
+  private async performFetch(
+    context: { stage: string; methodName: string; toolName?: string },
+    init: RequestInit,
+  ) {
+    try {
+      return await fetch(this.baseUrl, init);
+    } catch (error) {
+      const causeMessage = error instanceof Error ? error.message : "fetch failed";
+      const message =
+        context.methodName === "initialize"
+          ? `MCP fetch failed saat initialize. Kemungkinan MCP sidecar belum aktif. URL MCP: ${this.baseUrl}`
+          : `MCP gagal pada tahap ${context.stage}: ${causeMessage}. URL MCP: ${this.baseUrl}`;
+
+      throw new PlaywrightMcpError({
+        stage: context.stage,
+        mcpUrl: this.baseUrl,
+        toolName: context.toolName,
+        causeMessage,
+        message,
+      });
+    }
   }
 
   private nextId() {

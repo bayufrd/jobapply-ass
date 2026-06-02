@@ -29,20 +29,39 @@ function translateEvent(event: string) {
     "ai_ui.ask_user_required": "AI membutuhkan jawaban Anda untuk melanjutkan.",
     "ai_ui.final_submit_detected": "AI mendeteksi submit final yang aman.",
     "ai_ui.submitted_verified": "Submit final berhasil diverifikasi oleh AI UI Agent.",
+    "mcp.preflight_started": "Memeriksa koneksi Playwright MCP sebelum menjalankan kampanye.",
+    "mcp.preflight_ok": "Playwright MCP aktif dan bisa diakses.",
+    "mcp.preflight_failed": "Playwright MCP tidak bisa diakses.",
     "mcp_ai.runner_started": "Runner MCP AI First dimulai.",
+    "mcp_ai.connect_started": "Mulai koneksi ke Playwright MCP.",
+    "mcp_ai.connect_ok": "Koneksi Playwright MCP berhasil.",
+    "mcp_ai.connect_failed": "Koneksi Playwright MCP gagal.",
+    "mcp_ai.navigate_started": "MCP mulai membuka halaman lowongan.",
+    "mcp_ai.navigate_ok": "MCP berhasil membuka halaman lowongan.",
+    "mcp_ai.snapshot_started": "MCP mulai mengambil snapshot halaman.",
+    "mcp_ai.snapshot_ok": "Snapshot awal MCP berhasil diambil.",
     "mcp_ai.snapshot_captured": "Snapshot MCP berhasil diambil.",
+    "mcp_ai.snapshot_failed": "Snapshot MCP gagal diambil.",
     "mcp_ai.page_kind_detected": "Jenis halaman MCP berhasil dideteksi.",
     "mcp_ai.plan_requested": "Planner AI MCP sedang diminta.",
     "mcp_ai.plan_received": "Planner AI MCP mengembalikan rencana aksi.",
     "mcp_ai.action_executed": "Aksi MCP berhasil dijalankan.",
     "mcp_ai.no_progress_detected": "Tidak ada progres yang terlihat setelah aksi MCP.",
     "mcp_ai.ask_user_required": "AI MCP membutuhkan keputusan Anda.",
+    "mcp_ai.tool_call_failed": "Panggilan tool MCP gagal.",
     "mcp_ai.final_submit_detected": "Snapshot MCP mendeteksi kandidat submit akhir.",
     "mcp_ai.final_submit_clicked": "Submit akhir dijalankan melalui MCP.",
     "mcp_ai.submit_verified": "Lamaran berhasil diverifikasi oleh snapshot MCP.",
     "mcp_ai.submit_unverified": "Submit sudah diklik tetapi marker sukses MCP belum muncul.",
     "mcp_ai.runner_failed": "Runner MCP gagal dijalankan.",
     "mcp_ai.server_unavailable": "Playwright MCP belum aktif.",
+    "campaign.phase_search_started": "Fase 1/3 dimulai: mencari dan menyimpan lowongan.",
+    "campaign.phase_search_completed": "Fase 1/3 selesai: lowongan tersimpan.",
+    "campaign.phase_apply_started": "Fase 2/3 dimulai: apply dengan MCP AI First.",
+    "campaign.phase_apply_job_started": "Mulai apply ke lowongan saat ini.",
+    "campaign.phase_apply_job_finished": "Apply untuk lowongan saat ini selesai.",
+    "campaign.phase_next_job": "Fase 3/3: lanjut ke lowongan berikutnya.",
+    "campaign.search_limit_info": "Batas pencarian awal autopilot ditampilkan.",
     "jobstreet_apply.step_detected": "Langkah apply Jobstreet berhasil dideteksi dari URL.",
     "jobstreet_apply.choose_documents_continue": "Langkah memilih dokumen terdeteksi dan sistem mencoba lanjut.",
     "jobstreet_apply.employer_questions_started": "Langkah pertanyaan employer terdeteksi.",
@@ -130,9 +149,14 @@ export async function GET(
           ? "review_required"
           : campaign.status === "paused" && runtimeCampaign.decisionStatus === "submit_unverified"
             ? "submit_unverified"
-            : campaign.appliedCount >= campaign.targetApplyCount || isCampaignTerminal(campaign.status)
-              ? "completed"
-              : "safe_continue";
+            : campaign.status === "paused" && runtimeCampaign.decisionStatus === "mcp_unavailable"
+              ? "mcp_unavailable"
+              : campaign.appliedCount >= campaign.targetApplyCount || isCampaignTerminal(campaign.status)
+                ? "completed"
+                : "safe_continue";
+
+  const latestMcpFailureLog = campaign.logs.find((log) => log.event === "mcp.preflight_failed" || log.event === "mcp_ai.runner_failed") ?? null;
+  const latestMcpFailureMetadata = parseJson<Record<string, unknown> | null>(latestMcpFailureLog?.metadataJson, null);
 
   return NextResponse.json({
     campaign,
@@ -170,6 +194,22 @@ export async function GET(
       lastMessage: latestWatchdogLog?.message ?? null,
     },
     lastDecisionRequired: parseJson(runtimeCampaign.decisionPayloadJson, null),
+    localLog: {
+      file: `storage/logs/campaign-${id}.log`,
+      apiUrl: `/api/campaigns/${id}/local-log?tail=300`,
+    },
+    mcpUnavailable:
+      campaign.status === "paused" && runtimeCampaign.decisionStatus === "mcp_unavailable"
+        ? {
+            title: "Playwright MCP belum aktif",
+            body: "Mode MCP AI First membutuhkan MCP sidecar. Jalankan command berikut di terminal project:",
+            command: "npm run mcp:playwright",
+            technicalDetails:
+              typeof latestMcpFailureMetadata?.error === "string"
+                ? latestMcpFailureMetadata.error
+                : null,
+          }
+        : null,
     latestLogs: campaign.logs.map((log) => ({
       id: log.id,
       createdAt: log.createdAt,

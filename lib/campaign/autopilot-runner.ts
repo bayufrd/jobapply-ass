@@ -8,6 +8,7 @@ import {
   NON_REPICKABLE_APPLICATION_STATUSES,
   PICKABLE_JOB_STATUSES,
 } from "@/lib/campaign/job-status";
+import { checkPlaywrightMcpHealth } from "@/lib/mcp/mcp-health";
 
 export type AutopilotAction =
   | "safe_continue"
@@ -115,8 +116,21 @@ async function ensureJobsExist(campaignId: string) {
   const profile = await getLatestProfile();
   await writeAutomationLog({
     campaignId,
+    event: "campaign.phase_search_started",
+    message: "Fase 1/3: mencari dan menyimpan lowongan.",
+    metadata: { campaignId },
+  });
+  await writeAutomationLog({
+    campaignId,
+    event: "campaign.search_limit_info",
+    message: "Autopilot akan mengambil maksimal 20 lowongan pada fase pencarian awal.",
+    metadata: { campaignId, hardCap: 20 },
+  });
+  await writeAutomationLog({
+    campaignId,
     event: "campaign.autopilot_search_started",
     message: "Autopilot menjalankan pencarian lowongan karena kampanye belum memiliki lowongan.",
+    metadata: { campaignId },
   });
 
   const result = await runJobstreetCampaign({
@@ -155,6 +169,13 @@ async function ensureJobsExist(campaignId: string) {
     });
     throw new Error(result.message);
   }
+
+  await writeAutomationLog({
+    campaignId,
+    event: "campaign.phase_search_completed",
+    message: `Fase 1/3 selesai: ${result.jobsSaved ?? 0} lowongan tersimpan.`,
+    metadata: { campaignId, jobsSaved: result.jobsSaved ?? 0 },
+  });
 
   return { searched: true, jobsFound: result.jobsSaved ?? 0 };
 }
@@ -301,6 +322,61 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     };
   }
 
+  if ((campaign as typeof campaign & { formAutomationMode?: string | null }).formAutomationMode === "mcp_ai_first") {
+    await writeAutomationLog({
+      campaignId,
+      event: "mcp.preflight_started",
+      message: "Memeriksa koneksi Playwright MCP sebelum menjalankan kampanye.",
+      metadata: { campaignId },
+    });
+
+    const health = await checkPlaywrightMcpHealth();
+    if (!health.ok) {
+      await setCampaignRuntimeState(campaignId, {
+        status: "paused",
+        currentStep: "mcp_unavailable",
+        decisionStatus: "mcp_unavailable",
+        decisionPayloadJson: JSON.stringify({
+          type: "mcp_unavailable",
+          message: "Playwright MCP belum aktif. Jalankan npm run mcp:playwright lalu klik Lanjutkan Kampanye.",
+          technicalDetails: health.error ?? null,
+          mcpUrl: health.url,
+        }),
+      });
+      await writeAutomationLog({
+        campaignId,
+        level: "warn",
+        event: "mcp.preflight_failed",
+        message: "Playwright MCP tidak bisa diakses. Jalankan npm run mcp:playwright.",
+        metadata: {
+          campaignId,
+          stage: "mcp_connect",
+          mcpUrl: health.url,
+          error: health.error ?? null,
+        },
+      });
+      return {
+        status: "paused",
+        message: "Playwright MCP belum aktif. Jalankan npm run mcp:playwright lalu klik Lanjutkan Kampanye.",
+        campaignId,
+        currentStep: "mcp_unavailable",
+        decisionRequired: {
+          type: "mcp_unavailable",
+          message: "Playwright MCP belum aktif. Jalankan npm run mcp:playwright lalu klik Lanjutkan Kampanye.",
+          technicalDetails: health.error ?? null,
+          mcpUrl: health.url,
+        },
+      };
+    }
+
+    await writeAutomationLog({
+      campaignId,
+      event: "mcp.preflight_ok",
+      message: "Playwright MCP aktif dan bisa diakses.",
+      metadata: { campaignId, stage: "mcp_connect", mcpUrl: health.url },
+    });
+  }
+
   await setCampaignRuntimeState(campaignId, {
     status: "running",
     currentStep: "searching_jobs",
@@ -429,9 +505,23 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     await writeAutomationLog({
       campaignId,
       jobListingId: job.id,
+      event: "campaign.phase_apply_started",
+      message: "Fase 2/3: mulai apply dengan MCP AI First.",
+      metadata: { campaignId, currentStep: "opening_job" },
+    });
+    await writeAutomationLog({
+      campaignId,
+      jobListingId: job.id,
+      event: "campaign.phase_apply_job_started",
+      message: `Memulai apply untuk lowongan ${job.title}.`,
+      metadata: { campaignId, jobListingId: job.id, title: job.title, company: job.company, jobUrl: job.url },
+    });
+    await writeAutomationLog({
+      campaignId,
+      jobListingId: job.id,
       event: "campaign.autopilot_processing_job",
       message: `Memproses lowongan ${job.title} di ${job.company}.`,
-      metadata: { jobId: job.id },
+      metadata: { jobId: job.id, title: job.title, company: job.company, jobUrl: job.url },
     });
 
     const profile = await getLatestProfile();
@@ -485,6 +575,22 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     });
 
     if (applyResult.status === "submitted") {
+      await writeAutomationLog({
+        campaignId,
+        jobListingId: job.id,
+        applicationId: applyResult.applicationId,
+        event: "campaign.phase_apply_job_finished",
+        message: `Apply selesai untuk lowongan ${job.title}: submitted.`,
+        metadata: { campaignId, jobListingId: job.id, applicationId: applyResult.applicationId ?? null, title: job.title, company: job.company, jobUrl: job.url, status: "submitted" },
+      });
+      await writeAutomationLog({
+        campaignId,
+        jobListingId: job.id,
+        applicationId: applyResult.applicationId,
+        event: "campaign.phase_next_job",
+        message: "Fase 3/3: lanjut ke lowongan berikutnya.",
+        metadata: { campaignId, jobListingId: job.id, applicationId: applyResult.applicationId ?? null, title: job.title, company: job.company, jobUrl: job.url },
+      });
       await writeAutomationLog({
         campaignId,
         jobListingId: job.id,

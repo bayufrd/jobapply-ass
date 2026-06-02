@@ -5,7 +5,7 @@ import { detectJobstreetApplyStep } from "@/lib/browser/jobstreet-apply-step-det
 import { writeAutomationLog } from "@/lib/logging/automation-log";
 import { executeMcpActionPlan } from "@/lib/mcp/mcp-action-executor";
 import { hasMcpSuccessMarker, normalizeMcpSnapshot, type NormalizedMcpPage } from "@/lib/mcp/mcp-snapshot-normalizer";
-import { PlaywrightMcpClient, type McpSnapshot } from "@/lib/mcp/playwright-mcp-client";
+import { PlaywrightMcpClient, PlaywrightMcpError, type McpSnapshot } from "@/lib/mcp/playwright-mcp-client";
 
 type SubmitModeStrategy = "review_each_application" | "auto_submit_safe_only";
 
@@ -146,6 +146,36 @@ async function verifySubmitted(campaign: CampaignData, jobListing: JobListingDat
   await prisma.campaign.update({ where: { id: campaign.id }, data: { appliedCount: { increment: 1 } } });
 }
 
+function buildMcpLogMetadata(input: {
+  campaignId: string;
+  jobListingId: string;
+  applicationId?: string;
+  stage: string;
+  mcpUrl: string;
+  toolName?: string;
+  jobTitle: string;
+  company: string;
+  jobUrl: string;
+  step?: number;
+  pageKind?: string;
+  error?: string | null;
+}) {
+  return {
+    campaignId: input.campaignId,
+    jobListingId: input.jobListingId,
+    applicationId: input.applicationId ?? null,
+    stage: input.stage,
+    mcpUrl: input.mcpUrl,
+    toolName: input.toolName ?? null,
+    title: input.jobTitle,
+    company: input.company,
+    jobUrl: input.jobUrl,
+    step: input.step ?? null,
+    pageKind: input.pageKind ?? null,
+    error: input.error ?? null,
+  };
+}
+
 export async function runMcpAiApplyRunner({
   campaign,
   jobListing,
@@ -171,19 +201,143 @@ export async function runMcpAiApplyRunner({
   const client = new PlaywrightMcpClient(process.env.PLAYWRIGHT_MCP_URL);
   const application = await createApplicationRecord(campaign, jobListing, "paused", "Lamaran diproses oleh runner MCP AI First.");
 
+  const mcpUrl = client.getMcpUrl();
+
   await writeAutomationLog({
     campaignId: campaign.id,
     jobListingId: jobListing.id,
+    applicationId: application.id,
     event: "mcp_ai.runner_started",
     message: "Runner MCP AI First dimulai untuk lowongan ini.",
-    metadata: { applicationId: application.id, mode },
+    metadata: {
+      ...buildMcpLogMetadata({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        stage: "runner_started",
+        mcpUrl,
+        jobTitle: jobListing.title,
+        company: jobListing.company,
+        jobUrl: jobListing.url,
+      }),
+      mode,
+    },
   });
 
   try {
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      applicationId: application.id,
+      event: "mcp_ai.connect_started",
+      message: `Memulai koneksi ke Playwright MCP di ${mcpUrl}.`,
+      metadata: buildMcpLogMetadata({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        stage: "mcp_connect",
+        mcpUrl,
+        toolName: "initialize",
+        jobTitle: jobListing.title,
+        company: jobListing.company,
+        jobUrl: jobListing.url,
+      }),
+    });
     await client.connect();
-    await client.navigate(jobListing.url);
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      applicationId: application.id,
+      event: "mcp_ai.connect_ok",
+      message: "Koneksi Playwright MCP berhasil.",
+      metadata: buildMcpLogMetadata({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        stage: "mcp_connect",
+        mcpUrl,
+        toolName: "initialize",
+        jobTitle: jobListing.title,
+        company: jobListing.company,
+        jobUrl: jobListing.url,
+      }),
+    });
 
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      applicationId: application.id,
+      event: "mcp_ai.navigate_started",
+      message: "MCP mulai membuka halaman lowongan target.",
+      metadata: buildMcpLogMetadata({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        stage: "mcp_tool_call",
+        mcpUrl,
+        toolName: "browser_navigate",
+        jobTitle: jobListing.title,
+        company: jobListing.company,
+        jobUrl: jobListing.url,
+      }),
+    });
+    await client.navigate(jobListing.url);
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      applicationId: application.id,
+      event: "mcp_ai.navigate_ok",
+      message: "MCP berhasil membuka halaman lowongan target.",
+      metadata: buildMcpLogMetadata({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        stage: "mcp_tool_call",
+        mcpUrl,
+        toolName: "browser_navigate",
+        jobTitle: jobListing.title,
+        company: jobListing.company,
+        jobUrl: jobListing.url,
+      }),
+    });
+
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      applicationId: application.id,
+      event: "mcp_ai.snapshot_started",
+      message: "MCP mulai mengambil snapshot halaman.",
+      metadata: buildMcpLogMetadata({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        stage: "mcp_tool_call",
+        mcpUrl,
+        toolName: "browser_snapshot",
+        jobTitle: jobListing.title,
+        company: jobListing.company,
+        jobUrl: jobListing.url,
+      }),
+    });
     let snapshot = await client.snapshot();
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      applicationId: application.id,
+      event: "mcp_ai.snapshot_ok",
+      message: "Snapshot awal MCP berhasil diambil.",
+      metadata: buildMcpLogMetadata({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        stage: "mcp_tool_call",
+        mcpUrl,
+        toolName: "browser_snapshot",
+        jobTitle: jobListing.title,
+        company: jobListing.company,
+        jobUrl: jobListing.url,
+      }),
+    });
     let normalized = normalizeMcpSnapshot(snapshot);
     let previousFingerprint = fingerprintSnapshot(snapshot);
     let sameSnapshotRepeats = 0;
@@ -201,9 +355,26 @@ export async function runMcpAiApplyRunner({
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,
+        applicationId: application.id,
         event: "mcp_ai.snapshot_captured",
         message: "Snapshot MCP berhasil diambil.",
-        metadata: { applicationId: application.id, step, url: snapshot.url, title: snapshot.title },
+        metadata: {
+          ...buildMcpLogMetadata({
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+            applicationId: application.id,
+            stage: "mcp_tool_call",
+            mcpUrl,
+            toolName: "browser_snapshot",
+            jobTitle: jobListing.title,
+            company: jobListing.company,
+            jobUrl: jobListing.url,
+            step,
+            pageKind: normalized.pageKind,
+          }),
+          url: snapshot.url,
+          title: snapshot.title,
+        },
       });
 
       const detectedStep = detectJobstreetApplyStep(snapshot.url, snapshot.accessibilityText);
@@ -511,18 +682,106 @@ export async function runMcpAiApplyRunner({
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const mcpError = error instanceof PlaywrightMcpError ? error : null;
+    const stage = mcpError?.stage ?? "runner_unknown";
+    const toolName = mcpError?.toolName;
+    const failedMcpUrl = mcpError?.mcpUrl ?? mcpUrl;
+    const causeMessage = mcpError?.causeMessage ?? errorMessage;
+
     await prisma.application.update({ where: { id: application.id }, data: { status: "failed", notes: `Runner MCP gagal: ${errorMessage}` } });
+
+    if (stage === "mcp_connect") {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        level: "error",
+        event: "mcp_ai.connect_failed",
+        message: errorMessage,
+        metadata: buildMcpLogMetadata({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          stage,
+          mcpUrl: failedMcpUrl,
+          toolName: toolName ?? "initialize",
+          jobTitle: jobListing.title,
+          company: jobListing.company,
+          jobUrl: jobListing.url,
+          error: causeMessage,
+        }),
+      });
+    }
+
+    if (toolName === "browser_snapshot") {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        level: "error",
+        event: "mcp_ai.snapshot_failed",
+        message: errorMessage,
+        metadata: buildMcpLogMetadata({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          stage,
+          mcpUrl: failedMcpUrl,
+          toolName,
+          jobTitle: jobListing.title,
+          company: jobListing.company,
+          jobUrl: jobListing.url,
+          error: causeMessage,
+        }),
+      });
+    }
+
+    if (mcpError) {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        level: "error",
+        event: "mcp_ai.tool_call_failed",
+        message: errorMessage,
+        metadata: buildMcpLogMetadata({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          stage,
+          mcpUrl: failedMcpUrl,
+          toolName,
+          jobTitle: jobListing.title,
+          company: jobListing.company,
+          jobUrl: jobListing.url,
+          error: causeMessage,
+        }),
+      });
+    }
+
     await writeAutomationLog({
       campaignId: campaign.id,
       jobListingId: jobListing.id,
+      applicationId: application.id,
       level: "error",
       event: "mcp_ai.runner_failed",
-      message: `Runner MCP gagal: ${errorMessage}`,
-      metadata: { applicationId: application.id, error: errorMessage },
+      message: errorMessage,
+      metadata: buildMcpLogMetadata({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        stage,
+        mcpUrl: failedMcpUrl,
+        toolName,
+        jobTitle: jobListing.title,
+        company: jobListing.company,
+        jobUrl: jobListing.url,
+        error: causeMessage,
+      }),
     });
     return {
       status: "failed",
-      message: "Runner MCP gagal dijalankan.",
+      message: mcpError ? errorMessage : "Runner MCP gagal dijalankan.",
       applicationId: application.id,
       error: errorMessage,
     };

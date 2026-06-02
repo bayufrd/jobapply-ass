@@ -49,6 +49,8 @@ prisma/dev.db
 storage/cv/*
 storage/screenshots/*
 storage/jobstreet.auth.json
+storage/logs/*.log
+storage/logs/*.jsonl
 
 # keep storage directories
 !storage/cv/.gitkeep

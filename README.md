@@ -18,7 +18,7 @@ Local-first private MVP for assisted job applications with human oversight. The 
 npm install
 ```
 
-## Playwright MCP setup
+## Playwright MCP wajib untuk MCP AI First
 
 Install MCP for Codex:
 
@@ -36,10 +36,29 @@ Atau jalankan script berikut:
 
 ```bash
 npm run mcp:playwright
+npm run dev
+```
+
+Expected MCP URL:
+
+```txt
+http://localhost:8931/mcp
+```
+
+Debug manual:
+
+```bash
+curl -X POST http://localhost:8931/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"manual-check","version":"0.1.0"}}}'
 ```
 
 Catatan MCP:
 
+- Mode MCP AI First membutuhkan sidecar Playwright MCP aktif lebih dulu.
+- Jika MCP belum aktif, autopilot akan pause sebelum fase search/apply dimulai.
+- UI utama menampilkan pesan Bahasa Indonesia yang jelas, bukan raw `fetch failed`.
 - MCP dipakai untuk pembacaan form live berbasis AI-first.
 - Runtime app tetap memakai aturan automasi aman.
 - MCP tidak dipakai untuk bypass captcha.
@@ -72,6 +91,7 @@ PLAYWRIGHT_MCP_ENABLED="true"
 PLAYWRIGHT_MCP_URL="http://localhost:8931/mcp"
 PLAYWRIGHT_MCP_USER_DATA_DIR=".mcp-browser-profile"
 FORM_AUTOMATION_DEFAULT="mcp_ai_first"
+JOBSTREET_SEARCH_BATCH_SIZE="20"
 DEFAULT_EXPECTED_SALARY="6000000"
 DEFAULT_CURRENT_SALARY="6000000"
 DEFAULT_NOTICE_PERIOD="ASAP"

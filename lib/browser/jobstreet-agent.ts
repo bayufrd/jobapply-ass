@@ -67,6 +67,7 @@ const JOBSTREET_DEFAULT_LOCATION = "West Jakarta, Jakarta";
 const JOBSTREET_DEFAULT_LOCATION_SLUG = "West-Jakarta-Jakarta";
 const MAX_JOBS_HARD_LIMIT = 20;
 const DEFAULT_MAX_JOBS = 10;
+const DEFAULT_SEARCH_BATCH_SIZE = 20;
 const PAGE_LOAD_TIMEOUT = 30_000;
 const JOB_DETAIL_TIMEOUT = 20_000;
 const SEARCH_SETTLE_DELAY_MS = 1200;
@@ -76,8 +77,12 @@ const BETWEEN_JOBS_DELAY_MS = 250;
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function getSafeMaxJobs(targetApplyCount: number): number {
+  const configuredBatchSize = Number.parseInt(process.env.JOBSTREET_SEARCH_BATCH_SIZE ?? `${DEFAULT_SEARCH_BATCH_SIZE}`, 10);
+  const safeBatchSize = Number.isFinite(configuredBatchSize)
+    ? Math.min(Math.max(configuredBatchSize, 1), MAX_JOBS_HARD_LIMIT)
+    : DEFAULT_SEARCH_BATCH_SIZE;
   const limit = Math.max(targetApplyCount, DEFAULT_MAX_JOBS);
-  return Math.min(limit, MAX_JOBS_HARD_LIMIT);
+  return Math.min(Math.min(limit, safeBatchSize), MAX_JOBS_HARD_LIMIT);
 }
 
 async function ensureScreenshotDir() {
