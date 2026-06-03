@@ -8,7 +8,7 @@ export async function POST(
   try {
     const { id } = await params;
     const body = (await request.json()) as {
-      action?: "apply" | "skip" | "skip_similar" | "ask_later" | "accept" | "reject" | "yes" | "no" | "edit_answer";
+      action?: "apply" | "skip" | "skip_similar" | "ask_later" | "accept" | "reject" | "yes" | "no" | "edit_answer" | "resume_after_login";
       reason?: string;
     };
 

@@ -1,6 +1,6 @@
 import type { McpSnapshot } from "@/lib/mcp/playwright-mcp-client";
 
-export type JobstreetSessionState = "authenticated" | "login_required" | "security_or_challenge" | "unknown";
+export type JobstreetSessionState = "authenticated" | "login_required" | "otp_required" | "security_or_challenge" | "unknown";
 
 export type JobstreetSessionCheckResult = {
   state: JobstreetSessionState;
@@ -76,7 +76,7 @@ export function analyzeJobstreetSessionSnapshot(snapshot: McpSnapshot): Jobstree
     if (otpDetected) evidence.push("Sinyal OTP/kode verifikasi terlihat pada snapshot MCP.");
     if (securityDetected) evidence.push("Sinyal verifikasi keamanan terlihat pada snapshot MCP.");
     return {
-      state: "security_or_challenge",
+      state: otpDetected ? "otp_required" : "security_or_challenge",
       currentUrl,
       evidence,
       confidence: 0.98,

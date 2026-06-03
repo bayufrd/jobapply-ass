@@ -1,11 +1,138 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
-import { PlaywrightMcpClient } from "@/lib/mcp/playwright-mcp-client";
+import { PlaywrightMcpClient, type McpSnapshot } from "@/lib/mcp/playwright-mcp-client";
 import {
   analyzeJobstreetSessionSnapshot,
   getDefaultJobstreetSessionCheckUrl,
 } from "@/lib/jobstreet/session-check";
+
+const SAFE_JOBSTREET_EMAIL = "bayu.farid36@gmail.com";
+
+function findVisibleEmailElement(snapshot: McpSnapshot) {
+  return snapshot.elements.find((element) => {
+    if (element.disabled) return false;
+    const role = String(element.role ?? "").toLowerCase();
+    const name = String(element.name ?? "").toLowerCase();
+    const text = String(element.text ?? "").toLowerCase();
+    const value = String(element.value ?? "").toLowerCase();
+    const combined = `${name} ${text} ${value}`;
+    const looksEmailField = combined.includes("email")
+      || combined.includes("e-mail")
+      || combined.includes("username")
+      || combined.includes("user name")
+      || combined.includes("jobstreet email")
+      || combined.includes("alamat email");
+    return role.includes("textbox") && looksEmailField;
+  }) ?? null;
+}
+
+async function settleJobstreetSession(input: {
+  client: PlaywrightMcpClient;
+  campaignId: string | null;
+  targetUrl: string;
+  applyTargetUrl: string;
+  recoverBlank: boolean;
+}) {
+  const { client, campaignId, targetUrl, applyTargetUrl, recoverBlank } = input;
+
+  await client.navigate(applyTargetUrl || targetUrl);
+  let snapshot = await client.snapshot();
+  let result = analyzeJobstreetSessionSnapshot(snapshot);
+  let lastActionableResult = result.state === "unknown" ? null : result;
+  let recoveryAttempted = false;
+  let emailFillAttempted = false;
+  let emailFillCompleted = false;
+  let settleAttempts = 0;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    settleAttempts = attempt;
+
+    if (recoverBlank && result.state === "unknown" && String(result.currentUrl || "").trim().toLowerCase() === "about:blank") {
+      recoveryAttempted = true;
+
+      await writeAutomationLog({
+        campaignId,
+        event: "mcp.resume_blank_snapshot_detected",
+        message: "Snapshot session check berada di about:blank. Recovery navigate ke target apply URL dijalankan.",
+        metadata: {
+          attempt,
+          targetUrl,
+          applyTargetUrl,
+          diagnostics: client.getSessionDiagnostics(),
+          initialResult: result,
+        },
+      }).catch(() => undefined);
+
+      await client.navigate(applyTargetUrl);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      snapshot = await client.snapshot();
+      result = analyzeJobstreetSessionSnapshot(snapshot);
+      if (result.state !== "unknown") {
+        lastActionableResult = result;
+      }
+      continue;
+    }
+
+    if (result.state === "login_required") {
+      const emailElement = findVisibleEmailElement(snapshot);
+      if (emailElement && !emailFillCompleted) {
+        emailFillAttempted = true;
+
+        await writeAutomationLog({
+          campaignId,
+          event: "jobstreet.login_email_fill_started",
+          message: "Field email login Jobstreet terlihat. Sistem mengisi email aman tanpa menyentuh password/OTP.",
+          metadata: {
+            currentUrl: result.currentUrl,
+            elementId: emailElement.elementId,
+          },
+        }).catch(() => undefined);
+
+        await client.fill(emailElement.elementId, SAFE_JOBSTREET_EMAIL);
+        emailFillCompleted = true;
+
+        await writeAutomationLog({
+          campaignId,
+          event: "jobstreet.login_email_fill_done",
+          message: "Email login Jobstreet berhasil diisi. Browser visible tetap menunggu langkah manual user.",
+          metadata: {
+            currentUrl: result.currentUrl,
+          },
+        }).catch(() => undefined);
+
+        snapshot = await client.waitForChange(snapshot, 2500);
+        result = analyzeJobstreetSessionSnapshot(snapshot);
+      }
+    }
+
+    if ((result.state !== "unknown" && !(result.state === "login_required" && emailFillCompleted && attempt < 3)) || attempt === 3) {
+      break;
+    }
+
+    snapshot = await client.waitForChange(snapshot, 2500);
+    result = analyzeJobstreetSessionSnapshot(snapshot);
+    if (result.state !== "unknown") {
+      lastActionableResult = result;
+    }
+  }
+
+  if (result.state === "unknown" && lastActionableResult) {
+    result = {
+      ...lastActionableResult,
+      evidence: [...lastActionableResult.evidence, "Snapshot akhir kembali tidak stabil, tetapi state non-blank terakhir dipertahankan sebagai blocker yang lebih kuat."],
+    };
+  }
+
+  return {
+    snapshot,
+    result,
+    recoveryAttempted,
+    emailFillAttempted,
+    emailFillCompleted,
+    settleAttempts,
+  };
+}
 
 export async function GET(request: Request) {
   const session = await prisma.browserSession.findUnique({
@@ -16,6 +143,8 @@ export async function GET(request: Request) {
   const shouldCheckLive = searchParams.get("checkLive") === "1";
   const campaignId = searchParams.get("campaignId");
   const targetUrl = searchParams.get("targetUrl") || getDefaultJobstreetSessionCheckUrl();
+  const applyTargetUrl = searchParams.get("applyTargetUrl") || targetUrl;
+  const recoverBlank = searchParams.get("recoverBlank") === "1";
   const visibleMode = (process.env.PLAYWRIGHT_HEADLESS ?? "false") !== "true";
 
   let liveCheck: Record<string, unknown> | null = null;
@@ -34,23 +163,33 @@ export async function GET(request: Request) {
     try {
       const client = new PlaywrightMcpClient();
       await client.connect();
-      await client.navigate(targetUrl);
-      const snapshot = await client.snapshot();
-      const result = analyzeJobstreetSessionSnapshot(snapshot);
+      const settled = await settleJobstreetSession({
+        client,
+        campaignId,
+        targetUrl,
+        applyTargetUrl,
+        recoverBlank,
+      });
 
       liveCheck = {
         ok: true,
         targetUrl,
+        applyTargetUrl,
+        recoverBlank,
+        recoveryAttempted: settled.recoveryAttempted,
+        emailFillAttempted: settled.emailFillAttempted,
+        emailFillCompleted: settled.emailFillCompleted,
+        settleAttempts: settled.settleAttempts,
         mcpUrl: client.getMcpUrl(),
         diagnostics: client.getSessionDiagnostics(),
-        ...result,
+        ...settled.result,
       };
 
       await writeAutomationLog({
         campaignId,
-        level: result.canResumeAutopilot ? "info" : "warn",
-        event: result.canResumeAutopilot ? "jobstreet.session_valid" : "jobstreet.session_invalid",
-        message: result.canResumeAutopilot
+        level: settled.result.canResumeAutopilot ? "info" : "warn",
+        event: settled.result.canResumeAutopilot ? "jobstreet.session_valid" : "jobstreet.session_invalid",
+        message: settled.result.canResumeAutopilot
           ? "Sesi Jobstreet live valid untuk melanjutkan autopilot."
           : "Sesi Jobstreet live belum valid untuk melanjutkan autopilot.",
         metadata: liveCheck,

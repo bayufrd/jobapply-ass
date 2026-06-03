@@ -39,13 +39,38 @@ test("detects authenticated state from internal apply URL", () => {
   assert.equal(result.canResumeAutopilot, true);
 });
 
-test("detects security_or_challenge from OTP evidence", () => {
+test("detects otp_required from OTP evidence", () => {
   const result = analyzeJobstreetSessionSnapshot(createSnapshot({
     accessibilityText: "Enter verification code",
     rawText: "OTP",
   }));
 
+  assert.equal(result.state, "otp_required");
+  assert.equal(result.visibleBrowserRequired, true);
+  assert.equal(result.canResumeAutopilot, false);
+});
+
+test("detects security_or_challenge from captcha evidence", () => {
+  const result = analyzeJobstreetSessionSnapshot(createSnapshot({
+    accessibilityText: "Please complete captcha",
+    rawText: "I'm not a robot",
+  }));
+
   assert.equal(result.state, "security_or_challenge");
   assert.equal(result.visibleBrowserRequired, true);
+  assert.equal(result.canResumeAutopilot, false);
+});
+
+test("keeps blank snapshot as unknown and non-resumable until recovery navigate happens elsewhere", () => {
+  const result = analyzeJobstreetSessionSnapshot(createSnapshot({
+    url: "about:blank",
+    title: "",
+    accessibilityText: "",
+    rawText: "",
+    elements: [],
+  }));
+
+  assert.equal(result.state, "unknown");
+  assert.equal(result.currentUrl, "about:blank");
   assert.equal(result.canResumeAutopilot, false);
 });

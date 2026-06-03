@@ -13,6 +13,9 @@ import {
 import { checkPlaywrightMcpHealth } from "@/lib/mcp/mcp-health";
 import { resolveCampaignPaginationDecision } from "@/lib/campaign/campaign-pagination-state";
 import { safeJsonParse } from "@/lib/utils/safe-json";
+import { analyzeJobstreetSessionSnapshot } from "@/lib/jobstreet/session-check";
+import { PlaywrightMcpClient } from "@/lib/mcp/playwright-mcp-client";
+import { buildJobstreetApplyUrl, extractJobstreetJobId } from "@/lib/jobstreet/jobstreet-url";
 
 export type AutopilotAction =
   | "safe_continue"
@@ -54,7 +57,7 @@ export type AutopilotRunResult = {
 };
 
 type DecisionInput = {
-  action: "apply" | "skip" | "skip_similar" | "ask_later" | "accept" | "reject" | "yes" | "no" | "edit_answer";
+  action: "apply" | "skip" | "skip_similar" | "ask_later" | "accept" | "reject" | "yes" | "no" | "edit_answer" | "resume_after_login";
   reason?: string;
 };
 
@@ -1505,6 +1508,288 @@ export async function applyAutopilotDecision(campaignId: string, input: Decision
   const jobId = typeof payload?.jobId === "string" ? payload.jobId : null;
   const applicationId = typeof payload?.applicationId === "string" ? payload.applicationId : null;
   const decisionType = typeof payload?.type === "string" ? payload.type : null;
+
+  if (input.action === "resume_after_login") {
+    await writeAutomationLog({
+      campaignId,
+      event: "campaign.resume_after_otp_started",
+      message: "User meminta resume setelah login manual Jobstreet.",
+      metadata: {
+        decisionType,
+        jobId,
+        applicationId,
+      },
+    });
+
+    const activeJob = jobId
+      ? await prisma.jobListing.findUnique({ where: { id: jobId } })
+      : null;
+
+    const resolvedJobUrl = activeJob?.url ?? null;
+    const jobstreetJobId = resolvedJobUrl ? extractJobstreetJobId(resolvedJobUrl) : null;
+    const applyTargetUrl = jobstreetJobId ? buildJobstreetApplyUrl(jobstreetJobId, "apply") : null;
+
+    if (!applyTargetUrl) {
+      throw new Error("Tidak bisa melanjutkan login karena lowongan aktif Jobstreet tidak ditemukan.");
+    }
+
+    await writeAutomationLog({
+      campaignId,
+      event: "jobstreet.session_check_started",
+      message: "Validasi sesi Jobstreet live via MCP dimulai untuk resume setelah login.",
+      metadata: {
+        targetUrl: resolvedJobUrl,
+        applyTargetUrl,
+      },
+    }).catch(() => undefined);
+
+    try {
+      const client = new PlaywrightMcpClient();
+      await client.connect();
+      await client.navigate(applyTargetUrl);
+      let snapshot = await client.snapshot();
+      let result = analyzeJobstreetSessionSnapshot(snapshot);
+      let lastActionableResult = result.state === "unknown" ? null : result;
+      let recoveryAttempted = false;
+      let emailFillAttempted = false;
+      let emailFillCompleted = false;
+      let settleAttempts = 0;
+
+      const findVisibleEmailElement = () => snapshot.elements.find((element) => {
+        if (element.disabled) return false;
+        const role = String(element.role ?? "").toLowerCase();
+        const name = String(element.name ?? "").toLowerCase();
+        const text = String(element.text ?? "").toLowerCase();
+        const value = String(element.value ?? "").toLowerCase();
+        const combined = `${name} ${text} ${value}`;
+        const looksEmailField = combined.includes("email")
+          || combined.includes("e-mail")
+          || combined.includes("username")
+          || combined.includes("user name")
+          || combined.includes("jobstreet email")
+          || combined.includes("alamat email");
+        return role.includes("textbox") && looksEmailField;
+      }) ?? null;
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        settleAttempts = attempt;
+
+        if (result.state === "unknown" && String(result.currentUrl || "").trim().toLowerCase() === "about:blank") {
+          recoveryAttempted = true;
+          await writeAutomationLog({
+            campaignId,
+            event: "mcp.resume_blank_snapshot_detected",
+            message: "Snapshot session check resume berada di about:blank. Recovery navigate ke target apply URL dijalankan.",
+            metadata: {
+              attempt,
+              targetUrl: resolvedJobUrl,
+              applyTargetUrl,
+              diagnostics: client.getSessionDiagnostics(),
+              initialResult: result,
+            },
+          }).catch(() => undefined);
+
+          await client.navigate(applyTargetUrl);
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          snapshot = await client.snapshot();
+          result = analyzeJobstreetSessionSnapshot(snapshot);
+          if (result.state !== "unknown") {
+            lastActionableResult = result;
+          }
+          continue;
+        }
+
+        if (result.state === "login_required") {
+          const emailElement = findVisibleEmailElement();
+          if (emailElement && !emailFillCompleted) {
+            emailFillAttempted = true;
+            await writeAutomationLog({
+              campaignId,
+              event: "jobstreet.login_email_fill_started",
+              message: "Field email login Jobstreet terlihat saat resume. Sistem mengisi email aman tanpa menyentuh password/OTP.",
+              metadata: {
+                currentUrl: result.currentUrl,
+                elementId: emailElement.elementId,
+                applyTargetUrl,
+              },
+            }).catch(() => undefined);
+
+            await client.fill(emailElement.elementId, "bayu.farid36@gmail.com");
+            emailFillCompleted = true;
+
+            await writeAutomationLog({
+              campaignId,
+              event: "jobstreet.login_email_fill_done",
+              message: "Email login Jobstreet berhasil diisi saat resume. Browser visible tetap menunggu langkah manual user.",
+              metadata: {
+                currentUrl: result.currentUrl,
+                applyTargetUrl,
+              },
+            }).catch(() => undefined);
+
+            snapshot = await client.waitForChange(snapshot, 2500);
+            result = analyzeJobstreetSessionSnapshot(snapshot);
+          }
+        }
+
+        if ((result.state !== "unknown" && !(result.state === "login_required" && emailFillCompleted && attempt < 3)) || attempt === 3) {
+          break;
+        }
+
+        snapshot = await client.waitForChange(snapshot, 2500);
+        result = analyzeJobstreetSessionSnapshot(snapshot);
+        if (result.state !== "unknown") {
+          lastActionableResult = result;
+        }
+      }
+
+      if (result.state === "unknown" && lastActionableResult) {
+        result = {
+          ...lastActionableResult,
+          evidence: [...lastActionableResult.evidence, "Snapshot akhir kembali tidak stabil, tetapi state non-blank terakhir dipertahankan sebagai blocker yang lebih kuat."],
+        };
+      }
+
+      if (result.state === "authenticated") {
+        await writeAutomationLog({
+          campaignId,
+          event: "jobstreet.session_authenticated",
+          message: "Sesi Jobstreet terverifikasi dan siap melanjutkan direct apply.",
+          metadata: {
+            state: result.state,
+            currentUrl: result.currentUrl,
+            evidence: result.evidence,
+            applyTargetUrl,
+            recoveryAttempted,
+            emailFillAttempted,
+            emailFillCompleted,
+            settleAttempts,
+          },
+        }).catch(() => undefined);
+
+        await setCampaignRuntimeState(campaignId, {
+          status: "running",
+          currentStep: "decision_resolved",
+          decisionStatus: null,
+          decisionPayloadJson: null,
+          currentQuestion: null,
+          currentJobId: activeJob?.id ?? null,
+          currentJobTitle: activeJob?.title ?? null,
+          currentJobCompany: activeJob?.company ?? null,
+        });
+
+        await prisma.jobListing.updateMany({
+          where: { id: activeJob?.id ?? "__missing__" },
+          data: {
+            status: "shortlisted",
+            applyUrl: applyTargetUrl,
+          },
+        });
+
+        await writeAutomationLog({
+          campaignId,
+          jobListingId: activeJob?.id ?? undefined,
+          event: "campaign.resume_direct_apply_after_login",
+          message: "Sesi valid. Direct apply Jobstreet akan dilanjutkan tanpa kembali ke search.",
+          metadata: {
+            jobListingId: activeJob?.id ?? null,
+            jobTitle: activeJob?.title ?? null,
+            jobUrl: resolvedJobUrl,
+            applyTargetUrl,
+          },
+        }).catch(() => undefined);
+
+        return {
+          status: "safe_continue" as const,
+          message: "Sesi Jobstreet valid. Klik Lanjutkan untuk meneruskan direct apply tanpa kembali ke search.",
+        };
+      }
+
+      const stillNeedsOtp = result.state === "otp_required";
+      await writeAutomationLog({
+        campaignId,
+        level: "warn",
+        event: stillNeedsOtp ? "jobstreet.session_still_requires_otp" : "jobstreet.session_invalid",
+        message: stillNeedsOtp
+          ? "Sesi Jobstreet masih meminta OTP. Kampanye tetap dijeda."
+          : "Sesi Jobstreet belum valid untuk melanjutkan autopilot.",
+        metadata: {
+          state: result.state,
+          currentUrl: result.currentUrl,
+          evidence: result.evidence,
+          applyTargetUrl,
+          recoveryAttempted,
+          emailFillAttempted,
+          emailFillCompleted,
+          settleAttempts,
+        },
+      }).catch(() => undefined);
+
+      const pausedDecisionType = result.state === "otp_required"
+        ? "otp_required"
+        : result.state === "login_required"
+          ? "login_required"
+          : result.state === "security_or_challenge"
+            ? "security_or_challenge"
+            : "manual_intervention";
+
+      await setCampaignRuntimeState(campaignId, {
+        status: "paused",
+        currentStep: "manual_intervention",
+        currentQuestion:
+          pausedDecisionType === "otp_required"
+            ? "Masukkan OTP 6 digit langsung di browser Jobstreet yang terbuka. Setelah berhasil login, klik tombol Lanjutkan dari aplikasi."
+            : "Selesaikan login atau verifikasi keamanan di browser Jobstreet yang terbuka, lalu klik Lanjutkan dari aplikasi.",
+        decisionStatus: pausedDecisionType,
+        decisionPayloadJson: JSON.stringify({
+          type: pausedDecisionType,
+          jobId: activeJob?.id ?? null,
+          applicationId,
+          message:
+            pausedDecisionType === "otp_required"
+              ? "Masukkan OTP 6 digit langsung di browser Jobstreet yang terbuka. Setelah berhasil login, klik tombol Lanjutkan dari aplikasi."
+              : "Selesaikan login atau verifikasi keamanan di browser Jobstreet yang terbuka, lalu klik Lanjutkan dari aplikasi.",
+          blockerEvidence: {
+            reason: pausedDecisionType,
+            currentUrl: result.currentUrl,
+            evidence: result.evidence,
+            applyTargetUrl,
+            recoveryAttempted,
+            emailFillAttempted,
+            emailFillCompleted,
+            settleAttempts,
+          },
+        }),
+      });
+
+      return {
+        status: "paused" as const,
+        message:
+          pausedDecisionType === "otp_required"
+            ? "OTP masih diperlukan. Kampanye tetap dijeda tanpa menyimpan OTP."
+            : "Sesi Jobstreet belum valid. Kampanye tetap dijeda sampai login/verifikasi selesai.",
+      };
+    } catch (error) {
+      await setCampaignRuntimeState(campaignId, {
+        status: "paused",
+        currentStep: "manual_intervention",
+        decisionStatus: "manual_intervention",
+        currentQuestion: "Validasi sesi login Jobstreet gagal. Cek browser visible dan MCP, lalu coba lagi.",
+        decisionPayloadJson: JSON.stringify({
+          type: "manual_intervention",
+          jobId,
+          applicationId,
+          message: "Validasi sesi login Jobstreet gagal. Cek browser visible dan MCP, lalu coba lagi.",
+          blockerEvidence: {
+            reason: "manual_intervention",
+            error: error instanceof Error ? error.message : "Resume after login gagal.",
+          },
+        }),
+      });
+
+      throw error;
+    }
+  }
 
   if (!jobId && !applicationId) {
     throw new Error("Tidak ada keputusan aktif yang bisa diproses.");

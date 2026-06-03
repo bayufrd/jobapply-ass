@@ -150,14 +150,16 @@ export async function GET(
             ? "review_required"
             : campaign.status === "paused" && runtimeCampaign.decisionStatus === "submit_unverified"
               ? "submit_unverified"
-              : campaign.status === "paused" && runtimeCampaign.decisionStatus === "mcp_unavailable"
-                ? "mcp_unavailable"
-                : campaign.appliedCount >= campaign.targetApplyCount
-                  || isCampaignTerminal(campaign.status)
-                  || runtimeCampaign.currentStep === "no_jobs_remaining_after_all_pages"
-                  || runtimeCampaign.currentStep === "too_many_empty_pages"
-                  ? "completed"
-                  : "safe_continue";
+              : campaign.status === "paused" && ["otp_required", "login_required", "security_or_challenge", "manual_intervention"].includes(runtimeCampaign.decisionStatus ?? "")
+                ? "resume_after_login"
+                : campaign.status === "paused" && runtimeCampaign.decisionStatus === "mcp_unavailable"
+                  ? "mcp_unavailable"
+                  : campaign.appliedCount >= campaign.targetApplyCount
+                    || isCampaignTerminal(campaign.status)
+                    || runtimeCampaign.currentStep === "no_jobs_remaining_after_all_pages"
+                    || runtimeCampaign.currentStep === "too_many_empty_pages"
+                    ? "completed"
+                    : "safe_continue";
 
   const latestMcpFailureLog = campaign.logs.find((log) => log.event === "mcp.preflight_failed" || log.event === "mcp_ai.runner_failed") ?? null;
   const latestMcpFailureMetadata = safeJsonParse<Record<string, unknown> | null>(latestMcpFailureLog?.metadataJson, null, "campaign_status.latest_mcp_failure_metadata");
@@ -179,10 +181,13 @@ export async function GET(
             type: "question_required",
             message: "Pertanyaan ditemukan. Pilih jawaban di modal ini untuk melanjutkan.",
           }
-        : runtimeCampaign.decisionStatus === "manual_intervention"
+        : ["otp_required", "login_required", "security_or_challenge", "manual_intervention"].includes(runtimeCampaign.decisionStatus ?? "")
           ? {
-              type: "manual_intervention",
-              message: runtimeCampaign.currentQuestion ?? "Butuh tindakan manual untuk login, captcha, OTP, atau verifikasi keamanan.",
+              type: runtimeCampaign.decisionStatus,
+              message:
+                runtimeCampaign.decisionStatus === "otp_required"
+                  ? runtimeCampaign.currentQuestion ?? "Masukkan OTP 6 digit langsung di browser Jobstreet yang terbuka. Setelah berhasil login, klik tombol Lanjutkan dari aplikasi."
+                  : runtimeCampaign.currentQuestion ?? "Selesaikan login atau verifikasi keamanan di browser Jobstreet yang terbuka, lalu klik Lanjutkan dari aplikasi.",
             }
           : runtimeCampaign.decisionStatus === "submit_unverified"
             ? {

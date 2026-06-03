@@ -19,6 +19,8 @@ const DEFAULTS = {
   directJobUrl: null,
   directJobId: null,
   resumeAfterManual: false,
+  loginBootstrap: false,
+  waitForManualLogin: false,
 };
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -58,6 +60,12 @@ function parseArgs(argv) {
     }
     if (rawKey === "resume-after-manual") {
       parsed.resumeAfterManual = value ? value !== "false" : true;
+    }
+    if (rawKey === "login-bootstrap") {
+      parsed.loginBootstrap = value ? value !== "false" : true;
+    }
+    if (rawKey === "wait-for-manual-login") {
+      parsed.waitForManualLogin = value ? value !== "false" : true;
     }
   }
   return parsed;
@@ -563,7 +571,15 @@ async function fetchQaStatus(config) {
   return response.body;
 }
 
-async function checkLiveBrowserSession(config) {
+function buildApplyTargetUrl(config) {
+  if (!config.directJobUrl) {
+    return "https://id.jobstreet.com/id/job/92457600/apply";
+  }
+
+  return config.directJobUrl.replace(/\/?$/, "") + "/apply";
+}
+
+async function checkLiveBrowserSession(config, options = {}) {
   const params = new URLSearchParams({
     checkLive: "1",
     campaignId: config.campaignId,
@@ -573,13 +589,63 @@ async function checkLiveBrowserSession(config) {
     params.set("targetUrl", config.directJobUrl);
   }
 
+  params.set("applyTargetUrl", buildApplyTargetUrl(config));
+
+  if (options.recoverBlank) {
+    params.set("recoverBlank", "1");
+  }
+
   const response = await fetchJson(`${config.appUrl}/api/browser/session?${params.toString()}`);
   appendQaLog("jobstreet.live_session_check", {
     status: response.status,
     body: response.body,
+    options,
   });
 
   return response.body?.liveCheck ?? null;
+}
+
+async function runLoginBootstrap(config) {
+  appendQaLog("mcp.resume_recovery_started", {
+    mode: "login_bootstrap",
+    targetUrl: config.directJobUrl,
+    applyTargetUrl: buildApplyTargetUrl(config),
+  });
+
+  const liveCheck = await checkLiveBrowserSession(config, { recoverBlank: true });
+
+  console.log("LOGIN BOOTSTRAP");
+  console.log(`Target URL: ${config.directJobUrl || getDefaultTargetJobUrl()}`);
+  console.log(`Apply URL: ${buildApplyTargetUrl(config)}`);
+  console.log(`Current URL: ${liveCheck?.currentUrl || "-"}`);
+  console.log(`State: ${liveCheck?.state || "unknown"}`);
+  console.log(`Evidence: ${JSON.stringify(liveCheck?.evidence || [])}`);
+  console.log("Browser visible harus tetap terbuka. Selesaikan login manual di Chromium MCP.");
+
+  if (!config.waitForManualLogin) {
+    console.log(`Resume command: npm run qa:autopilot -- --campaign=${config.campaignId} --job-url=${config.directJobUrl || getDefaultTargetJobUrl()} --target=${config.target} --force-direct-apply --resume-after-manual${config.skipAppliedBaseline ? " --skip-applied-baseline" : ""}`);
+    return 0;
+  }
+
+  const deadline = Date.now() + 5 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await sleep(3000);
+    const polled = await checkLiveBrowserSession(config, { recoverBlank: true });
+    appendQaLog("jobstreet.session_state_after_resume", {
+      mode: "login_bootstrap_wait",
+      liveCheck: polled,
+    });
+    if (polled?.canResumeAutopilot) {
+      console.log("Login manual terdeteksi valid. QA akan dilanjutkan dengan direct apply yang sama.");
+      return null;
+    }
+  }
+
+  throw new Error("Timeout menunggu login manual tervalidasi di browser visible.");
+}
+
+function getDefaultTargetJobUrl() {
+  return "https://id.jobstreet.com/id/job/92457600";
 }
 
 async function autoResolveLowScore(config, status) {
@@ -912,8 +978,8 @@ async function main() {
   campaignLogRelative = `storage/logs/campaign-${config.campaignId}.log`;
   appendQaLog("process_started", { config, qaLog: qaLogRelative });
 
-  if (config.forceDirectApply && !config.directJobUrl && !config.directJobId) {
-    throw new Error("Flag --force-direct-apply membutuhkan --job-url atau --job-id.");
+  if ((config.forceDirectApply || config.loginBootstrap || config.resumeAfterManual) && !config.directJobUrl && !config.directJobId) {
+    throw new Error("Flag direct apply/login bootstrap membutuhkan --job-url atau --job-id.");
   }
 
   try {
@@ -922,17 +988,36 @@ async function main() {
     await ensureAppReady(config);
     await checkMcpHealth(config);
 
+    if (config.loginBootstrap) {
+      const bootstrapResult = await runLoginBootstrap(config);
+      if (bootstrapResult === 0) {
+        process.exit(0);
+      }
+      config.resumeAfterManual = true;
+    }
+
     if (config.resumeAfterManual) {
-      const liveCheck = await checkLiveBrowserSession(config);
+      appendQaLog("mcp.resume_recovery_started", {
+        mode: "resume_after_manual",
+        targetUrl: config.directJobUrl || getDefaultTargetJobUrl(),
+        applyTargetUrl: buildApplyTargetUrl(config),
+      });
+      const liveCheck = await checkLiveBrowserSession(config, { recoverBlank: true });
+      appendQaLog("jobstreet.session_state_after_resume", {
+        mode: "resume_after_manual",
+        liveCheck,
+      });
       if (!liveCheck?.canResumeAutopilot) {
         const reason = liveCheck?.state === "login_required"
           ? "Sesi MCP Jobstreet masih meminta login manual."
           : liveCheck?.state === "security_or_challenge"
             ? "Sesi MCP Jobstreet masih berada di captcha/OTP/verifikasi keamanan."
-            : "Sesi MCP Jobstreet belum tervalidasi untuk resume.";
+            : liveCheck?.currentUrl === "about:blank"
+              ? "Sesi MCP Jobstreet tetap about:blank setelah recovery navigate ke target apply URL."
+              : "Sesi MCP Jobstreet belum tervalidasi untuk resume.";
         appendQaLog("qa.failed", {
           reason,
-          blockerType: liveCheck?.state || "session_invalid",
+          blockerType: liveCheck?.currentUrl === "about:blank" ? "mcp_blank_after_recovery" : (liveCheck?.state || "session_invalid"),
           liveCheck,
           logFiles: buildLogFiles(config),
         });

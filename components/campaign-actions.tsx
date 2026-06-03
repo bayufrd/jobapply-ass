@@ -138,6 +138,10 @@ type CampaignStatusResponse = {
     technicalDetails?: string | null;
     mcpUrl?: string | null;
   } | null;
+  blocker?: {
+    type?: string | null;
+    message?: string | null;
+  } | null;
   latestLogs: Array<{
     id: string;
     createdAt: string;
@@ -406,7 +410,7 @@ export function CampaignActions({
     }
   }
 
-  async function submitDecision(action: "apply" | "skip" | "skip_similar" | "ask_later" | "accept" | "reject" | "yes" | "no" | "edit_answer") {
+  async function submitDecision(action: "apply" | "skip" | "skip_similar" | "ask_later" | "accept" | "reject" | "yes" | "no" | "edit_answer" | "resume_after_login") {
     setLoadingAction(action);
     setResultMessage(null);
     try {
@@ -434,7 +438,9 @@ export function CampaignActions({
                           ? "User memilih Tidak."
                           : action === "edit_answer"
                             ? "User ingin mengubah jawaban."
-                            : "User ingin memutuskan nanti.",
+                            : action === "resume_after_login"
+                              ? "User sudah selesai login manual dan meminta direct apply dilanjutkan."
+                              : "User ingin memutuskan nanti.",
         }),
       });
       const data = await readJsonSafely(res, { actionName: "send_decision", method, url });
@@ -448,7 +454,7 @@ export function CampaignActions({
         );
       }
       setResultMessage(typeof data.message === "string" ? data.message : "Keputusan berhasil disimpan.");
-      setResultTone(action === "apply" ? "success" : "warning");
+      setResultTone(action === "apply" || action === "resume_after_login" ? "success" : "warning");
       await fetchStatus();
     } catch (error) {
       setResultMessage(error instanceof Error ? error.message : "Terjadi kesalahan.");
@@ -703,6 +709,33 @@ export function CampaignActions({
             <button onClick={() => submitDecision("edit_answer")} disabled={loadingAction !== null} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">Edit Answer</button>
             <button onClick={() => submitDecision("skip")} disabled={loadingAction !== null} className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50">Skip Job</button>
             <button disabled className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-500 opacity-60">Remember for this campaign</button>
+          </div>
+        </section>
+      )}
+
+      {statusData?.blocker?.type && ["otp_required", "login_required", "security_or_challenge", "manual_intervention"].includes(statusData.blocker.type) && (
+        <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6">
+          <p className="text-xs uppercase tracking-[0.3em] text-amber-300">Login / OTP Jobstreet</p>
+          <h3 className="mt-2 text-lg font-semibold text-white">
+            {statusData.blocker.type === "otp_required" ? "OTP diperlukan untuk melanjutkan." : "Login manual diperlukan untuk melanjutkan."}
+          </h3>
+          <p className="mt-3 text-sm text-slate-200">
+            {statusData.blocker.message ?? "Selesaikan login atau verifikasi keamanan di browser Jobstreet yang terbuka, lalu lanjutkan dari aplikasi."}
+          </p>
+          <p className="mt-3 text-sm text-slate-400">
+            Masukkan OTP 6 digit langsung di browser Jobstreet yang terbuka. Setelah berhasil login, klik tombol Lanjutkan dari aplikasi.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              onClick={() => submitDecision("resume_after_login")}
+              disabled={loadingAction !== null}
+              className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-50"
+            >
+              Saya sudah login, lanjutkan
+            </button>
+            <Link href={statusData?.localLog.apiUrl ?? `/api/campaigns/${campaignId}/local-log?tail=300`} target="_blank" className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
+              Lihat Local Log
+            </Link>
           </div>
         </section>
       )}
