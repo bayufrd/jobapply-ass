@@ -18,6 +18,7 @@ const DEFAULTS = {
   forceDirectApply: false,
   directJobUrl: null,
   directJobId: null,
+  resumeAfterManual: false,
 };
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -54,6 +55,9 @@ function parseArgs(argv) {
     }
     if (rawKey === "skip-applied-baseline") {
       parsed.skipAppliedBaseline = value ? value !== "false" : true;
+    }
+    if (rawKey === "resume-after-manual") {
+      parsed.resumeAfterManual = value ? value !== "false" : true;
     }
   }
   return parsed;
@@ -500,6 +504,7 @@ async function startCampaign(config) {
       forceDirectApply: config.forceDirectApply,
       directJobUrl: config.directJobUrl,
       directJobId: config.directJobId,
+      resumeAfterManual: config.resumeAfterManual,
     },
   });
 
@@ -556,6 +561,25 @@ async function fetchQaStatus(config) {
     throw new Error(response.body?.error || "Gagal mengambil status QA campaign.");
   }
   return response.body;
+}
+
+async function checkLiveBrowserSession(config) {
+  const params = new URLSearchParams({
+    checkLive: "1",
+    campaignId: config.campaignId,
+  });
+
+  if (config.directJobUrl) {
+    params.set("targetUrl", config.directJobUrl);
+  }
+
+  const response = await fetchJson(`${config.appUrl}/api/browser/session?${params.toString()}`);
+  appendQaLog("jobstreet.live_session_check", {
+    status: response.status,
+    body: response.body,
+  });
+
+  return response.body?.liveCheck ?? null;
 }
 
 async function autoResolveLowScore(config, status) {
@@ -731,11 +755,13 @@ async function runLoop(config) {
           reason,
           blockerType: "manual_intervention",
           latestApplication: status.latestApplication,
+          resumeAfterManual: config.resumeAfterManual,
           logFiles: buildLogFiles(config),
         });
         console.log("QA FAILED");
         console.log(`Reason: ${reason}`);
-        console.log("Selesaikan login/verifikasi di browser visible, lalu jalankan ulang QA atau klik Lanjutkan Kampanye setelah resume flow siap.");
+        console.log("Selesaikan login/verifikasi di browser visible.");
+        console.log(`Resume command: npm run qa:autopilot -- --campaign=${config.campaignId} --job-url=${config.directJobUrl || "https://id.jobstreet.com/id/job/92457600"} --target=${config.target} --force-direct-apply --resume-after-manual${config.skipAppliedBaseline ? " --skip-applied-baseline" : ""}`);
         console.log(`Campaign log: ${campaignLogRelative}`);
         console.log(`QA log: ${qaLogRelative}`);
         console.log(`MCP log: ${mcpLogRelative}`);
@@ -895,6 +921,37 @@ async function main() {
     await ensureMcpReady(config);
     await ensureAppReady(config);
     await checkMcpHealth(config);
+
+    if (config.resumeAfterManual) {
+      const liveCheck = await checkLiveBrowserSession(config);
+      if (!liveCheck?.canResumeAutopilot) {
+        const reason = liveCheck?.state === "login_required"
+          ? "Sesi MCP Jobstreet masih meminta login manual."
+          : liveCheck?.state === "security_or_challenge"
+            ? "Sesi MCP Jobstreet masih berada di captcha/OTP/verifikasi keamanan."
+            : "Sesi MCP Jobstreet belum tervalidasi untuk resume.";
+        appendQaLog("qa.failed", {
+          reason,
+          blockerType: liveCheck?.state || "session_invalid",
+          liveCheck,
+          logFiles: buildLogFiles(config),
+        });
+        console.log("QA FAILED");
+        console.log(`Reason: ${reason}`);
+        console.log(`Current URL: ${liveCheck?.currentUrl || "-"}`);
+        console.log(`Evidence: ${JSON.stringify(liveCheck?.evidence || [])}`);
+        console.log(`Campaign log: ${campaignLogRelative}`);
+        console.log(`QA log: ${qaLogRelative}`);
+        console.log(`MCP log: ${mcpLogRelative}`);
+        console.log(`Dev log: ${devLogRelative}`);
+        process.exit(1);
+      }
+
+      appendQaLog("manual_intervention.completed_by_user", {
+        liveCheck,
+        message: "Resume-after-manual diterima karena sesi live MCP sudah valid.",
+      });
+    }
 
     // TASK 4 — QA runner harus membaca baseline sebelum apply
     if (config.skipAppliedBaseline) {

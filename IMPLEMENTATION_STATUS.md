@@ -467,6 +467,7 @@ Catatan:
 | 2026-06-03 | Endpoint status dan proses save/search job crash dengan Prisma `P2022` karena kolom `main.JobListing.jobstreetJobId` belum ada di SQLite | Schema [`JobListing`](prisma/schema.prisma:121) sudah memakai field baru, tetapi DB lokal belum mendapat migrasi kolom `jobstreetJobId`, `applyUrl`, `quickApplyAvailable`, dan `searchPage` | Fixed (perlu menjalankan migrasi pada environment lain) | `prisma/schema.prisma`, `prisma/migrations/20260603171500_add_missing_job_listing_columns/migration.sql`, `app/api/campaigns/[id]/status/route.ts`, `lib/browser/jobstreet-agent.ts` |
 | 2026-06-03 | Saat satu lowongan error, autopilot masih lanjut mencari/memproses lowongan lain padahal goal sekarang hanya 1 lamaran | Cabang hasil [`apply_unavailable` / `stuck_no_progress` / `submit_not_found_timeout`](lib/campaign/autopilot-runner.ts:1157) sebelumnya mengembalikan `skipped_continue` dan memaksa lanjut ke next job | Fixed | `lib/campaign/autopilot-runner.ts` |
 | 2026-06-03 | Campaign Autopilot crash dengan `Invalid URL` saat MCP mendeteksi `external_redirect` / page kind `unknown`, atau saat keyword pencarian berisi spasi seperti `IT Developer` | URL kosong/relative/malformed masih bisa lolos ke `new URL(...)`, dan builder search URL sempat menyisipkan keyword mentah multi-kata ke path sehingga phase search bisa membentuk URL tidak valid | Fixed (targeted test [`tests/jobstreet-search-url.test.ts`](tests/jobstreet-search-url.test.ts:1) lulus; QA live masih pending) | `lib/jobstreet/safe-url.ts`, `lib/jobstreet/jobstreet-url.ts`, `lib/jobstreet/jobstreet-search-url.ts`, `lib/browser/mcp-ai-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts`, `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/status/route.ts`, `tests/safe-url.test.ts`, `tests/jobstreet-url.test.ts`, `tests/jobstreet-search-url.test.ts` |
+| 2026-06-03 | Blocker login/session MCP untuk direct apply `92457600` sebelumnya gelap dan QA resume belum punya jalur eksplisit | Endpoint sesi browser hanya metadata-only, belum ada validasi live ke Jobstreet via MCP; QA CLI juga belum punya `resume-after-manual` dan belum mengecek sesi live sebelum rerun | Partial: live session-check dan resume intent sudah ditambahkan, tetapi verifikasi live terbaru masih menunjukkan sesi MCP belum login valid dan resume dihentikan aman sebelum apply | `app/api/browser/session/route.ts`, `lib/jobstreet/session-check.ts`, `app/api/qa/campaigns/[id]/run/route.ts`, `scripts/qa-autopilot.mjs`, `tests/jobstreet-session-check.test.ts` |
 | 2026-06-02 | QA stuck karena campaign terus memanggil continue berkali-kali saat currentStep sudah no_jobs_remaining | `no_jobs_remaining` disimpan sebagai `paused` dan status endpoint mengembalikan `canContinue: true` | Fixed | `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/status/route.ts`, `scripts/qa-autopilot.mjs` |
 | 2026-06-02 | Resume campaign belum melanjutkan browser automation yang sebelumnya terhenti | Route resume masih hanya mengubah status dan menulis log | Open | `app/api/campaigns/[id]/resume/route.ts` |
 | 2026-06-02 | URL pencarian Jobstreet lama masih memakai query param `keywords/where` | Format lama tidak cocok dengan requirement MVP Jobstreet all-in-one | Fixed | `lib/jobstreet/jobstreet-search-url.ts`, `lib/browser/jobstreet-agent.ts`, `tests/jobstreet-search-url.test.ts` |
@@ -504,12 +505,14 @@ Tuliskan batasan saat ini:
 Checklist fitur yang belum selesai:
 
 * [ ] Implementasi login Jobstreet otomatis atau semi-otomatis yang benar-benar memakai credential/session secara aman.
+* [x] Live session-check MCP untuk Jobstreet + resume intent QA direct apply. (Implemented via [`GET()`](app/api/browser/session/route.ts:10), [`analyzeJobstreetSessionSnapshot()`](lib/jobstreet/session-check.ts:29), dan flag [`--resume-after-manual`](scripts/qa-autopilot.mjs:58))
 * [x] Final submit lamaran setelah approval user. (Implemented with full-page resolver + re-read flow, still needs manual verification against live Jobstreet)
 * [x] Tautkan screenshot error/intervensi ke record aplikasi yang relevan. (Screenshots now saved and linked)
 * [x] Apply calibration dry run. (Implemented, needs manual verification against live Jobstreet)
 * [ ] Verifikasi end-to-end submit, campaign loop, dan calibration terhadap Jobstreet nyata.
 * [ ] Mode pengisian eksternal untuk flow external redirect.
 * [ ] Resume automation setelah intervensi manual (bukan hanya status-level, tetapi melanjutkan browser session yang sama).
+* [x] Resume QA direct apply tanpa kehilangan payload lowongan target. (Rerun sekarang menulis event [`campaign.resume_after_manual_intervention_started`](app/api/qa/campaigns/[id]/run/route.ts:186) dan mempertahankan direct seed untuk `92457600`)
 * [ ] Pagination hasil pencarian Jobstreet untuk kampanye besar.
 * [ ] UI real-time untuk menampilkan status manual intervention dan tombol "Lanjutkan Kampanye" setelah user menyelesaikan intervensi.
 * [ ] Edit jawaban dari halaman review.
@@ -532,16 +535,13 @@ Tuliskan 3–5 langkah paling masuk akal berikutnya.
 Tuliskan prompt pendek untuk task berikutnya.
 
 ```txt
-Continue from IMPLEMENTATION_STATUS.md. Focus on verifying the apply_unavailable autopilot fix and the remaining live browser flows:
-1. Manual verification: force or pick 1 job without an apply button, run Autopilot, and confirm the job becomes apply_unavailable, campaign does not pause, and autopilot continues to the next job.
-2. Manual verification: confirm repeated polling does not re-pick the same apply_unavailable/failed job automatically.
-3. Manual verification: test apply calibration dry run against live Jobstreet with visible browser on a normal job.
-4. Manual verification: test submit flow against live Jobstreet with visible browser.
-5. Implement external form filling mode for external redirect flows (google_form, greenhouse, lever, workday, company_site).
-6. Implement edit answer from review page.
-7. Keep UI in Bahasa Indonesia.
-8. Update IMPLEMENTATION_STATUS.md after finishing.
-9. Follow the mandatory GitHub workflow.
+Continue from IMPLEMENTATION_STATUS.md. Focus on the Jobstreet MCP login/session blocker for direct apply `92457600`:
+1. Use [`/api/browser/session?checkLive=1`](app/api/browser/session/route.ts:10) to verify the visible MCP browser session live.
+2. Ask the user to complete manual login only in the visible MCP Chromium if state is `login_required`.
+3. Rerun [`npm run qa:autopilot -- --campaign=cmpybm8rh00009k0b057yhrg0 --job-url=https://id.jobstreet.com/id/job/92457600 --target=1 --force-direct-apply --resume-after-manual --skip-applied-baseline`](package.json:15).
+4. Verify whether the flow reaches `https://id.jobstreet.com/id/job/92457600/apply` or later steps.
+5. Do not claim success without URL `/apply/success` or strong success marker evidence.
+6. Update IMPLEMENTATION_STATUS.md after finishing.
 ```
 
 ## 20. Catatan untuk AI Assistant Berikutnya
@@ -562,7 +562,8 @@ Tuliskan hal penting yang harus diketahui AI assistant berikutnya:
 * Selector Jobstreet menggunakan multiple strategies (data-automation, semantic HTML, generic fallback). Jika selector rusak, update `extractJobCards()` dan `extractJobDetail()` di `lib/browser/jobstreet-agent.ts`.
 * AI job scoring sudah terintegrasi ke campaign runner. Setiap lowongan yang disimpan akan di-score, dan status diubah menjadi shortlisted/skipped berdasarkan matchThreshold.
 * Manual intervention message sudah diupdate untuk memandu user menyelesaikan login/captcha/OTP di browser yang terbuka, lalu klik Lanjutkan Kampanye.
-* Browser tidak ditutup saat manual intervention terdeteksi, tetapi session tidak dapat dilanjutkan otomatis setelah intervensi selesai (perlu restart campaign).
+* Browser tidak ditutup saat manual intervention terdeteksi. Untuk QA direct apply, rerun sekarang memakai flag [`--resume-after-manual`](scripts/qa-autopilot.mjs:58) dan live session-check sebelum memulai ulang.
+* Endpoint sesi browser [`GET()`](app/api/browser/session/route.ts:10) sekarang mendukung `?checkLive=1&campaignId=...&targetUrl=...` dan menulis event `jobstreet.session_check_started`, `jobstreet.session_valid`, atau `jobstreet.session_invalid`.
 * Apply calibration dry run: `calibrateJobApply()` di `lib/browser/jobstreet-apply-calibrator.ts` melakukan deteksi flow, platform, form fields, dan submit candidates tanpa submit. Hasil disimpan ke `ApplicationCalibration`.
 * `/profile` UI sudah dipoles: tidak ada raw JSON yang ditampilkan ke user normal, skills sebagai badges, experience/education/projects sebagai cards dengan field yang di-humanize, raw CV text tersembunyi dalam collapsible section.
 * Helper functions untuk profile: `parseProfileJson` (safe JSON parser), `humanizeKey` (convert camelCase/snake_case ke readable label), `renderFlexibleObject` (render object sebagai description list dengan formatting yang baik).
@@ -768,6 +769,8 @@ Isi setelah testing:
 | 4 | QA Direct Apply 92457600 | — | `cmpyjxu8o00ic9kvgq7oqhtmg` | — | failed | — | `campaign.phase_apply_job_selected`, `qa.failed`, `blockerEvidence.type=login` | QA live `2026-06-03T21:33:43Z` membuktikan forced direct-apply kini benar-benar memilih lowongan seeded `92457600` lagi setelah patch internal-ID repick pada [`pickNextJob()`](lib/campaign/autopilot-runner.ts:288); blocker lama `direct_apply_candidate_missing` tidak muncul lagi. |
 | 5 | QA Direct Apply 92457600 | — | `cmpyjxu8o00ic9kvgq7oqhtmg` | — | manual_intervention_required | — | `currentStep=apply_failed`, `decisionRequired.type=stuck_no_progress`, `blockerEvidence.type=login` | Run live terbaru berhenti pada intervensi manual login/security dengan bukti MCP bahwa halaman/login URL terdeteksi pada target direct Jobstreet. Ini blocker live yang valid; belum ada bukti URL sudah mencapai `/apply` atau `/apply/success`. |
 | 6 | — | — | — | — | Regression verified | — | `node --test ./tests/autopilot-apply-dispatch.test.ts`, `npx tsc --noEmit` | Test baru pada [`tests/autopilot-apply-dispatch.test.ts`](tests/autopilot-apply-dispatch.test.ts:194) memverifikasi failed application yang hanya punya `jobListingId` internal tidak lagi memblokir forced direct repick; validasi TypeScript juga lulus. |
+| 7 | QA Direct Apply 92457600 | — | `cmpyjxu8o00ic9kvgq7oqhtmg` | — | login_required | — | [`/api/browser/session?checkLive=1`](app/api/browser/session/route.ts:10), `jobstreet.session_invalid` | Live session check `2026-06-03T21:59:03Z` memverifikasi browser MCP visible memang belum punya sesi Jobstreet yang cukup untuk lanjut; URL tetap `https://id.jobstreet.com/id/job/92457600`, evidence `Halaman login atau URL oauth/login terlihat`, `canResumeAutopilot=false`. |
+| 8 | QA Direct Apply 92457600 | — | — | — | failed_safe_resume_guard | — | [`--resume-after-manual`](scripts/qa-autopilot.mjs:58), `qa.failed`, `Current URL: about:blank` | Rerun live `2026-06-03T21:59:33Z` dengan resume flag berhenti aman sebelum apply karena live check kedua menghasilkan snapshot `about:blank` / `unknown`, sehingga sistem menolak klaim resume dan tidak mencoba apply dengan sesi yang belum valid. |
 
 ### Status Akhir QA
 
@@ -782,8 +785,9 @@ Ringkasan aktual task ini:
 - stuck: 1 run direct terbaru berhenti di `stuck_no_progress`
 - `manual_intervention`: 1 blocker live terbaru terdeteksi sebagai login/security
 - `submit_unverified`: 0
-- bukti live QA terbaru: [`storage/logs/qa-autopilot-2026-06-03T21-33-43-482Z.log`](storage/logs/qa-autopilot-2026-06-03T21-33-43-482Z.log), [`storage/logs/campaign-cmpybm8rh00009k0b057yhrg0.log`](storage/logs/campaign-cmpybm8rh00009k0b057yhrg0.log)
+- bukti live QA terbaru: [`storage/logs/qa-autopilot-2026-06-03T21-33-43-482Z.log`](storage/logs/qa-autopilot-2026-06-03T21-33-43-482Z.log), [`storage/logs/qa-autopilot-2026-06-03T21-59-33-408Z.log`](storage/logs/qa-autopilot-2026-06-03T21-59-33-408Z.log), [`storage/logs/campaign-cmpybm8rh00009k0b057yhrg0.log`](storage/logs/campaign-cmpybm8rh00009k0b057yhrg0.log)
 - hasil fix terverifikasi: forced direct rerun tidak lagi gagal di `direct_apply_candidate_missing`; seeded listing `QA Direct Apply 92457600` berhasil dipilih kembali secara live setelah patch pada [`pickNextJob()`](lib/campaign/autopilot-runner.ts:288).
+- hasil fix tambahan terverifikasi: live session-check endpoint dan resume guard sekarang mengungkap blocker auth/session secara eksplisit sebelum rerun apply, termasuk state `login_required` dan fallback aman bila snapshot MCP kembali `about:blank`.
 - blocker utama terverifikasi sekarang: intervensi manual login/captcha/OTP/security pada sesi visible Chromium / MCP, bukan lagi exhausted search pool untuk jalur direct ini.
 - hal yang belum boleh diklaim: belum ada bukti live bahwa run terbaru mencapai `https://id.jobstreet.com/id/job/92457600/apply`, belum ada bukti `/apply/success`, dan `appliedCount` tetap 0.
 - integritas hasil: tidak ada false `submitted`, tidak ada false `completed_success`, dan tidak ada klaim submit tanpa marker sukses terverifikasi.

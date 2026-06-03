@@ -14,6 +14,7 @@ type RunBody = {
   directJobUrl?: string;
   directJobId?: string;
   quickApplyAvailable?: boolean;
+  resumeAfterManual?: boolean;
 };
 
 function normalizeDirectApplyInput(body: RunBody) {
@@ -183,8 +184,12 @@ export async function POST(
 
     await writeAutomationLog({
       campaignId: id,
-      event: "campaign.qa_run_requested",
-      message: "QA autopilot memaksa mode MCP AI First dan auto submit aman.",
+      event: body.resumeAfterManual
+        ? "campaign.resume_after_manual_intervention_started"
+        : "campaign.qa_run_requested",
+      message: body.resumeAfterManual
+        ? "QA autopilot melanjutkan ulang setelah intervensi manual dengan payload direct apply tetap dipertahankan."
+        : "QA autopilot memaksa mode MCP AI First dan auto submit aman.",
       metadata: {
         targetSubmissions: body.targetSubmissions ?? campaign.targetApplyCount,
         forceMcpAiFirst: body.forceMcpAiFirst ?? true,
@@ -194,6 +199,7 @@ export async function POST(
         directJobId: directApply?.jobId ?? null,
         directJobUrl: directApply?.jobUrl ?? null,
         directApplyUrl: directApply?.applyUrl ?? null,
+        resumeAfterManual: body.resumeAfterManual ?? false,
         previousStatus: campaign.status,
         forceRestarted: shouldForceRestart,
         resetRuntimeState: shouldForceRestart
