@@ -82,3 +82,20 @@ test("rejects malformed URL", () => {
   assert.equal(result.ok, false);
   assert.equal(result.reason, "invalid_url");
 });
+
+test("rejects empty current URL without throwing", () => {
+  const result = normalizeSafeUrl("", {
+    defaultBaseUrl: "https://id.jobstreet.com",
+    allowExternal: true,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "empty_url");
+});
+
+test("rejects hash-only URL without throwing", () => {
+  const result = normalizeSafeUrl("#", {
+    defaultBaseUrl: "https://id.jobstreet.com",
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "blocked_protocol");
+});

@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { runJobstreetCampaign } from "@/lib/browser/jobstreet-agent";
 import { getCampaignOrThrow, logCampaignEvent, setCampaignStatus } from "@/lib/api/campaigns";
+import { runCampaignAutopilot } from "@/lib/campaign/autopilot-runner";
 import { prisma } from "@/lib/db/prisma";
 
 export async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
 
   try {
-    const campaign = await getCampaignOrThrow(id);
+    await getCampaignOrThrow(id);
     const profile = await prisma.candidateProfile.findFirst({ orderBy: { updatedAt: "desc" } });
 
     if (!profile) {
@@ -18,41 +18,26 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     }
 
     await setCampaignStatus(id, "running");
-    await logCampaignEvent(id, "campaign.start", "Kampanye ditandai berjalan dan browser akan dibuka.");
+    await logCampaignEvent(id, "campaign.start", "Kampanye ditandai berjalan dan autopilot akan dijalankan.");
 
-    const result = await runJobstreetCampaign({
-      campaignId: id,
-      keyword: campaign.keyword,
-      location: campaign.location,
-      targetApplyCount: campaign.targetApplyCount,
-      matchThreshold: campaign.matchThreshold,
-      profile: {
-        fullName: profile.fullName ?? undefined,
-        email: profile.email ?? undefined,
-        phone: profile.phone ?? undefined,
-        location: profile.location ?? undefined,
-      },
-      defaults: {
-        currentSalary: campaign.defaultCurrentSalary,
-        expectedSalary: campaign.defaultExpectedSalary,
-        noticePeriod: campaign.defaultNoticePeriod,
-        availability: campaign.defaultAvailability,
-      },
-    });
+    const result = await runCampaignAutopilot(id);
 
-    // Set campaign status based on result
     if (result.status === "completed") {
       await setCampaignStatus(id, "completed");
-      await logCampaignEvent(
-        id,
-        "campaign.completed",
-        `Pencarian selesai. ${result.jobsSaved} lowongan berhasil disimpan dari ${result.jobsFound} yang ditemukan.`,
-      );
-    } else if (result.status === "manual_intervention") {
+      await logCampaignEvent(id, "campaign.completed", result.message);
+    } else if (
+      result.status === "manual_intervention_required"
+      || result.status === "question_required"
+      || result.status === "submit_unverified"
+      || result.status === "review_required"
+      || result.status === "paused"
+      || result.status === "decision_required"
+    ) {
       await setCampaignStatus(id, "paused");
-      await logCampaignEvent(id, "campaign.paused", "Kampanye dijeda karena intervensi manual diperlukan.");
-    } else if (result.status === "search_failed") {
+      await logCampaignEvent(id, "campaign.paused", result.message);
+    } else if (result.status === "error") {
       await setCampaignStatus(id, "error");
+      await logCampaignEvent(id, "campaign.error", result.message);
     }
 
     return NextResponse.json({

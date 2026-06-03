@@ -1,29 +1,23 @@
-export type JobstreetApplyStep =
-  | "choose_documents"
-  | "employer_questions"
-  | "update_profile"
-  | "review_submit"
-  | "success"
-  | "external_redirect"
-  | "manual_intervention"
-  | "unknown";
+import { detectApplicationSuccessMarker } from "./success-markers.ts";
+import { extractJobstreetJobId, type JobstreetApplyPathStep } from "../jobstreet/jobstreet-url.ts";
 
-const SUCCESS_MARKERS = [
-  "nice work",
-  "your application has been sent",
-  "application sent",
-  "lamaran berhasil dikirim",
-  "lamaran terkirim",
-  "terima kasih telah melamar",
-];
+export type JobstreetApplyStep = JobstreetApplyPathStep | "external_redirect" | "manual_intervention" | "unknown";
+
+function normalizePathname(pathname: string) {
+  return pathname.replace(/\/+$/, "") || "/";
+}
 
 export function isNormalJobstreetApplyUrl(url: string) {
   try {
     const parsedUrl = new URL(url);
     const hostname = parsedUrl.hostname.toLowerCase();
-    const pathname = parsedUrl.pathname.replace(/\/+$/, "") || "/";
+    const pathname = normalizePathname(parsedUrl.pathname);
 
     if (!hostname.includes("jobstreet") && !hostname.includes("jobsdb")) {
+      return false;
+    }
+
+    if (!extractJobstreetJobId(url)) {
       return false;
     }
 
@@ -33,6 +27,11 @@ export function isNormalJobstreetApplyUrl(url: string) {
       /\/job\/\d+\/apply\/profile$/,
       /\/job\/\d+\/apply\/review$/,
       /\/job\/\d+\/apply\/success$/,
+      /\/id\/job\/\d+\/apply$/,
+      /\/id\/job\/\d+\/apply\/role-requirements$/,
+      /\/id\/job\/\d+\/apply\/profile$/,
+      /\/id\/job\/\d+\/apply\/review$/,
+      /\/id\/job\/\d+\/apply\/success$/,
     ].some((pattern) => pattern.test(pathname));
   } catch {
     return false;
@@ -49,35 +48,30 @@ export function detectJobstreetApplyStep(url: string, pageText?: string): Jobstr
   }
 
   const hostname = parsedUrl.hostname.toLowerCase();
-  const pathname = parsedUrl.pathname.replace(/\/+$/, "") || "/";
-  const normalizedPageText = pageText?.toLowerCase() ?? "";
+  const pathname = normalizePathname(parsedUrl.pathname);
 
   if (!hostname.includes("jobstreet") && !hostname.includes("jobsdb")) {
     return "external_redirect";
   }
 
-  if (/\/job\/\d+\/apply\/success$/.test(pathname)) {
+  if (detectApplicationSuccessMarker({ url, text: pageText }).matched) {
     return "success";
   }
 
-  if (/\/job\/\d+\/apply\/review$/.test(pathname)) {
-    return "review_submit";
+  if (/\/(id\/)?job\/\d+\/apply\/review$/i.test(pathname)) {
+    return "review";
   }
 
-  if (/\/job\/\d+\/apply\/profile$/.test(pathname)) {
-    return "update_profile";
+  if (/\/(id\/)?job\/\d+\/apply\/profile$/i.test(pathname)) {
+    return "profile";
   }
 
-  if (/\/job\/\d+\/apply\/role-requirements$/.test(pathname)) {
-    return "employer_questions";
+  if (/\/(id\/)?job\/\d+\/apply\/role-requirements$/i.test(pathname)) {
+    return "role-requirements";
   }
 
-  if (/\/job\/\d+\/apply$/.test(pathname)) {
-    return "choose_documents";
-  }
-
-  if (SUCCESS_MARKERS.some((marker) => normalizedPageText.includes(marker))) {
-    return "success";
+  if (/\/(id\/)?job\/\d+\/apply$/i.test(pathname)) {
+    return "apply";
   }
 
   return "unknown";

@@ -5,6 +5,7 @@ import {
   NINE_ROUTER_MODEL_ERROR_MESSAGE,
 } from "@/lib/ai/9router-config";
 import { prisma } from "@/lib/db/prisma";
+import { safeJsonParse } from "@/lib/utils/safe-json";
 
 type RequestBody = {
   question?: string;
@@ -65,11 +66,11 @@ export async function POST(request: Request) {
         phone: candidateProfile.phone ?? "",
         location: candidateProfile.location ?? "",
         summary: candidateProfile.summary ?? "",
-        skills: JSON.parse(candidateProfile.skillsJson ?? "[]") as string[],
-        workExperience: JSON.parse(candidateProfile.experienceJson ?? "[]") as Array<Record<string, unknown>>,
-        education: JSON.parse(candidateProfile.educationJson ?? "[]") as Array<Record<string, unknown>>,
-        projects: JSON.parse(candidateProfile.projectsJson ?? "[]") as Array<Record<string, unknown>>,
-        certifications: JSON.parse(candidateProfile.certificationsJson ?? "[]") as string[],
+        skills: safeJsonParse<string[]>(candidateProfile.skillsJson, [], "question_answer.skills"),
+        workExperience: safeJsonParse<Array<Record<string, unknown>>>(candidateProfile.experienceJson, [], "question_answer.work_experience"),
+        education: safeJsonParse<Array<Record<string, unknown>>>(candidateProfile.educationJson, [], "question_answer.education"),
+        projects: safeJsonParse<Array<Record<string, unknown>>>(candidateProfile.projectsJson, [], "question_answer.projects"),
+        certifications: safeJsonParse<string[]>(candidateProfile.certificationsJson, [], "question_answer.certifications"),
         suggestedJobRoles: [],
       },
       campaignDefaults: body.campaignDefaults ?? {},

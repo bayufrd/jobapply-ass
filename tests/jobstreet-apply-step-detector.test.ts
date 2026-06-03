@@ -3,47 +3,48 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { detectJobstreetApplyStep } from "../lib/browser/jobstreet-apply-step-detector.ts";
+import { detectApplicationSuccessMarker } from "../lib/browser/success-markers.ts";
 import {
   detectManualInterventionFromSignals,
   shouldPauseForManualIntervention,
   type VisiblePageSignals,
 } from "../lib/browser/page-detector.ts";
 
-test("detects choose documents URL", () => {
+test("detects /apply URL", () => {
   assert.equal(
-    detectJobstreetApplyStep("https://www.jobstreet.co.id/job/92275484/apply?sol=abc"),
-    "choose_documents",
+    detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92275484/apply?sol=abc"),
+    "apply",
   );
 });
 
-test("detects employer questions URL", () => {
+test("detects /apply/role-requirements URL", () => {
   assert.equal(
-    detectJobstreetApplyStep("https://www.jobstreet.co.id/job/92275484/apply/role-requirements?sol=abc"),
-    "employer_questions",
+    detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92275484/apply/role-requirements?sol=abc"),
+    "role-requirements",
   );
 });
 
-test("detects update profile URL", () => {
+test("detects /apply/profile URL", () => {
   assert.equal(
-    detectJobstreetApplyStep("https://www.jobstreet.co.id/job/92275484/apply/profile?sol=abc"),
-    "update_profile",
+    detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92275484/apply/profile?sol=abc"),
+    "profile",
   );
   assert.equal(
-    detectJobstreetApplyStep("https://www.jobstreet.co.id/job/92231298/apply/profile?sol=abc"),
-    "update_profile",
-  );
-});
-
-test("detects review submit URL", () => {
-  assert.equal(
-    detectJobstreetApplyStep("https://www.jobstreet.co.id/job/92275484/apply/review?sol=abc"),
-    "review_submit",
+    detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92231298/apply/profile?sol=abc"),
+    "profile",
   );
 });
 
-test("detects success URL", () => {
+test("detects /apply/review URL", () => {
   assert.equal(
-    detectJobstreetApplyStep("https://www.jobstreet.co.id/job/92191658/apply/success"),
+    detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92275484/apply/review?sol=abc"),
+    "review",
+  );
+});
+
+test("detects /apply/success URL", () => {
+  assert.equal(
+    detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92191658/apply/success"),
     "success",
   );
 });
@@ -60,20 +61,20 @@ function createSignals(input: Partial<VisiblePageSignals>): VisiblePageSignals {
   };
 }
 
-test("does not flag manual intervention on update profile page with normal profile text", () => {
+test("does not flag manual intervention on profile page with normal profile text", () => {
   const result = detectManualInterventionFromSignals(
-    "https://id.jobstreet.com/job/92231298/apply/profile?sol=abc",
+    "https://id.jobstreet.com/id/job/92231298/apply/profile?sol=abc",
     createSignals({ visibleText: "update jobstreet profile" }),
   );
 
-  assert.equal(detectJobstreetApplyStep("https://id.jobstreet.com/job/92231298/apply/profile?sol=abc", "Update Jobstreet Profile"), "update_profile");
+  assert.equal(detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92231298/apply/profile?sol=abc", "Update Jobstreet Profile"), "profile");
   assert.equal(result.detected, false);
   assert.equal(shouldPauseForManualIntervention(result), false);
 });
 
-test("does not flag manual intervention on update profile page with avatar and open app text", () => {
+test("does not flag manual intervention on profile page with avatar and open app text", () => {
   const result = detectManualInterventionFromSignals(
-    "https://id.jobstreet.com/job/92231298/apply/profile?sol=abc",
+    "https://id.jobstreet.com/id/job/92231298/apply/profile?sol=abc",
     createSignals({ visibleText: "profile avatar open app jobstreet", interactiveTexts: ["open app"] }),
   );
 
@@ -81,9 +82,9 @@ test("does not flag manual intervention on update profile page with avatar and o
   assert.equal(shouldPauseForManualIntervention(result), false);
 });
 
-test("does not flag manual intervention on update profile page with weak sign-in markers only", () => {
+test("does not flag manual intervention on profile page with weak sign-in markers only", () => {
   const result = detectManualInterventionFromSignals(
-    "https://id.jobstreet.com/job/92231298/apply/profile?sol=abc",
+    "https://id.jobstreet.com/id/job/92231298/apply/profile?sol=abc",
     createSignals({
       visibleText: "update jobstreet profile your jobstreet profile sign_in_page /oauth/login profile avatar open app",
       interactiveTexts: ["open app", "profile"],
@@ -94,23 +95,23 @@ test("does not flag manual intervention on update profile page with weak sign-in
   assert.equal(shouldPauseForManualIntervention(result), false);
 });
 
-test("does not flag manual intervention on update profile page with normal visible profile copy", () => {
+test("does not flag manual intervention on profile page with normal visible profile copy", () => {
   const result = detectManualInterventionFromSignals(
-    "https://id.jobstreet.com/job/92231298/apply/profile?sol=abc",
+    "https://id.jobstreet.com/id/job/92231298/apply/profile?sol=abc",
     createSignals({
       visibleText: "Skip to content Your Jobstreet Profile is part of your application Make sure it's up-to-date Profile Avatar SIGN_IN_PAGE",
       interactiveTexts: ["continue", "skip to content"],
     }),
   );
 
-  assert.equal(detectJobstreetApplyStep("https://id.jobstreet.com/job/92231298/apply/profile?sol=abc"), "update_profile");
+  assert.equal(detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92231298/apply/profile?sol=abc"), "profile");
   assert.equal(result.detected, false);
   assert.equal(shouldPauseForManualIntervention(result), false);
 });
 
-test("flags OTP on update profile page only when strong visible evidence exists", () => {
+test("flags OTP on profile page only when strong visible evidence exists", () => {
   const result = detectManualInterventionFromSignals(
-    "https://id.jobstreet.com/job/92231298/apply/profile?sol=abc",
+    "https://id.jobstreet.com/id/job/92231298/apply/profile?sol=abc",
     createSignals({ visibleText: "enter verification code", hasVisibleOtpInput: true }),
   );
 
@@ -132,24 +133,47 @@ test("flags login on oauth page with visible password input", () => {
 
 test("does not flag manual intervention on review page with submit application button", () => {
   const result = detectManualInterventionFromSignals(
-    "https://id.jobstreet.com/job/92231298/apply/review?sol=abc",
+    "https://id.jobstreet.com/id/job/92231298/apply/review?sol=abc",
     createSignals({ visibleText: "submit application", interactiveTexts: ["submit application"] }),
   );
 
-  assert.equal(detectJobstreetApplyStep("https://id.jobstreet.com/job/92231298/apply/review?sol=abc", "Submit application"), "review_submit");
+  assert.equal(detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92231298/apply/review?sol=abc", "Submit application"), "review");
   assert.equal(result.detected, false);
   assert.equal(shouldPauseForManualIntervention(result), false);
 });
 
 test("detects success from marker text", () => {
   assert.equal(
-    detectJobstreetApplyStep("https://www.jobstreet.co.id/job/92191658/summary", "Nice work"),
+    detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92191658/summary", "Nice work"),
     "success",
   );
   assert.equal(
-    detectJobstreetApplyStep("https://www.jobstreet.co.id/job/92191658/summary", "Your application has been sent"),
+    detectJobstreetApplyStep("https://id.jobstreet.com/id/job/92191658/summary", "Your application has been sent"),
     "success",
   );
+});
+
+test("success marker matches /apply/success URL", () => {
+  assert.deepEqual(detectApplicationSuccessMarker({ url: "https://id.jobstreet.com/id/job/92191658/apply/success" }), {
+    matched: true,
+    marker: "/apply/success",
+    source: "url",
+  });
+});
+
+test("success marker matches success text", () => {
+  const result = detectApplicationSuccessMarker({ text: "Your application has been sent" });
+  assert.equal(result.matched, true);
+  assert.equal(result.marker, "Your application has been sent");
+  assert.equal(result.source, "text");
+});
+
+test("false success does not match and must not increment count", () => {
+  assert.deepEqual(detectApplicationSuccessMarker({ url: "https://id.jobstreet.com/id/job/92191658/apply/review", text: "Review your application" }), {
+    matched: false,
+    marker: null,
+    source: null,
+  });
 });
 
 test("fixture pages are present with expected markers", () => {
@@ -160,4 +184,3 @@ test("fixture pages are present with expected markers", () => {
   assert.match(successHtml, /Your application has been sent/i);
   assert.match(reviewHtml, /Submit application/i);
 });
-

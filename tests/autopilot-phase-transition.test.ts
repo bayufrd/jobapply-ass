@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { jsonControlled, jsonOk } from "../lib/api/json-response.ts";
+import { jsonControlled, jsonError, jsonOk } from "../lib/api/json-response.ts";
 import {
   AUTO_APPLY_FALLBACK_JOB_STATUSES,
   PICKABLE_JOB_STATUSES,
@@ -80,6 +80,62 @@ test("auto apply mode keeps discovered jobs eligible when scoring fails", () => 
   assert.equal(statuses.includes("discovered"), true);
   assert.equal(statuses.includes("shortlisted"), true);
   assert.equal(statuses.includes("applying"), true);
+});
+
+test("apply candidate found returns application started signals for continue flow", () => {
+  const result = {
+    status: "safe_continue",
+    message: "Proses apply dimulai untuk lowongan IT Developer.",
+    campaignId: "cmp-test",
+    currentStep: "opening_job",
+    currentJobId: "job-1",
+    canContinue: true,
+    nextAction: "continue_autopilot" as const,
+  };
+
+  assert.equal(result.status, "safe_continue");
+  assert.equal(result.currentStep, "opening_job");
+  assert.equal(result.currentJobId, "job-1");
+  assert.equal(result.canContinue, true);
+});
+
+test("apply precondition failure returns controlled json payload", async () => {
+  const response = jsonControlled({
+    status: "paused",
+    currentStep: "apply_precondition_failed",
+    blockerType: "missing_apply_precondition",
+    canContinue: false,
+    message: "Fase apply belum bisa dimulai karena data lowongan/profil belum lengkap.",
+    evidence: {
+      missingCandidateProfile: false,
+      missingJobUrl: true,
+      missingApplyUrl: true,
+      formAutomationMode: "mcp_ai_first",
+    },
+  });
+  const body = await response.json();
+
+  assert.equal(body.ok, false);
+  assert.equal(body.controlled, true);
+  assert.equal(body.currentStep, "apply_precondition_failed");
+  assert.equal(body.blockerType, "missing_apply_precondition");
+  assert.equal(body.canContinue, false);
+});
+
+test("runner throw can still return json error payload", async () => {
+  const response = jsonError("autopilot_start_failed", "Autopilot gagal dijalankan. Cek log server untuk detail.", {
+    status: "error",
+    currentStep: "autopilot_start_failed",
+    details: "Invalid URL",
+    canContinue: true,
+  });
+  const body = await response.json();
+
+  assert.equal(body.ok, false);
+  assert.equal(body.error, "autopilot_start_failed");
+  assert.equal(body.currentStep, "autopilot_start_failed");
+  assert.equal(body.details, "Invalid URL");
+  assert.equal(body.canContinue, true);
 });
 
 test("no eligible jobs can return controlled json instead of empty body", async () => {

@@ -246,6 +246,50 @@ Open `http://localhost:3000`. The root route in [`app/page.tsx`](app/page.tsx:1)
 
 MCP diagnostics are available at [`/api/debug/mcp`](app/api/debug/mcp/route.ts:1). The route now uses a local `data:` health page instead of Jobstreet, validates `connectOk`, `toolsListOk`, `navigateOk`, `snapshotOk`, `snapshotUsable`, `browserDependencyOk`, and returns snapshot preview text before any AI planner call.
 
+## Optional [`agent-browser`](scripts/qa-agent-browser.mjs:1) QA setup
+
+Use [`agent-browser`](scripts/qa-agent-browser.mjs:1) only as an external visible-browser QA driver. It does not replace the internal Playwright MCP path.
+
+```bash
+cd /Users/testdev
+git clone https://github.com/vercel-labs/agent-browser.git agent-browser-mcp
+npm install -g agent-browser
+agent-browser install
+agent-browser skills get core
+agent-browser skills get dogfood
+```
+
+If source build is required, keep it outside this repo under `/Users/testdev/agent-browser-mcp` and do not commit that clone into this project.
+
+## Run QA
+
+Preferred external QA:
+
+```bash
+npm run qa:agent-browser -- --campaign=cmpy6ituy006c9k35xtreuri7 --target=1
+```
+
+Current MCP QA path remains supported:
+
+```bash
+npm run qa:autopilot -- --campaign=cmpy6ituy006c9k35xtreuri7 --target=1 --skip-applied-baseline
+```
+
+Expected log files:
+
+- [`storage/logs/qa-agent-browser-*.log`](storage/logs)
+- [`storage/logs/agent-browser-run-*.log`](storage/logs)
+- [`storage/logs/campaign-<campaignId>.log`](storage/logs)
+
+Safety rules for [`agent-browser`](scripts/qa-agent-browser.mjs:1):
+
+- browser must remain visible
+- no captcha bypass
+- no stealth mode
+- no proxy rotation
+- stop on captcha, OTP, login, or security verification
+- do not expose credentials, cookies, tokens, or session files
+
 ## Login and session save behavior
 
 - Session path is configured by [`PLAYWRIGHT_SESSION_PATH`](.env:9)
@@ -310,12 +354,13 @@ Submission must only happen after explicit user approval.
 
 - Jobstreet search and extraction are implemented in [`runJobstreetCampaign()`](lib/browser/jobstreet-agent.ts:369)
 - AI job scoring is integrated via [`scoreJobFit()`](lib/ai/job-scorer.ts:23)
-- Final submit is not implemented yet
+- Final submit verification depends on live success markers in [`lib/browser/success-markers.ts`](lib/browser/success-markers.ts:1); without them, the app must not claim success
 - No background queue or dedicated long-running worker process has been added yet
 - Manual intervention requires restarting the campaign after resolving login/captcha/OTP in the visible browser
 - Session validation and login reuse are basic and need deeper site-specific handling
 - Form filling is intentionally conservative and only fills obvious known fields in [`fillKnownApplicationFields()`](lib/browser/form-filler.ts:18)
 - MCP diagnostics help validate transport/session issues, but live browser verification is still required through [`/api/debug/mcp`](app/api/debug/mcp/route.ts:1)
+- [`agent-browser`](scripts/qa-agent-browser.mjs:1) is a QA/dogfood driver only and does not replace internal Playwright MCP automation
 
 ## Safety notes
 

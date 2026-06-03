@@ -85,6 +85,12 @@ model Campaign {
   location              String?
   targetApplyCount      Int                    @default(1)
   appliedCount          Int                    @default(0)
+  currentSearchPage     Int                    @default(1)
+  currentSearchUrl      String?
+  processedJobCount     Int                    @default(0)
+  unusableJobCount      Int                    @default(0)
+  emptyPageCount        Int                    @default(0)
+  lastAppliedJobstreetJobId String?
   status                CampaignStatus         @default(draft)
   submitMode            SubmitMode             @default(assisted_auto_apply)
   matchThreshold        Int                    @default(70)
@@ -124,6 +130,10 @@ model JobListing {
   url          String           @unique
   description  String?
   snippet      String?
+  jobstreetJobId String?
+  applyUrl     String?
+  quickApplyAvailable Boolean?
+  searchPage   Int?
   matchScore   Int?
   matchReason  String?
   status       JobListingStatus @default(discovered)
@@ -141,6 +151,10 @@ model Application {
   jobListingId   String
   status         ApplicationStatus @default(pending_review)
   submitMode     SubmitMode        @default(assisted_auto_apply)
+  jobstreetJobId String?
+  applyStep      String?
+  successUrl     String?
+  successMarker  String?
   submittedAt    DateTime?
   skippedReason  String?
   userApproved   Boolean           @default(false)

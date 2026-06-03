@@ -8,6 +8,16 @@ import { detectManualIntervention } from "@/lib/browser/page-detector";
 import { prisma } from "@/lib/db/prisma";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
 import { buildInterventionMessage, requiresManualIntervention } from "@/lib/security/safe-automation";
+import { buildJobstreetSearchUrl, getJobstreetLocationSlug } from "@/lib/jobstreet/jobstreet-search-url";
+
+async function shouldStopCampaign(campaignId: string) {
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    select: { status: true },
+  });
+
+  return campaign?.status === "stopped";
+}
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -63,8 +73,8 @@ type CampaignRunResult = {
 // ── Constants ──────────────────────────────────────────────────────────
 
 const JOBSTREET_BASE = "https://id.jobstreet.com";
-const JOBSTREET_DEFAULT_LOCATION = "West Jakarta, Jakarta";
-const JOBSTREET_DEFAULT_LOCATION_SLUG = "West-Jakarta-Jakarta";
+const JOBSTREET_DEFAULT_LOCATION = "Jakarta Barat, Jakarta Raya";
+const JOBSTREET_DEFAULT_LOCATION_SLUG = getJobstreetLocationSlug();
 const MAX_JOBS_HARD_LIMIT = 20;
 const DEFAULT_MAX_JOBS = 10;
 const DEFAULT_SEARCH_BATCH_SIZE = 20;
@@ -270,57 +280,22 @@ async function scoreAndUpdateJobListing(
 
 // ── Search URL Builder ─────────────────────────────────────────────────
 
-function normalizeSearchLocation(location?: string | null) {
-  const value = location?.trim();
-  if (!value) return "";
-
-  const normalized = value
-    .replace(/\bjakarta raya\b/gi, "Jakarta")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const segments = normalized
-    .split(/[;,]/)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-
-  if (segments.length > 0) {
-    return segments[0];
-  }
-
-  const jakartaBaratMatch = normalized.match(/jakarta barat/i);
-  if (jakartaBaratMatch) {
-    return "Jakarta Barat";
-  }
-
-  return normalized;
-}
-
-export function buildKeywordSlug(keyword: string) {
-  const cleaned = keyword
-    .trim()
-    .toLowerCase()
-    .replace(/\+/g, " plus ")
-    .replace(/#/g, " sharp ")
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9.-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-
-  return cleaned || "software-developer";
-}
-
-export function buildSearchUrl(keyword: string): string {
-  const keywordSlug = buildKeywordSlug(keyword);
-  return `${JOBSTREET_BASE}/${keywordSlug}-jobs/in-${JOBSTREET_DEFAULT_LOCATION_SLUG}`;
-}
-
 // ── Job Card Extraction ────────────────────────────────────────────────
 
 async function extractJobCards(page: Page): Promise<JobCard[]> {
   return page.evaluate(() => {
     const cards: JobCard[] = [];
     const seen = new Set<string>();
+    const toAbsoluteJobUrl = (href: string) => {
+      const trimmed = href.trim();
+      if (!trimmed) return "";
+
+      try {
+        return new URL(trimmed, window.location.origin).toString();
+      } catch {
+        return "";
+      }
+    };
 
     // Strategy 1: Look for article elements with job data attributes
     const articles = document.querySelectorAll('article[data-automation="normalJob"]');
@@ -343,8 +318,8 @@ async function extractJobCards(page: Page): Promise<JobCard[]> {
                             article.querySelector("span[class*='snippet'], div[class*='snippet']");
 
           const title = titleEl?.textContent?.trim() ?? "";
-          const href = (titleEl as HTMLAnchorElement)?.href ?? "";
-          const url = href.startsWith("http") ? href : href ? `${window.location.origin}${href}` : "";
+          const href = ((titleEl as HTMLAnchorElement)?.getAttribute("href") ?? (titleEl as HTMLAnchorElement)?.href ?? "").trim();
+          const url = toAbsoluteJobUrl(href);
 
           if (!title || !url || seen.has(url)) continue;
           seen.add(url);
@@ -372,8 +347,8 @@ async function extractJobCards(page: Page): Promise<JobCard[]> {
         if (!container) continue;
 
         const title = link.textContent?.trim() ?? "";
-        const href = (link as HTMLAnchorElement).href ?? "";
-        const url = href.startsWith("http") ? href : href ? `${window.location.origin}${href}` : "";
+        const href = ((link as HTMLAnchorElement).getAttribute("href") ?? (link as HTMLAnchorElement).href ?? "").trim();
+        const url = toAbsoluteJobUrl(href);
 
         if (!title || !url || title.length < 3 || seen.has(url)) continue;
         seen.add(url);
@@ -593,7 +568,7 @@ export async function runJobstreetCampaign(
     if (homeIntervention) return homeIntervention;
 
     // 4. Build search URL and navigate
-    const searchUrl = buildSearchUrl(input.keyword);
+    const searchUrl = buildJobstreetSearchUrl(input.keyword);
     await writeAutomationLog({
       campaignId: input.campaignId,
       event: "jobstreet.search_page_loaded",
@@ -649,6 +624,39 @@ export async function runJobstreetCampaign(
     const detailPage = await context.newPage();
 
     for (let i = 0; i < cardsToProcess.length; i++) {
+      if (await shouldStopCampaign(input.campaignId)) {
+        await writeAutomationLog({
+          campaignId: input.campaignId,
+          level: "warn",
+          event: "jobstreet.search_stopped",
+          message: "Kampanye dihentikan user. Loop pencarian Jobstreet berhenti sebelum memproses lowongan berikutnya.",
+          metadata: {
+            jobsFound,
+            jobsSaved,
+            index: i + 1,
+            total: cardsToProcess.length,
+          },
+        });
+        break;
+      }
+
+      if (page.isClosed() || detailPage.isClosed() || !context.browser()?.isConnected()) {
+        await writeAutomationLog({
+          campaignId: input.campaignId,
+          level: "warn",
+          event: "jobstreet.search_browser_closed",
+          message: "Browser, context, atau tab detail sudah tertutup. Loop pencarian Jobstreet dihentikan secara aman.",
+          metadata: {
+            jobsFound,
+            jobsSaved,
+            pageClosed: page.isClosed(),
+            detailPageClosed: detailPage.isClosed(),
+            browserConnected: context.browser()?.isConnected() ?? false,
+          },
+        });
+        break;
+      }
+
       const card = cardsToProcess[i];
 
       await writeAutomationLog({

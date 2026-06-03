@@ -8,6 +8,7 @@ import { getJobstreetLayoutKnowledge } from "@/lib/jobstreet/jobstreet-layout-kn
 import { writeAutomationLog } from "@/lib/logging/automation-log";
 import { executeMcpActionPlan } from "@/lib/mcp/mcp-action-executor";
 import { hasMcpSuccessMarker, normalizeMcpSnapshot, type NormalizedMcpPage } from "@/lib/mcp/mcp-snapshot-normalizer";
+import { safeJsonParse } from "@/lib/utils/safe-json";
 import {
   getMcpSnapshotPreview,
   PlaywrightMcpClient,
@@ -96,13 +97,8 @@ const MAX_JOB_DURATION_MS = 180000;
 const MAX_AI_PLANNER_RETRIES = 2;
 
 function parseJsonArray<T>(value: string | null | undefined): T[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
-  }
+  const parsed = safeJsonParse<unknown>(value, [], "mcp_apply.parse_json_array");
+  return Array.isArray(parsed) ? (parsed as T[]) : [];
 }
 
 function fingerprintSnapshot(snapshot: McpSnapshot) {
@@ -919,33 +915,46 @@ export async function runMcpAiApplyRunner({
             jobListingId: jobListing.id,
           },
         });
+        const controlledMessage = reason === "external_redirect"
+          ? "Lowongan ini mengarah ke website eksternal. Untuk MVP Jobstreet internal, sistem melewati lowongan ini atau minta keputusan user."
+          : "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.";
+        const currentStep = reason === "invalid_url" ? "external_redirect_invalid_url" : reason;
+        const blockerPayload = {
+          detectedStep,
+          pageKind: normalized.pageKind,
+          fixtureConfidence: fixtureMatch.confidence,
+          currentUrl: snapshot.url,
+          normalizedUrlOk: normalizedCurrentUrl.ok,
+          reason,
+          externalUrl: normalizedCurrentUrl.ok ? normalizedCurrentUrl.url : null,
+          canContinue: true,
+          currentStep,
+          blockerType: reason,
+        };
         await prisma.application.update({
           where: { id: application.id },
           data: {
             status: "failed",
-            notes: reason === "external_redirect"
-              ? "Lowongan ini mengarah ke website eksternal. Untuk MVP Jobstreet internal, sistem melewati lowongan ini atau minta keputusan user."
-              : "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.",
+            notes: controlledMessage,
             skippedReason: reason,
           },
         });
         await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "apply_unavailable" } });
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          level: "warn",
+          event: "application.apply_unavailable",
+          message: controlledMessage,
+          metadata: blockerPayload,
+        });
         return {
           status: "apply_unavailable",
-          message: reason === "external_redirect"
-            ? "Lowongan ini mengarah ke website eksternal. Untuk MVP Jobstreet internal, sistem melewati lowongan ini atau minta keputusan user."
-            : "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.",
+          message: controlledMessage,
           applicationId: application.id,
           pageKind: normalized.pageKind,
-          error: JSON.stringify({
-            detectedStep,
-            pageKind: normalized.pageKind,
-            fixtureConfidence: fixtureMatch.confidence,
-            currentUrl: snapshot.url,
-            normalizedUrlOk: normalizedCurrentUrl.ok,
-            reason,
-            externalUrl: normalizedCurrentUrl.ok ? normalizedCurrentUrl.url : null,
-          }),
+          error: JSON.stringify(blockerPayload),
         };
       }
 

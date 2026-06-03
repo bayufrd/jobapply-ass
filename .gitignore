@@ -64,3 +64,11 @@ storage/
 tests/layout/*.apk
 .playwright-mcp/
 /.playwright-mcp/
+.venv
+/.venv/*
+/jobapply_lite/data
+jobapply_lite/data/*
+jobapply_lite/logs
+/jobapply_lite/logs/*
+/jobapply_lite/*
+

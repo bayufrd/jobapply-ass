@@ -1,0 +1,6 @@
+ALTER TABLE "Campaign" ADD COLUMN "currentSearchPage" INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE "Campaign" ADD COLUMN "currentSearchUrl" TEXT;
+ALTER TABLE "Campaign" ADD COLUMN "processedJobCount" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Campaign" ADD COLUMN "unusableJobCount" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Campaign" ADD COLUMN "emptyPageCount" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Campaign" ADD COLUMN "lastAppliedJobstreetJobId" TEXT;

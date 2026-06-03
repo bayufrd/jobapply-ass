@@ -1,14 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
-
-function parseJson<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
+import { safeJsonParse } from "@/lib/utils/safe-json";
 
 export async function GET(
   _request: Request,
@@ -36,10 +28,10 @@ export async function GET(
     return NextResponse.json({ ok: false, error: "Kampanye tidak ditemukan." }, { status: 404 });
   }
 
-  const decisionPayload = parseJson<Record<string, unknown> | null>(campaign.decisionPayloadJson, null);
+  const decisionPayload = safeJsonParse<Record<string, unknown> | null>(campaign.decisionPayloadJson, null, "qa_status.decision_payload");
   const latestApplication = campaign.applications[0] ?? null;
   const latestSuccessLog = campaign.logs.find((log) => log.event === "application.submit_success_marker_detected") ?? null;
-  const latestSuccessMetadata = parseJson<Record<string, unknown> | null>(latestSuccessLog?.metadataJson, null);
+  const latestSuccessMetadata = safeJsonParse<Record<string, unknown> | null>(latestSuccessLog?.metadataJson, null, "qa_status.latest_success_metadata");
   const currentJob =
     campaign.currentJobId
       ? campaign.jobListings.find((item) => item.id === campaign.currentJobId) ?? null
@@ -47,9 +39,10 @@ export async function GET(
   const lastAiPlanLog = campaign.logs.find((log) => log.event === "mcp_ai.plan_received") ?? null;
   const lastSnapshotLog = campaign.logs.find((log) => log.event.startsWith("mcp_ai.snapshot_")) ?? null;
   const blockerType = typeof decisionPayload?.type === "string" ? decisionPayload.type : campaign.decisionStatus;
-  const blockerEvidence = parseJson<Record<string, unknown> | null>(
+  const blockerEvidence = safeJsonParse<Record<string, unknown> | null>(
     typeof latestApplication?.notes === "string" && latestApplication.notes.trim().startsWith("{") ? latestApplication.notes : null,
     (decisionPayload?.blockerEvidence as Record<string, unknown> | null) ?? null,
+    "qa_status.latest_application_notes",
   );
   const blocker =
     campaign.status === "error"
@@ -58,13 +51,25 @@ export async function GET(
           message: campaign.logs[0]?.message ?? "Terjadi error kampanye.",
           evidence: blockerEvidence,
         }
-      : blockerType
+      : campaign.currentStep === "no_jobs_remaining_after_all_pages"
         ? {
-            type: blockerType,
-            message: campaign.currentQuestion ?? latestApplication?.notes ?? "Kampanye berhenti pada state terkontrol.",
+            type: "no_jobs_remaining_after_all_pages",
+            message: "Tidak ada lowongan eligible lagi setelah semua halaman pencarian diperiksa.",
             evidence: blockerEvidence,
           }
-        : null;
+        : campaign.currentStep === "too_many_empty_pages"
+          ? {
+              type: "too_many_empty_pages",
+              message: "Terlalu banyak halaman pencarian kosong berturut-turut.",
+              evidence: blockerEvidence,
+            }
+          : blockerType
+            ? {
+                type: blockerType,
+                message: campaign.currentQuestion ?? latestApplication?.notes ?? "Kampanye berhenti pada state terkontrol.",
+                evidence: blockerEvidence,
+              }
+            : null;
 
   return NextResponse.json({
     ok: true,
@@ -102,15 +107,15 @@ export async function GET(
     blockerEvidence,
     decisionType: typeof decisionPayload?.type === "string" ? decisionPayload.type : campaign.decisionStatus,
     decisionPayload,
-    lastAiPlan: parseJson(lastAiPlanLog?.metadataJson, null),
-    lastMcpSnapshotPreview: parseJson(lastSnapshotLog?.metadataJson, null),
+    lastAiPlan: safeJsonParse(lastAiPlanLog?.metadataJson, null, "qa_status.last_ai_plan"),
+    lastMcpSnapshotPreview: safeJsonParse(lastSnapshotLog?.metadataJson, null, "qa_status.last_snapshot_preview"),
     lastSuccessMarker:
       typeof latestSuccessMetadata?.successMarker === "string"
         ? latestSuccessMetadata.successMarker
         : null,
     appliedJobsVerification: {
-      before: parseJson<number | null>(campaign.logs.find(l => l.event === "qa.applied_jobs_baseline")?.metadataJson, null),
-      after: parseJson<number | null>(campaign.logs.find(l => l.event === "qa.applied_jobs_after_submit")?.metadataJson, null),
+      before: safeJsonParse<number | null>(campaign.logs.find(l => l.event === "qa.applied_jobs_baseline")?.metadataJson, null, "qa_status.applied_jobs_baseline"),
+      after: safeJsonParse<number | null>(campaign.logs.find(l => l.event === "qa.applied_jobs_after_submit")?.metadataJson, null, "qa_status.applied_jobs_after_submit"),
       expectedMinimum: null, // Will be calculated by consumer or added to log
       verified: campaign.applications.some(a => a.status === "submitted"),
       lastCheckedAt: campaign.logs.find(l => l.event.startsWith("qa.applied_jobs_"))?.createdAt.toISOString() ?? null,

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db/prisma";
 import { runJobstreetCampaign } from "@/lib/browser/jobstreet-agent";
 import { scoreJobFit } from "@/lib/ai/job-scorer";
 import { startJobApplication } from "@/lib/browser/jobstreet-apply-agent";
+import { runMcpAiApplyRunner } from "@/lib/browser/mcp-ai-apply-runner";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
 import { canStartAutopilot } from "@/lib/campaign/campaign-state";
 import {
@@ -232,6 +233,9 @@ async function scoreJobIfNeeded(campaignId: string, jobId: string) {
   });
   if (!job || !job.campaign) return job;
   if (job.matchScore !== null && job.matchReason) return job;
+  if (job.status === "shortlisted") {
+    return job;
+  }
 
   const profile = await getLatestProfile();
   const candidateProfile = {
@@ -708,8 +712,9 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
 
     const score = job.matchScore ?? 0;
     const threshold = job.campaign.matchThreshold;
+    const shouldApplyEligibleJobWithoutScore = job.status === "shortlisted" && job.matchScore === null;
 
-    if (score < threshold) {
+    if (!shouldApplyEligibleJobWithoutScore && score < threshold) {
       const rule = await findMatchingLowScoreRule(campaignId, job.title);
       if (rule?.action === "auto_skip") {
         await prisma.jobListing.update({ where: { id: job.id }, data: { status: "skipped" } });
@@ -779,77 +784,223 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       currentJobId: job.id,
     });
 
+    const formAutomationMode = (job.campaign as typeof job.campaign & { formAutomationMode?: string | null }).formAutomationMode ?? null;
+    const automationMode = (job.campaign as typeof job.campaign & { automationMode?: string | null }).automationMode ?? null;
+    const lowScoreModeValue = (job.campaign as typeof job.campaign & { lowScoreMode?: string | null }).lowScoreMode ?? null;
+    const applyUrl = (job as typeof job & { applyUrl?: string | null }).applyUrl ?? null;
+    const logMetadata = {
+      campaignId,
+      jobListingId: job.id,
+      jobTitle: job.title,
+      company: job.company,
+      jobUrl: job.url,
+      applyUrl,
+      jobStatus: job.status,
+      formAutomationMode,
+      automationMode,
+      lowScoreMode: lowScoreModeValue,
+    };
+
     await writeAutomationLog({
       campaignId,
       jobListingId: job.id,
       event: "campaign.phase_apply_started",
-      message: "Fase 2/3: mulai apply dengan MCP AI First.",
-      metadata: { campaignId, currentStep: "opening_job" },
+      message: "Fase 2/3 dimulai: memulai apply untuk lowongan eligible.",
+      metadata: logMetadata,
+    });
+    await writeAutomationLog({
+      campaignId,
+      jobListingId: job.id,
+      event: "campaign.phase_apply_job_selected",
+      message: `Lowongan eligible dipilih untuk apply: ${job.title}.`,
+      metadata: logMetadata,
     });
     await writeAutomationLog({
       campaignId,
       jobListingId: job.id,
       event: "campaign.phase_apply_job_started",
       message: `Memulai apply untuk lowongan ${job.title}.`,
-      metadata: { campaignId, jobListingId: job.id, title: job.title, company: job.company, jobUrl: job.url },
+      metadata: logMetadata,
+    });
+    await writeAutomationLog({
+      campaignId,
+      jobListingId: job.id,
+      event: "application.started",
+      message: `Proses apply dimulai untuk lowongan ${job.title}.`,
+      metadata: logMetadata,
     });
     await writeAutomationLog({
       campaignId,
       jobListingId: job.id,
       event: "campaign.autopilot_processing_job",
       message: `Memproses lowongan ${job.title} di ${job.company}.`,
-      metadata: { jobId: job.id, title: job.title, company: job.company, jobUrl: job.url },
+      metadata: { jobId: job.id, title: job.title, company: job.company, jobUrl: job.url, applyUrl },
     });
 
     const profile = await getLatestProfile();
+    const missingCandidateProfile = !profile;
+    const missingJobUrl = typeof job.url !== "string" || job.url.trim().length === 0;
+    const missingApplyUrl = typeof applyUrl !== "string" || applyUrl.trim().length === 0;
+    const knownFormAutomationMode = formAutomationMode === null || ["mcp_ai_first", "ai_first", "legacy_browser"].includes(formAutomationMode);
+    const knownAutomationMode = automationMode === null || ["auto_submit_safe_only", "review_each_application"].includes(automationMode);
 
-    const applyResult = await startJobApplication({
-      jobListing: {
-        id: job.id,
-        campaignId: job.campaignId,
-        title: job.title,
-        company: job.company,
-        location: job.location,
-        salaryText: job.salaryText,
-        workType: job.workType,
-        url: job.url,
-        description: job.description,
-        matchScore: job.matchScore,
-        matchReason: job.matchReason,
-        status: job.status,
+    if (missingCandidateProfile || missingJobUrl || !knownFormAutomationMode || !knownAutomationMode) {
+      await writeAutomationLog({
+        campaignId,
+        jobListingId: job.id,
+        level: "warn",
+        event: "campaign.apply_precondition_failed",
+        message: "Fase apply belum bisa dimulai karena data lowongan/profil belum lengkap.",
+        metadata: {
+          ...logMetadata,
+          missingCandidateProfile,
+          missingJobUrl,
+          missingApplyUrl,
+        },
+      });
+      await setCampaignRuntimeState(campaignId, {
+        status: "paused",
+        currentStep: "apply_precondition_failed",
+        currentQuestion: "Fase apply belum bisa dimulai karena data lowongan/profil belum lengkap.",
+        decisionStatus: "missing_apply_precondition",
+        decisionPayloadJson: JSON.stringify({
+          type: "missing_apply_precondition",
+          blockerType: "missing_apply_precondition",
+          blockerEvidence: {
+            missingCandidateProfile,
+            missingJobUrl,
+            missingApplyUrl,
+            formAutomationMode,
+          },
+        }),
+      });
+      return {
+        status: "paused",
+        message: "Fase apply belum bisa dimulai karena data lowongan/profil belum lengkap.",
+        campaignId,
+        currentStep: "apply_precondition_failed",
+        currentJobId: job.id,
+        canContinue: false,
+        decisionRequired: {
+          blockerType: "missing_apply_precondition",
+          evidence: {
+            missingCandidateProfile,
+            missingJobUrl,
+            missingApplyUrl,
+            formAutomationMode,
+          },
+        },
+      };
+    }
+
+    const submitMode =
+      (job.campaign as typeof job.campaign & { autoSubmitSafeOnly?: boolean; automationMode?: string }).autoSubmitSafeOnly
+      || (job.campaign as typeof job.campaign & { autoSubmitSafeOnly?: boolean; automationMode?: string }).automationMode === "auto_submit_safe_only"
+        ? "auto_submit_safe_only"
+        : "review_each_application";
+
+    await writeAutomationLog({
+      campaignId,
+      jobListingId: job.id,
+      event: "campaign.apply_runner_dispatch",
+      message: formAutomationMode === "mcp_ai_first"
+        ? "Mendispatch apply runner MCP AI First."
+        : "Mendispatch apply runner browser legacy.",
+      metadata: {
+        mode: formAutomationMode ?? "legacy_browser",
+        runner: formAutomationMode === "mcp_ai_first" ? "runMcpAiApplyRunner" : "startJobApplication",
+        jobListingId: job.id,
+        jobTitle: job.title,
+        jobUrl: job.url,
+        applyUrl,
       },
-      campaign: {
-        id: job.campaign.id,
-        name: job.campaign.name,
-        submitMode: job.campaign.submitMode,
-        automationMode: (job.campaign as typeof job.campaign & { automationMode?: string }).automationMode,
-        formAutomationMode: (job.campaign as typeof job.campaign & { formAutomationMode?: string }).formAutomationMode,
-        autoSubmitSafeOnly: (job.campaign as typeof job.campaign & { autoSubmitSafeOnly?: boolean }).autoSubmitSafeOnly,
-        lowScoreMode: (job.campaign as typeof job.campaign & { lowScoreMode?: string }).lowScoreMode,
-        defaultCurrentSalary: job.campaign.defaultCurrentSalary,
-        defaultExpectedSalary: job.campaign.defaultExpectedSalary,
-        defaultNoticePeriod: job.campaign.defaultNoticePeriod,
-        defaultAvailability: job.campaign.defaultAvailability,
-        workModePreference: job.campaign.workModePreference,
-      },
-      profile: {
-        fullName: profile.fullName ?? "",
-        email: profile.email ?? "",
-        phone: profile.phone ?? "",
-        location: profile.location ?? "",
-        summary: profile.summary ?? "",
-        skillsJson: profile.skillsJson ?? "[]",
-        experienceJson: profile.experienceJson ?? "[]",
-        educationJson: profile.educationJson ?? "[]",
-        projectsJson: profile.projectsJson ?? "[]",
-        certificationsJson: profile.certificationsJson ?? "[]",
-      },
-      submitMode:
-        (job.campaign as typeof job.campaign & { autoSubmitSafeOnly?: boolean; automationMode?: string }).autoSubmitSafeOnly
-        || (job.campaign as typeof job.campaign & { autoSubmitSafeOnly?: boolean; automationMode?: string }).automationMode === "auto_submit_safe_only"
-          ? "auto_submit_safe_only"
-          : "review_each_application",
     });
+
+    const applyResult = formAutomationMode === "mcp_ai_first"
+      ? await runMcpAiApplyRunner({
+          campaign: {
+            id: job.campaign.id,
+            name: job.campaign.name,
+            submitMode: job.campaign.submitMode,
+            formAutomationMode,
+            defaultCurrentSalary: job.campaign.defaultCurrentSalary,
+            defaultExpectedSalary: job.campaign.defaultExpectedSalary,
+            defaultNoticePeriod: job.campaign.defaultNoticePeriod,
+            defaultAvailability: job.campaign.defaultAvailability,
+            workModePreference: job.campaign.workModePreference,
+          },
+          jobListing: {
+            id: job.id,
+            campaignId: job.campaignId,
+            title: job.title,
+            company: job.company,
+            location: job.location,
+            salaryText: job.salaryText,
+            workType: job.workType,
+            url: job.url,
+            description: job.description,
+            matchScore: job.matchScore,
+            matchReason: job.matchReason,
+            status: job.status,
+          },
+          candidateProfile: {
+            fullName: profile.fullName ?? "",
+            email: profile.email ?? "",
+            phone: profile.phone ?? "",
+            location: profile.location ?? "",
+            summary: profile.summary ?? "",
+            skillsJson: profile.skillsJson ?? "[]",
+            experienceJson: profile.experienceJson ?? "[]",
+            educationJson: profile.educationJson ?? "[]",
+            projectsJson: profile.projectsJson ?? "[]",
+            certificationsJson: profile.certificationsJson ?? "[]",
+          },
+          questionMemory: [],
+          mode: submitMode,
+        })
+      : await startJobApplication({
+          jobListing: {
+            id: job.id,
+            campaignId: job.campaignId,
+            title: job.title,
+            company: job.company,
+            location: job.location,
+            salaryText: job.salaryText,
+            workType: job.workType,
+            url: job.url,
+            description: job.description,
+            matchScore: job.matchScore,
+            matchReason: job.matchReason,
+            status: job.status,
+          },
+          campaign: {
+            id: job.campaign.id,
+            name: job.campaign.name,
+            submitMode: job.campaign.submitMode,
+            automationMode: (job.campaign as typeof job.campaign & { automationMode?: string }).automationMode,
+            formAutomationMode,
+            autoSubmitSafeOnly: (job.campaign as typeof job.campaign & { autoSubmitSafeOnly?: boolean }).autoSubmitSafeOnly,
+            lowScoreMode: lowScoreModeValue,
+            defaultCurrentSalary: job.campaign.defaultCurrentSalary,
+            defaultExpectedSalary: job.campaign.defaultExpectedSalary,
+            defaultNoticePeriod: job.campaign.defaultNoticePeriod,
+            defaultAvailability: job.campaign.defaultAvailability,
+            workModePreference: job.campaign.workModePreference,
+          },
+          profile: {
+            fullName: profile.fullName ?? "",
+            email: profile.email ?? "",
+            phone: profile.phone ?? "",
+            location: profile.location ?? "",
+            summary: profile.summary ?? "",
+            skillsJson: profile.skillsJson ?? "[]",
+            experienceJson: profile.experienceJson ?? "[]",
+            educationJson: profile.educationJson ?? "[]",
+            projectsJson: profile.projectsJson ?? "[]",
+            certificationsJson: profile.certificationsJson ?? "[]",
+          },
+          submitMode,
+        });
 
     if (applyResult.status === "submitted") {
       await writeAutomationLog({
@@ -860,22 +1011,6 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         message: `Apply selesai untuk lowongan ${job.title}: submitted.`,
         metadata: { campaignId, jobListingId: job.id, applicationId: applyResult.applicationId ?? null, title: job.title, company: job.company, jobUrl: job.url, status: "submitted" },
       });
-      await writeAutomationLog({
-        campaignId,
-        jobListingId: job.id,
-        applicationId: applyResult.applicationId,
-        event: "campaign.phase_next_job",
-        message: "Fase 3/3: lanjut ke lowongan berikutnya.",
-        metadata: { campaignId, jobListingId: job.id, applicationId: applyResult.applicationId ?? null, title: job.title, company: job.company, jobUrl: job.url },
-      });
-      await writeAutomationLog({
-        campaignId,
-        jobListingId: job.id,
-        event: "campaign.autopilot_next_job",
-        message: "Submit berhasil diverifikasi. Lanjut lowongan berikutnya.",
-        metadata: { applicationId: applyResult.applicationId ?? null },
-      });
-
       consecutiveUnavailableJobs = 0;
       consecutiveStuckJobs = 0;
 
@@ -904,17 +1039,27 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       }
 
       await setCampaignRuntimeState(campaignId, {
-        status: "running",
-        currentStep: "next_job",
+        status: "completed",
+        currentStep: "single_target_reached",
         decisionStatus: null,
         decisionPayloadJson: null,
+        currentJobId: null,
+        currentQuestion: null,
+      });
+      await writeAutomationLog({
+        campaignId,
+        jobListingId: job.id,
+        applicationId: applyResult.applicationId,
+        event: "campaign.single_target_reached",
+        message: "Lamaran pertama berhasil diverifikasi. Autopilot dihentikan sesuai target 1 lowongan.",
+        metadata: { applicationId: applyResult.applicationId ?? null, targetApplyCount: refreshedCampaign?.targetApplyCount ?? null },
       });
 
       return {
-        status: "submitted_continue",
-        message: "Lamaran berhasil dikirim. Lanjut lowongan berikutnya.",
+        status: "completed",
+        message: "Lamaran pertama berhasil dikirim. Autopilot dihentikan sesuai target 1 lowongan.",
         campaignId,
-        currentStep: "next_job",
+        currentStep: "single_target_reached",
         currentJobId: job.id,
         applicationId: applyResult.applicationId,
       };
@@ -1022,16 +1167,16 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       await writeAutomationLog({
         campaignId,
         jobListingId: job.id,
-        level: "warn",
-        event: "application.job_stuck_skipped",
+        level: "error",
+        event: "campaign.autopilot_aborted_after_error",
         message:
           applyResult.status === "submit_not_found_timeout"
-            ? "Submit tidak ditemukan dalam batas waktu. Lowongan dilewati."
+            ? "Submit tidak ditemukan dalam batas waktu. Autopilot dihentikan agar tidak lanjut ke lowongan lain."
             : applyResult.status === "stuck_no_progress"
-              ? "Halaman tidak berubah setelah 2 aksi. Lowongan dilewati."
+              ? "Halaman tidak berubah setelah 2 aksi. Autopilot dihentikan agar tidak lanjut ke lowongan lain."
               : blockerType === "external_redirect"
-                ? "Lowongan ini mengarah ke website eksternal. Untuk MVP Jobstreet internal, sistem melewati lowongan ini atau minta keputusan user."
-                : "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.",
+                ? "Lowongan mengarah ke website eksternal. Autopilot dihentikan agar tidak lanjut ke lowongan lain."
+                : "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Autopilot dihentikan agar tidak lanjut ke lowongan lain.",
         metadata: {
           resultStatus: applyResult.status,
           applicationId: applyResult.applicationId ?? null,
@@ -1040,55 +1185,16 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         },
       });
 
-      await writeAutomationLog({
-        campaignId,
-        jobListingId: job.id,
-        event: "campaign.autopilot_continue_after_stuck",
-        message: "Autopilot lanjut ke lowongan berikutnya.",
-        metadata: { resultStatus: applyResult.status, consecutiveStuckJobs: consecutiveStuckJobs + 1 },
-      });
-
-      consecutiveUnavailableJobs += applyResult.status === "apply_unavailable" ? 1 : 0;
-      consecutiveStuckJobs += 1;
-
-      if (consecutiveStuckJobs >= maxConsecutiveStuckJobs) {
-        await setCampaignRuntimeState(campaignId, {
-          status: "completed",
-          currentStep: "too_many_unusable_jobs",
-          currentJobId: null,
-          currentQuestion: "Terlalu banyak lowongan stuck berturut-turut. Periksa filter kampanye atau jalankan ulang nanti.",
-          decisionStatus: null,
-          decisionPayloadJson: null,
-          currentJobTitle: null,
-          currentJobCompany: null,
-        });
-        await writeAutomationLog({
-          campaignId,
-          event: "campaign.too_many_unusable_jobs",
-          message: "Terlalu banyak lowongan stuck berturut-turut. Kampanye dihentikan.",
-          metadata: { campaignId, currentStep: "too_many_unusable_jobs", consecutiveStuckJobs },
-        });
-
-        return {
-          status: "completed",
-          message: "Terlalu banyak lowongan stuck berturut-turut. Periksa filter kampanye atau jalankan ulang nanti.",
-          campaignId,
-          currentStep: "too_many_unusable_jobs",
-          currentJobId: job.id,
-        };
-      }
-
       await setCampaignRuntimeState(campaignId, {
-        status: "running",
-        currentStep: "next_job",
+        status: "error",
+        currentStep: blockerType === "invalid_url" ? "external_redirect_invalid_url" : blockerType,
         currentJobId: job.id,
         currentQuestion: applyResult.message,
-        decisionStatus: null,
+        decisionStatus: blockerType,
         decisionPayloadJson: JSON.stringify({
           type: blockerType,
           message: applyResult.message,
-          canContinue: true,
-          currentStep: blockerType === "invalid_url" ? "external_redirect_invalid_url" : blockerType,
+          canContinue: false,
           latestJob: {
             id: job.id,
             title: job.title,
@@ -1097,14 +1203,23 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
           latestApplication: applyResult.applicationId ? { id: applyResult.applicationId, status: applyResult.status } : null,
           blockerEvidence,
         }),
+        currentJobTitle: job.title,
+        currentJobCompany: job.company,
       });
 
       return {
-        status: "skipped_continue",
-        message: "Autopilot lanjut ke lowongan berikutnya.",
+        status: "error",
+        message: "Autopilot dihentikan karena error pada lowongan saat ini.",
         campaignId,
-        currentStep: "next_job",
+        currentStep: blockerType === "invalid_url" ? "external_redirect_invalid_url" : blockerType,
         currentJobId: job.id,
+        applicationId: applyResult.applicationId,
+        decisionRequired: {
+          type: blockerType,
+          applicationId: applyResult.applicationId ?? null,
+          message: applyResult.message,
+          blockerEvidence,
+        },
       };
     }
 

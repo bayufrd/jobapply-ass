@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
+import { getJobstreetLocationSlug } from "@/lib/jobstreet/jobstreet-search-url";
 
 export async function GET() {
   const campaigns = await prisma.campaign.findMany({
@@ -33,9 +34,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "name and keyword are required." }, { status: 400 });
     }
 
-    const normalizedLocation = typeof body.location === "string" && body.location.trim() !== ""
-      ? body.location.trim()
-      : "West Jakarta, Jakarta";
+    const normalizedLocation = getJobstreetLocationSlug();
 
     const campaign = await prisma.campaign.create({
       data: {

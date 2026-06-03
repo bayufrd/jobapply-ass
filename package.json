@@ -13,7 +13,9 @@
     "mcp:playwright": "npx @playwright/mcp@latest --port 8931 --browser chromium --user-data-dir .mcp-browser-profile --viewport-size 1366x900 --timeout-action 5000 --timeout-navigation 60000",
     "mcp:playwright:chrome": "npx @playwright/mcp@latest --port 8931 --browser chrome --user-data-dir .mcp-browser-profile --viewport-size 1366x900 --timeout-action 5000 --timeout-navigation 60000",
     "qa:autopilot": "node scripts/qa-autopilot.mjs",
-    "qa:autopilot:5": "node scripts/qa-autopilot.mjs --target=5"
+    "qa:autopilot:5": "node scripts/qa-autopilot.mjs --target=5",
+    "qa:agent-browser": "node scripts/qa-agent-browser.mjs",
+    "qa:agent-browser:1": "node scripts/qa-agent-browser.mjs --target=1"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

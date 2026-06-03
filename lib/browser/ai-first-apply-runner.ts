@@ -462,7 +462,7 @@ export async function runAiFirstApplyRunner({
       return { status: "submitted", message: "Lamaran berhasil dikirim.", applicationId: submitted.id };
     }
 
-    if (detectedStep === "choose_documents") {
+    if (detectedStep === "apply") {
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,
@@ -472,7 +472,7 @@ export async function runAiFirstApplyRunner({
       });
     }
 
-    if (detectedStep === "employer_questions") {
+    if (detectedStep === "role-requirements") {
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,
@@ -482,7 +482,7 @@ export async function runAiFirstApplyRunner({
       });
     }
 
-    if (detectedStep === "update_profile") {
+    if (detectedStep === "profile") {
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,
@@ -492,7 +492,7 @@ export async function runAiFirstApplyRunner({
       });
     }
 
-    if (detectedStep === "review_submit") {
+    if (detectedStep === "review") {
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,

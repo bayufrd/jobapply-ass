@@ -12,7 +12,9 @@ export function isCampaignTerminal(status: string): boolean {
 
 export const TERMINAL_CAMPAIGN_STEPS = [
   "no_jobs_remaining",
+  "no_jobs_remaining_after_all_pages",
   "target_reached",
+  "too_many_empty_pages",
   "too_many_unusable_jobs",
 ] as const;
 

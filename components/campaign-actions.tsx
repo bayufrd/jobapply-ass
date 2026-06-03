@@ -336,8 +336,10 @@ export function CampaignActions({
       const url = `/api/campaigns/${campaignId}/autopilot/${path}`;
       const method = "POST";
       const actionName = path === "start" ? "start_autopilot" : "continue_autopilot";
+      console.info(path === "start" ? "ui.autopilot_start_requested" : "ui.autopilot_continue_requested", { campaignId, url });
       const res = await fetch(url, { method });
       const data = await readJsonSafely(res, { actionName, method, url });
+      console.info(path === "start" ? "ui.autopilot_start_response" : "ui.autopilot_continue_response", data);
       const status = typeof data.status === "string" ? data.status : null;
       if (!res.ok) {
         throw new Error(

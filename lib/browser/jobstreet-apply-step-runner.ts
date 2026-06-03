@@ -285,7 +285,7 @@ async function handleChooseDocuments(input: RunInput): Promise<JobstreetStepRunn
   if (!hasResumeVisible) {
     return {
       status: "question_required",
-      step: "choose_documents",
+      step: "apply",
       message: "CV belum terpilih. Pilih dokumen mana yang ingin digunakan?",
       uiStatus: {
         stepLabel: "Memilih dokumen",
@@ -298,7 +298,7 @@ async function handleChooseDocuments(input: RunInput): Promise<JobstreetStepRunn
   if (!clicked) {
     return {
       status: "stuck_no_progress",
-      step: "choose_documents",
+      step: "apply",
       message: "Tombol Continue tidak ditemukan pada langkah memilih dokumen.",
       uiStatus: {
         stepLabel: "Memilih dokumen",
@@ -307,13 +307,13 @@ async function handleChooseDocuments(input: RunInput): Promise<JobstreetStepRunn
     };
   }
 
-  const advanced = await waitForStepChange(input.page, "employer_questions", 8000);
+  const advanced = await waitForStepChange(input.page, "role-requirements", 8000);
   if (!advanced) {
     const retried = await clickByLabels(input.page, CONTINUE_LABELS);
-    if (!retried || !(await waitForStepChange(input.page, "employer_questions", 8000))) {
+    if (!retried || !(await waitForStepChange(input.page, "role-requirements", 8000))) {
       return {
         status: "stuck_no_progress",
-        step: "choose_documents",
+        step: "apply",
         message: "Tidak ada progres setelah klik Continue pada langkah memilih dokumen.",
         uiStatus: {
           stepLabel: "Memilih dokumen",
@@ -325,8 +325,8 @@ async function handleChooseDocuments(input: RunInput): Promise<JobstreetStepRunn
 
   return {
     status: "advanced",
-    step: "choose_documents",
-    nextStep: "employer_questions",
+    step: "apply",
+    nextStep: "role-requirements",
     message: "Berhasil lanjut dari memilih dokumen.",
     uiStatus: {
       stepLabel: "Memilih dokumen",
@@ -388,7 +388,7 @@ async function handleEmployerQuestions(input: RunInput): Promise<JobstreetStepRu
   if (needsUser > 0) {
     return {
       status: "question_required",
-      step: "employer_questions",
+      step: "role-requirements",
       message: "Masih ada pertanyaan employer yang butuh jawaban user.",
       questionSummary: {
         detected: actionable.length,
@@ -406,7 +406,7 @@ async function handleEmployerQuestions(input: RunInput): Promise<JobstreetStepRu
   if (!clicked) {
     return {
       status: "stuck_no_progress",
-      step: "employer_questions",
+      step: "role-requirements",
       message: "Tombol Continue tidak ditemukan setelah menjawab pertanyaan employer.",
       questionSummary: {
         detected: actionable.length,
@@ -420,10 +420,10 @@ async function handleEmployerQuestions(input: RunInput): Promise<JobstreetStepRu
     };
   }
 
-  if (!(await waitForStepChange(input.page, "update_profile", 8000))) {
+  if (!(await waitForStepChange(input.page, "profile", 8000))) {
     return {
       status: "stuck_no_progress",
-      step: "employer_questions",
+      step: "role-requirements",
       message: "Tidak ada progres setelah menjawab pertanyaan employer.",
       questionSummary: {
         detected: actionable.length,
@@ -439,8 +439,8 @@ async function handleEmployerQuestions(input: RunInput): Promise<JobstreetStepRu
 
   return {
     status: "advanced",
-    step: "employer_questions",
-    nextStep: "update_profile",
+    step: "role-requirements",
+    nextStep: "profile",
     message: "Pertanyaan employer berhasil dijawab dan dilanjutkan.",
     questionSummary: {
       detected: actionable.length,
@@ -505,7 +505,7 @@ async function handleUpdateProfile(input: RunInput): Promise<JobstreetStepRunner
   if (!firstAttempt.clicked) {
     return {
       status: "stuck_no_progress",
-      step: "update_profile",
+      step: "profile",
       message: "Step Update Jobstreet Profile belum berpindah ke Review. Sistem tidak akan menganggap ini login/verifikasi.",
       uiStatus: {
         stepLabel: "Memperbarui profil Jobstreet",
@@ -521,13 +521,13 @@ async function handleUpdateProfile(input: RunInput): Promise<JobstreetStepRunner
 
   console.info("jobstreet_apply.update_profile_continue_clicked");
 
-  if (!(await waitForStepChange(input.page, "review_submit", 8000))) {
+  if (!(await waitForStepChange(input.page, "review", 8000))) {
     console.info("jobstreet_apply.update_profile_ai_continue_search");
     const retryAttempt = await clickContinueWithAi(input.page, input.mcpSnapshot);
-    if (!retryAttempt.clicked || !(await waitForStepChange(input.page, "review_submit", 8000))) {
+    if (!retryAttempt.clicked || !(await waitForStepChange(input.page, "review", 8000))) {
       return {
         status: "stuck_no_progress",
-        step: "update_profile",
+        step: "profile",
         message: "Step Update Jobstreet Profile belum berpindah ke Review. Sistem tidak akan menganggap ini login/verifikasi.",
         uiStatus: {
           stepLabel: "Memperbarui profil Jobstreet",
@@ -546,8 +546,8 @@ async function handleUpdateProfile(input: RunInput): Promise<JobstreetStepRunner
 
   return {
     status: "advanced",
-    step: "update_profile",
-    nextStep: "review_submit",
+    step: "profile",
+    nextStep: "review",
     message: "Berhasil lanjut dari update profile.",
     uiStatus: {
       stepLabel: "Memperbarui profil Jobstreet",
@@ -579,7 +579,7 @@ async function handleReviewSubmit(input: RunInput): Promise<JobstreetStepRunnerR
         if (await waitForStepChange(input.page, "success", 10000)) {
           return {
             status: "submitted",
-            step: "review_submit",
+            step: "review",
             nextStep: "success",
             message: "Lamaran berhasil dikirim.",
             uiStatus: {
@@ -590,7 +590,7 @@ async function handleReviewSubmit(input: RunInput): Promise<JobstreetStepRunnerR
         }
         return {
           status: "submit_not_found_timeout",
-          step: "review_submit",
+          step: "review",
           message: "Submit sudah diklik tetapi halaman success belum terverifikasi.",
           uiStatus: {
             stepLabel: "Review dan submit",
@@ -601,7 +601,7 @@ async function handleReviewSubmit(input: RunInput): Promise<JobstreetStepRunnerR
 
       return {
         status: "manual_intervention",
-        step: "review_submit",
+        step: "review",
         message: "Tombol Submit application ditemukan dan menunggu mode submit aman.",
         uiStatus: {
           stepLabel: "Review dan submit",
@@ -614,7 +614,7 @@ async function handleReviewSubmit(input: RunInput): Promise<JobstreetStepRunnerR
   if (!foundSubmit) {
     return {
       status: "submit_not_found_timeout",
-      step: "review_submit",
+      step: "review",
       message: "Tombol Submit application tidak ditemukan pada halaman review.",
       uiStatus: {
         stepLabel: "Review dan submit",
@@ -625,7 +625,7 @@ async function handleReviewSubmit(input: RunInput): Promise<JobstreetStepRunnerR
 
   return {
     status: "unknown",
-    step: "review_submit",
+    step: "review",
     message: "Halaman review tidak bisa diproses.",
     uiStatus: {
       stepLabel: "Review dan submit",
@@ -654,13 +654,13 @@ export async function runJobstreetApplyStep(input: RunInput): Promise<JobstreetS
   const step = detectJobstreetApplyStep(input.page.url(), pageText);
 
   switch (step) {
-    case "choose_documents":
+    case "apply":
       return handleChooseDocuments(input);
-    case "employer_questions":
+    case "role-requirements":
       return handleEmployerQuestions(input);
-    case "update_profile":
+    case "profile":
       return handleUpdateProfile(input);
-    case "review_submit":
+    case "review":
       return handleReviewSubmit(input);
     case "success":
       return handleSuccess(input);

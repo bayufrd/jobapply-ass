@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Saved third-party Jobstreet assets used only as archived layout references.
     "tests/layout/**",
+    // Local Python virtualenv and vendored Playwright assets are not part of the app source.
+    ".venv/**",
   ]),
 ]);
 

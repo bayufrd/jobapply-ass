@@ -218,7 +218,7 @@ export function detectManualInterventionFromSignals(rawUrl: string, signals: Vis
     });
   }
 
-  if (normalJobstreetApplyUrl && (step === "update_profile" || step === "review_submit" || step === "choose_documents" || step === "employer_questions" || step === "success")) {
+  if (normalJobstreetApplyUrl && (step === "profile" || step === "review" || step === "apply" || step === "role-requirements" || step === "success")) {
     return buildResult({
       detected: false,
       type: "unknown",
