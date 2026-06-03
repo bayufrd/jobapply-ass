@@ -1,16 +1,8 @@
-import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { runCampaignAutopilot } from "@/lib/campaign/autopilot-runner";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
-
-function parseJson<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
+import { safeJsonParse } from "@/lib/utils/safe-json";
+import { jsonControlled, jsonError, jsonOk } from "@/lib/api/json-response";
 
 type RunBody = {
   targetSubmissions?: number;
@@ -29,7 +21,7 @@ export async function POST(
 
     const campaign = await prisma.campaign.findUnique({ where: { id } });
     if (!campaign) {
-      return NextResponse.json({ ok: false, error: "Kampanye tidak ditemukan." }, { status: 404 });
+      return jsonError("campaign_not_found", "Kampanye tidak ditemukan.", undefined, { status: 404 });
     }
 
     await prisma.campaign.update({
@@ -85,7 +77,7 @@ export async function POST(
 
     const verifiedSubmittedCount = refreshed?.applications.filter((item) => item.status === "submitted").length ?? 0;
     const decisionRequired = refreshed?.decisionPayloadJson
-      ? parseJson<Record<string, unknown> | null>(refreshed.decisionPayloadJson, null)
+      ? safeJsonParse<Record<string, unknown> | null>(refreshed.decisionPayloadJson, null, "qa_run.decision_payload")
       : result.decisionRequired ?? null;
     const latestApplication = refreshed?.applications[0] ?? null;
     const currentJob = refreshed?.currentJobId
@@ -102,13 +94,13 @@ export async function POST(
       jobTitle: log.jobListing?.title ?? null,
     })) ?? [];
     const blockerType = typeof decisionRequired?.type === "string" ? decisionRequired.type : result.status;
-    const blockerEvidence = parseJson<Record<string, unknown> | null>(
+    const blockerEvidence = safeJsonParse<Record<string, unknown> | null>(
       typeof latestApplication?.notes === "string" && latestApplication.notes.trim().startsWith("{") ? latestApplication.notes : null,
       (decisionRequired?.blockerEvidence as Record<string, unknown> | null) ?? null,
+      "qa_run.latest_application_notes",
     );
 
-    return NextResponse.json({
-      ok: true,
+    const payload = {
       campaignId: id,
       status: result.status === "error" ? "failed" : result.status,
       campaignStatus: refreshed?.status ?? null,
@@ -133,18 +125,27 @@ export async function POST(
               url: latestApplication.jobListing?.url ?? null,
             }
           : null,
-      lastAiPlan: parseJson(lastMcpPlanLog?.metadataJson, null),
-      lastMcpSnapshotPreview: parseJson(lastMcpSnapshotLog?.metadataJson, null),
+      lastAiPlan: safeJsonParse(lastMcpPlanLog?.metadataJson, null, "qa_run.last_ai_plan"),
+      lastMcpSnapshotPreview: safeJsonParse(lastMcpSnapshotLog?.metadataJson, null, "qa_run.last_snapshot_preview"),
       latestLogs,
       localLogPath: `storage/logs/campaign-${id}.log`,
       result,
-    }, { status: result.status === "error" ? 500 : 200 });
+    };
+
+    if (result.status === "error") {
+      return jsonError("qa_campaign_run_failed", result.message, payload, { status: 500 });
+    }
+
+    if (["manual_intervention_required", "question_required", "decision_required", "mcp_unavailable", "mcp_browser_unavailable", "submit_unverified", "apply_unavailable", "stuck_no_progress", "paused", "completed"].includes(result.status)) {
+      return jsonControlled(payload);
+    }
+
+    return jsonOk(payload);
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Gagal menjalankan QA campaign.",
-      },
+    return jsonError(
+      "qa_campaign_run_failed",
+      error instanceof Error ? error.message : "Gagal menjalankan QA campaign.",
+      undefined,
       { status: 500 },
     );
   }

@@ -1,15 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { canContinueAutopilot, canStartAutopilot, isCampaignTerminal, isTerminalCampaignStep } from "@/lib/campaign/campaign-state";
-
-function parseJson<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
+import { safeJsonParse } from "@/lib/utils/safe-json";
 
 function translateEvent(event: string) {
   const map: Record<string, string> = {
@@ -138,13 +130,13 @@ export async function GET(
     : null;
 
   const latestAiLog = campaign.logs.find((log) => log.event.startsWith("mcp_ai.") || log.event.startsWith("ai_ui.")) ?? null;
-  const latestAiMetadata = parseJson<Record<string, unknown> | null>(latestAiLog?.metadataJson, null);
+  const latestAiMetadata = safeJsonParse<Record<string, unknown> | null>(latestAiLog?.metadataJson, null, "campaign_status.latest_ai_metadata");
   const lastMcpPageKindLog = campaign.logs.find((log) => log.event === "mcp_ai.page_kind_detected") ?? null;
-  const lastMcpPageKindMetadata = parseJson<Record<string, unknown> | null>(lastMcpPageKindLog?.metadataJson, null);
+  const lastMcpPageKindMetadata = safeJsonParse<Record<string, unknown> | null>(lastMcpPageKindLog?.metadataJson, null, "campaign_status.last_page_kind_metadata");
   const lastMcpPlanLog = campaign.logs.find((log) => log.event === "mcp_ai.plan_received") ?? null;
-  const lastMcpPlanMetadata = parseJson<Record<string, unknown> | null>(lastMcpPlanLog?.metadataJson, null);
+  const lastMcpPlanMetadata = safeJsonParse<Record<string, unknown> | null>(lastMcpPlanLog?.metadataJson, null, "campaign_status.last_plan_metadata");
   const latestWatchdogLog = campaign.logs.find((log) => log.event.startsWith("application.") || log.event.startsWith("campaign.autopilot_continue_after_stuck")) ?? null;
-  const latestWatchdogMetadata = parseJson<Record<string, unknown> | null>(latestWatchdogLog?.metadataJson, null);
+  const latestWatchdogMetadata = safeJsonParse<Record<string, unknown> | null>(latestWatchdogLog?.metadataJson, null, "campaign_status.watchdog_metadata");
   const watchdogState = (latestWatchdogMetadata?.watchdog ?? null) as Record<string, unknown> | null;
   const isTerminalStep = isTerminalCampaignStep(runtimeCampaign.currentStep ?? "");
   const nextRecommendedAction =
@@ -168,11 +160,11 @@ export async function GET(
                   : "safe_continue";
 
   const latestMcpFailureLog = campaign.logs.find((log) => log.event === "mcp.preflight_failed" || log.event === "mcp_ai.runner_failed") ?? null;
-  const latestMcpFailureMetadata = parseJson<Record<string, unknown> | null>(latestMcpFailureLog?.metadataJson, null);
+  const latestMcpFailureMetadata = safeJsonParse<Record<string, unknown> | null>(latestMcpFailureLog?.metadataJson, null, "campaign_status.latest_mcp_failure_metadata");
   const latestSuccessLog = campaign.logs.find((log) => log.event === "application.submit_success_marker_detected") ?? null;
-  const latestSuccessMetadata = parseJson<Record<string, unknown> | null>(latestSuccessLog?.metadataJson, null);
+  const latestSuccessMetadata = safeJsonParse<Record<string, unknown> | null>(latestSuccessLog?.metadataJson, null, "campaign_status.latest_success_metadata");
   const latestApplication = campaign.applications[0] ?? null;
-  const latestDecision = parseJson<Record<string, unknown> | null>(runtimeCampaign.decisionPayloadJson, null);
+  const latestDecision = safeJsonParse<Record<string, unknown> | null>(runtimeCampaign.decisionPayloadJson, null, "campaign_status.decision_payload");
   const blockerEvidence = latestDecision && typeof latestDecision === "object" && "blockerEvidence" in latestDecision
     ? (latestDecision.blockerEvidence as Record<string, unknown> | null)
     : null;

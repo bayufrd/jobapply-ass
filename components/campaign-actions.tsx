@@ -3,6 +3,69 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+type SafeJsonActionName =
+  | "poll_status"
+  | "start_autopilot"
+  | "continue_autopilot"
+  | "pause_campaign"
+  | "resume_campaign"
+  | "stop_campaign"
+  | "send_decision"
+  | "open_local_log";
+
+function buildResponseErrorMessage(actionName: SafeJsonActionName, method: string, url: string) {
+  return `Response server kosong saat memanggil ${actionName}. Endpoint: ${method} ${url}. Cek dev server log untuk stack trace.`;
+}
+
+async function readJsonSafely(
+  res: Response,
+  context: {
+    actionName: SafeJsonActionName;
+    method: string;
+    url: string;
+  },
+) {
+  const text = await res.text();
+  const contentType = res.headers.get("content-type");
+
+  if (!text.trim()) {
+    return {
+      ok: false,
+      error: "empty_response_body",
+      method: context.method,
+      url: context.url,
+      status: res.status,
+      statusText: res.statusText,
+      contentType,
+      actionName: context.actionName,
+      message: "Server mengembalikan response kosong.",
+      userMessage: buildResponseErrorMessage(context.actionName, context.method, context.url),
+    };
+  }
+
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return {
+      ok: false,
+      error: "invalid_json_response",
+      method: context.method,
+      url: context.url,
+      status: res.status,
+      statusText: res.statusText,
+      contentType,
+      actionName: context.actionName,
+      message: "Server mengembalikan JSON tidak valid.",
+      userMessage: buildResponseErrorMessage(context.actionName, context.method, context.url),
+      rawPreview: text.slice(0, 500),
+    };
+  }
+}
+
 type ApplicationStatusCount = {
   shortlisted: number;
   pendingReview: number;
@@ -167,12 +230,27 @@ export function CampaignActions({
   const autoContinueTimerRef = useRef<number | null>(null);
 
   const fetchStatus = useCallback(async () => {
-    const res = await fetch(`/api/campaigns/${campaignId}/status`, { cache: "no-store" });
-    const data = await res.json();
+    const url = `/api/campaigns/${campaignId}/status`;
+    const method = "GET";
+    const res = await fetch(url, { cache: "no-store" });
+    const data = await readJsonSafely(res, { actionName: "poll_status", method, url });
     if (!res.ok) {
-      throw new Error(data.error || "Gagal memuat status kampanye.");
+      throw new Error(
+        typeof data.userMessage === "string"
+          ? data.userMessage
+          : typeof data.error === "string"
+            ? data.error
+            : "Gagal memuat status kampanye.",
+      );
     }
-    setStatusData(data);
+    if (typeof data !== "object" || data === null || !("campaign" in data)) {
+      throw new Error(
+        typeof data.userMessage === "string"
+          ? data.userMessage
+          : buildResponseErrorMessage("poll_status", method, url),
+      );
+    }
+    setStatusData(data as unknown as CampaignStatusResponse);
   }, [campaignId]);
 
   useEffect(() => {
@@ -206,16 +284,28 @@ export function CampaignActions({
     return Math.min(100, (effectiveAppliedCount / effectiveTargetApplyCount) * 100);
   }, [effectiveAppliedCount, effectiveTargetApplyCount]);
 
-  async function runSimpleAction(path: string, successFallback: string) {
+  async function runSimpleAction(
+    path: "pause" | "resume" | "stop",
+    actionName: "pause_campaign" | "resume_campaign" | "stop_campaign",
+    successFallback: string,
+  ) {
     setLoadingAction(path);
     setResultMessage(null);
     try {
-      const res = await fetch(`/api/campaigns/${campaignId}/${path}`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
+      const url = `/api/campaigns/${campaignId}/${path}`;
+      const method = "POST";
+      const res = await fetch(url, { method });
+      const data = await readJsonSafely(res, { actionName, method, url });
       if (!res.ok) {
-        throw new Error(data.error || `Gagal menjalankan aksi ${path}.`);
+        throw new Error(
+          typeof data.userMessage === "string"
+            ? data.userMessage
+            : typeof data.error === "string"
+              ? data.error
+              : `Gagal menjalankan aksi ${path}.`,
+        );
       }
-      setResultMessage(data.message || successFallback);
+      setResultMessage(typeof data.message === "string" ? data.message : successFallback);
       setResultTone("success");
       await fetchStatus();
       window.location.reload();
@@ -243,33 +333,49 @@ export function CampaignActions({
     setLoadingAction(path);
     setResultMessage(null);
     try {
-      const res = await fetch(`/api/campaigns/${campaignId}/autopilot/${path}`, { method: "POST" });
-      const data = await res.json();
+      const url = `/api/campaigns/${campaignId}/autopilot/${path}`;
+      const method = "POST";
+      const actionName = path === "start" ? "start_autopilot" : "continue_autopilot";
+      const res = await fetch(url, { method });
+      const data = await readJsonSafely(res, { actionName, method, url });
+      const status = typeof data.status === "string" ? data.status : null;
       if (!res.ok) {
-        throw new Error(data.error || `Gagal menjalankan autopilot (${path}).`);
+        throw new Error(
+          typeof data.userMessage === "string"
+            ? data.userMessage
+            : typeof data.error === "string"
+              ? data.error
+              : `Gagal menjalankan autopilot (${path}).`,
+        );
       }
-      setResultMessage(data.message || "Autopilot diperbarui.");
+      setResultMessage(typeof data.message === "string" ? data.message : "Autopilot diperbarui.");
       setResultTone(
-        data.status === "error"
+        status === "error"
           ? "error"
-          : data.status === "decision_required" || data.status === "question_required" || data.status === "manual_intervention_required" || data.status === "submit_unverified"
+          : status === "decision_required" || status === "question_required" || status === "manual_intervention_required" || status === "submit_unverified"
             ? "warning"
             : "success",
       );
       await fetchStatus();
-
-      const shouldAutoContinue = ["submitted_continue", "skipped_continue", "search_continue", "safe_continue"].includes(data.status);
+ 
+      const shouldAutoContinue = status !== null && ["submitted_continue", "skipped_continue", "search_continue", "safe_continue"].includes(status);
       if (options?.autoSequence && shouldAutoContinue && autoContinueCountRef.current < 50) {
         autoContinueCountRef.current += 1;
         const delay = 500 + Math.floor(Math.random() * 1000);
         clearAutoContinueTimer();
         autoContinueTimerRef.current = window.setTimeout(async () => {
           const latestStatus = await fetch(`/api/campaigns/${campaignId}/status`, { cache: "no-store" })
-            .then((response) => response.json())
+            .then((response) => readJsonSafely(response, {
+              actionName: "poll_status",
+              method: "GET",
+              url: `/api/campaigns/${campaignId}/status`,
+            }))
             .catch(() => null);
-
-          const latestCampaignStatus = latestStatus?.campaign?.status;
-          if (["stopped", "paused", "completed"].includes(latestCampaignStatus)) {
+ 
+          const latestCampaignStatus = isRecord(latestStatus) && isRecord(latestStatus.campaign) && typeof latestStatus.campaign.status === "string"
+            ? latestStatus.campaign.status
+            : null;
+          if (latestCampaignStatus !== null && ["stopped", "paused", "completed"].includes(latestCampaignStatus)) {
             clearAutoContinueTimer();
             return;
           }
@@ -290,8 +396,10 @@ export function CampaignActions({
     setLoadingAction(action);
     setResultMessage(null);
     try {
-      const res = await fetch(`/api/campaigns/${campaignId}/autopilot/decision`, {
-        method: "POST",
+      const url = `/api/campaigns/${campaignId}/autopilot/decision`;
+      const method = "POST";
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action,
@@ -315,11 +423,17 @@ export function CampaignActions({
                             : "User ingin memutuskan nanti.",
         }),
       });
-      const data = await res.json();
+      const data = await readJsonSafely(res, { actionName: "send_decision", method, url });
       if (!res.ok) {
-        throw new Error(data.error || "Gagal memproses keputusan autopilot.");
+        throw new Error(
+          typeof data.userMessage === "string"
+            ? data.userMessage
+            : typeof data.error === "string"
+              ? data.error
+              : "Gagal memproses keputusan autopilot.",
+        );
       }
-      setResultMessage(data.message || "Keputusan berhasil disimpan.");
+      setResultMessage(typeof data.message === "string" ? data.message : "Keputusan berhasil disimpan.");
       setResultTone(action === "apply" ? "success" : "warning");
       await fetchStatus();
     } catch (error) {
@@ -490,7 +604,7 @@ export function CampaignActions({
             {loadingAction === "start" ? "Menjalankan..." : "Jalankan Kampanye Autopilot"}
           </button>
           <button
-            onClick={() => runSimpleAction("pause", "Kampanye dijeda.")}
+            onClick={() => runSimpleAction("pause", "pause_campaign", "Kampanye dijeda.")}
             disabled={loadingAction !== null || effectiveCampaignStatus !== "running"}
             className="rounded-xl border border-slate-700 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -504,7 +618,7 @@ export function CampaignActions({
             {loadingAction === "continue" ? "Melanjutkan..." : "Lanjutkan"}
           </button>
           <button
-            onClick={() => runSimpleAction("stop", "Kampanye dihentikan.")}
+            onClick={() => runSimpleAction("stop", "stop_campaign", "Kampanye dihentikan.")}
             disabled={loadingAction !== null || (effectiveCampaignStatus !== "running" && effectiveCampaignStatus !== "paused")}
             className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm font-medium text-rose-200 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
           >

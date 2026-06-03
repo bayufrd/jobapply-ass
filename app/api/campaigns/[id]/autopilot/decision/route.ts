@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
 import { applyAutopilotDecision } from "@/lib/campaign/autopilot-runner";
+import { jsonError, jsonOk } from "@/lib/api/json-response";
 
 export async function POST(
   request: Request,
@@ -13,7 +13,7 @@ export async function POST(
     };
 
     if (!body.action) {
-      return NextResponse.json({ error: "Aksi keputusan wajib diisi." }, { status: 400 });
+      return jsonError("decision_action_required", "Aksi keputusan wajib diisi.", undefined, { status: 400 });
     }
 
     const result = await applyAutopilotDecision(id, {
@@ -21,10 +21,12 @@ export async function POST(
       reason: body.reason,
     });
 
-    return NextResponse.json(result);
+    return jsonOk(result);
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Gagal memproses keputusan autopilot." },
+    return jsonError(
+      "autopilot_decision_failed",
+      error instanceof Error ? error.message : "Gagal memproses keputusan autopilot.",
+      undefined,
       { status: 500 },
     );
   }

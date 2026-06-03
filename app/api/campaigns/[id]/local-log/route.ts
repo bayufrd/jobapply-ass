@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { NextResponse } from "next/server";
+import { jsonError, jsonOk } from "@/lib/api/json-response";
 
 function getCampaignLogPath(campaignId: string) {
   return path.join(process.cwd(), "storage", "logs", `campaign-${campaignId}.log`);
@@ -30,16 +30,22 @@ export async function GET(
       .filter(Boolean)
       .slice(-tail);
 
-    return NextResponse.json({
+    return jsonOk({
       exists: true,
       file: `storage/logs/campaign-${id}.log`,
+      path: filePath,
       lines,
     });
   } catch {
-    return NextResponse.json({
-      exists: false,
-      file: `storage/logs/campaign-${id}.log`,
-      lines: [],
-    });
+    return jsonError(
+      "local_log_not_found",
+      "Local log campaign belum tersedia.",
+      {
+        exists: false,
+        file: `storage/logs/campaign-${id}.log`,
+        path: filePath,
+        lines: [],
+      },
+    );
   }
 }

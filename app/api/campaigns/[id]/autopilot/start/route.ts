@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
 import { runCampaignAutopilot } from "@/lib/campaign/autopilot-runner";
+import { jsonControlled, jsonError, jsonOk } from "@/lib/api/json-response";
 
 const CONTROLLED_AUTOPILOT_STATUSES = new Set([
   "manual_intervention_required",
@@ -19,6 +19,11 @@ export async function POST(
 ) {
   const { id } = await params;
   const result = await runCampaignAutopilot(id);
-  const statusCode = result.status === "error" && !CONTROLLED_AUTOPILOT_STATUSES.has(result.status) ? 500 : 200;
-  return NextResponse.json(result, { status: statusCode });
+  if (result.status === "error") {
+    return jsonError("autopilot_start_failed", result.message, result, { status: 500 });
+  }
+  if (CONTROLLED_AUTOPILOT_STATUSES.has(result.status)) {
+    return jsonControlled(result);
+  }
+  return jsonOk(result);
 }

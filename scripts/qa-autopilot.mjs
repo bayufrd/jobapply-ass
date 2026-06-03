@@ -93,10 +93,12 @@ async function isPortOpen(port) {
 
 function fetchJson(url, options = {}) {
   return new Promise((resolve, reject) => {
+    const method = options.method || "GET";
+    const actionName = options.actionName || "unknown_action";
     const request = http.request(
       url,
       {
-        method: options.method || "GET",
+        method,
         headers: options.headers || { "Content-Type": "application/json" },
       },
       (response) => {
@@ -106,17 +108,65 @@ function fetchJson(url, options = {}) {
           raw += chunk;
         });
         response.on("end", () => {
-          let body = null;
-          try {
-            body = raw ? JSON.parse(raw) : null;
-          } catch {
-            body = raw;
+          const text = raw || "";
+          const trimmed = text.trim();
+          const statusCode = response.statusCode || 0;
+          const statusText = response.statusMessage || "";
+          const contentType = response.headers["content-type"] || null;
+
+          if (!trimmed) {
+            appendQaLog("qa.empty_response_body", {
+              method,
+              url,
+              statusCode,
+              statusText,
+              contentType,
+              actionName,
+              headers: response.headers,
+            });
+            resolve({
+              ok: false,
+              status: statusCode,
+              body: {
+                ok: false,
+                statusCode,
+                statusText,
+                contentType,
+                error: "empty_response_body",
+                method,
+                url,
+                actionName,
+                message: "Server mengembalikan response kosong.",
+                headers: response.headers,
+              },
+            });
+            return;
           }
-          resolve({
-            ok: response.statusCode >= 200 && response.statusCode < 300,
-            status: response.statusCode || 0,
-            body,
-          });
+
+          try {
+            resolve({
+              ok: statusCode >= 200 && statusCode < 300,
+              status: statusCode,
+              body: JSON.parse(trimmed),
+            });
+          } catch {
+            resolve({
+              ok: false,
+              status: statusCode,
+              body: {
+                ok: false,
+                statusCode,
+                statusText,
+                contentType,
+                error: "invalid_json_response",
+                method,
+                url,
+                actionName,
+                rawPreview: trimmed.slice(0, 1000),
+                headers: response.headers,
+              },
+            });
+          }
         });
       },
     );
@@ -614,15 +664,19 @@ async function runLoop(config) {
 
     const terminalSteps = new Set([
       "no_jobs_remaining",
+      "no_jobs_remaining_after_all_pages",
       "target_reached",
+      "too_many_empty_pages",
       "too_many_unusable_jobs",
     ]);
 
     if (terminalSteps.has(status.currentStep)) {
       const reason =
-        status.currentStep === "no_jobs_remaining"
-          ? "Tidak ada lowongan eligible yang bisa diproses. QA dihentikan, bukan continue ulang."
-          : `Terminal step tercapai: ${status.currentStep}`;
+        status.currentStep === "no_jobs_remaining" || status.currentStep === "no_jobs_remaining_after_all_pages"
+          ? "Tidak ada lowongan eligible yang bisa diproses setelah semua halaman pencarian diperiksa. QA dihentikan."
+          : status.currentStep === "too_many_empty_pages"
+            ? "Terlalu banyak halaman pencarian kosong berturut-turut. QA dihentikan."
+            : `Terminal step tercapai: ${status.currentStep}`;
 
       appendQaLog("qa.terminal_step_detected", {
         currentStep: status.currentStep,
