@@ -368,7 +368,10 @@ export class PlaywrightMcpClient {
   private protocolVersion = "2025-06-18";
 
   constructor(baseUrl = process.env.PLAYWRIGHT_MCP_URL ?? "http://localhost:8931/mcp") {
-    this.baseUrl = baseUrl;
+    const normalizedBaseUrl = typeof baseUrl === "string" && baseUrl.trim().length > 0
+      ? baseUrl.trim()
+      : "http://localhost:8931/mcp";
+    this.baseUrl = normalizedBaseUrl;
   }
 
   getMcpUrl() {

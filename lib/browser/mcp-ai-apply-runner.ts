@@ -245,6 +245,62 @@ function normalizeJobListingUrl(rawUrl: string): SafeUrlResult {
   });
 }
 
+function isBlankSnapshot(snapshot: McpSnapshot) {
+  const rawText = `${snapshot.title}\n${snapshot.accessibilityText}`.trim();
+  return snapshot.url === "about:blank" && rawText.length === 0 && snapshot.elements.length === 0;
+}
+
+async function captureStableSnapshotAfterNavigate(input: {
+  client: PlaywrightMcpClient;
+  campaignId: string;
+  jobListingId: string;
+  applicationId: string;
+  mcpUrl: string;
+  jobTitle: string;
+  company: string;
+  jobUrl: string;
+  expectedUrl?: string | null;
+  source: "initial_job_url" | "fallback_apply_url";
+}) {
+  let snapshot = await input.client.snapshot();
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (!isBlankSnapshot(snapshot)) {
+      return snapshot;
+    }
+
+    await writeAutomationLog({
+      campaignId: input.campaignId,
+      jobListingId: input.jobListingId,
+      applicationId: input.applicationId,
+      level: "warn",
+      event: "mcp_ai.blank_snapshot_retry",
+      message: "Snapshot MCP masih about:blank setelah navigasi. Sistem menunggu snapshot berikutnya sebelum menyimpulkan redirect eksternal.",
+      metadata: {
+        ...buildMcpLogMetadata({
+          campaignId: input.campaignId,
+          jobListingId: input.jobListingId,
+          applicationId: input.applicationId,
+          stage: "mcp_tool_call",
+          mcpUrl: input.mcpUrl,
+          toolName: "browser_snapshot",
+          jobTitle: input.jobTitle,
+          company: input.company,
+          jobUrl: input.jobUrl,
+        }),
+        attempt,
+        source: input.source,
+        currentUrl: snapshot.url,
+        expectedUrl: input.expectedUrl ?? null,
+      },
+    });
+
+    snapshot = await input.client.waitForChange(snapshot, 4000);
+  }
+
+  return snapshot;
+}
+
 function buildPlannerSkipReason(input: {
   detectedStep: string;
   pageKind: string;
@@ -471,7 +527,18 @@ export async function runMcpAiApplyRunner({
         jobUrl: jobListing.url,
       }),
     });
-    let snapshot = await client.snapshot();
+    let snapshot = await captureStableSnapshotAfterNavigate({
+      client,
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      applicationId: application.id,
+      mcpUrl,
+      jobTitle: jobListing.title,
+      company: jobListing.company,
+      jobUrl: jobListing.url,
+      expectedUrl: normalizedJobUrl.url,
+      source: "initial_job_url",
+    });
     const initialSnapshotValidation = validateMcpSnapshot(snapshot);
     const initialSnapshotPreview = getMcpSnapshotPreview(snapshot);
     await writeAutomationLog({
@@ -851,7 +918,18 @@ export async function runMcpAiApplyRunner({
           },
         });
         await client.navigate(normalizedFallbackApplyUrl.url);
-        snapshot = await client.snapshot();
+        snapshot = await captureStableSnapshotAfterNavigate({
+          client,
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          mcpUrl,
+          jobTitle: jobListing.title,
+          company: jobListing.company,
+          jobUrl: jobListing.url,
+          expectedUrl: normalizedFallbackApplyUrl.url,
+          source: "fallback_apply_url",
+        });
         normalized = normalizeMcpSnapshot(snapshot);
       }
 

@@ -705,7 +705,25 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       currentJobCompany: nextJob.company,
     });
 
-    const job = await scoreJobIfNeeded(campaignId, nextJob.id);
+    let job = nextJob;
+    try {
+      const scoredJob = await scoreJobIfNeeded(campaignId, nextJob.id);
+      if (scoredJob) {
+        job = scoredJob;
+      }
+    } catch (error) {
+      await writeAutomationLog({
+        campaignId,
+        jobListingId: nextJob.id,
+        level: "error",
+        event: "campaign.job_scoring_failed",
+        message: `AI scoring gagal untuk lowongan "${nextJob.title}". Autopilot tetap lanjut memakai data lowongan yang sudah ada.`,
+        metadata: {
+          error: error instanceof Error ? error.message : String(error),
+          jobUrl: nextJob.url,
+        },
+      });
+    }
     if (!job || !job.campaign) {
       return { status: "error", message: "Lowongan gagal diproses.", campaignId };
     }
