@@ -55,6 +55,12 @@ function translateEvent(event: string) {
     "mcp_ai.submit_unverified": "Submit sudah diklik tetapi marker sukses MCP belum muncul.",
     "mcp_ai.runner_failed": "Runner MCP gagal dijalankan.",
     "mcp_ai.server_unavailable": "Playwright MCP belum aktif.",
+    "url.normalize_started": "URL sedang dinormalisasi sebelum dipakai automation.",
+    "url.normalize_failed": "URL gagal divalidasi atau dinormalisasi.",
+    "jobstreet.external_redirect_detected": "Lowongan mengarah ke website eksternal dan tidak diproses sebagai flow internal Jobstreet.",
+    "jobstreet.external_redirect_invalid_url": "External redirect terdeteksi tetapi URL tujuan tidak valid.",
+    "jobstreet.apply_url_fallback_built": "URL apply internal Jobstreet berhasil dibangun dari job ID.",
+    "mcp_ai.planner_skipped_invalid_state": "AI planner MCP dilewati karena URL atau state halaman tidak valid.",
     "campaign.phase_search_started": "Fase 1/3 dimulai: mencari dan menyimpan lowongan.",
     "campaign.phase_search_completed": "Fase 1/3 selesai: lowongan tersimpan.",
     "campaign.phase_apply_started": "Fase 2/3 dimulai: apply dengan MCP AI First.",
@@ -154,7 +160,10 @@ export async function GET(
               ? "submit_unverified"
               : campaign.status === "paused" && runtimeCampaign.decisionStatus === "mcp_unavailable"
                 ? "mcp_unavailable"
-                : campaign.appliedCount >= campaign.targetApplyCount || isCampaignTerminal(campaign.status)
+                : campaign.appliedCount >= campaign.targetApplyCount
+                  || isCampaignTerminal(campaign.status)
+                  || runtimeCampaign.currentStep === "no_jobs_remaining_after_all_pages"
+                  || runtimeCampaign.currentStep === "too_many_empty_pages"
                   ? "completed"
                   : "safe_continue";
 
@@ -163,6 +172,10 @@ export async function GET(
   const latestSuccessLog = campaign.logs.find((log) => log.event === "application.submit_success_marker_detected") ?? null;
   const latestSuccessMetadata = parseJson<Record<string, unknown> | null>(latestSuccessLog?.metadataJson, null);
   const latestApplication = campaign.applications[0] ?? null;
+  const latestDecision = parseJson<Record<string, unknown> | null>(runtimeCampaign.decisionPayloadJson, null);
+  const blockerEvidence = latestDecision && typeof latestDecision === "object" && "blockerEvidence" in latestDecision
+    ? (latestDecision.blockerEvidence as Record<string, unknown> | null)
+    : null;
   const blocker =
     campaign.status === "error"
       ? {
@@ -189,7 +202,15 @@ export async function GET(
                   type: "mcp_browser_unavailable",
                   message: "Playwright MCP atau browser Chromium belum siap.",
                 }
-              : null;
+              : blockerEvidence && typeof blockerEvidence.reason === "string"
+                ? {
+                    type: blockerEvidence.reason,
+                    message:
+                      blockerEvidence.reason === "external_redirect"
+                        ? "Lowongan ini mengarah ke website eksternal. Untuk MVP Jobstreet internal, sistem melewati lowongan ini atau minta keputusan user."
+                        : "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.",
+                  }
+                : null;
 
   return NextResponse.json({
     campaign,
@@ -197,6 +218,8 @@ export async function GET(
     appliedCount: campaign.appliedCount,
     verifiedSubmittedCount: counts.submitted,
     currentStep: runtimeCampaign.currentStep,
+    blockerType: blocker?.type ?? null,
+    blockerEvidence,
     currentJob,
     latestApplication:
       latestApplication
@@ -239,7 +262,7 @@ export async function GET(
       lastEvent: latestWatchdogLog?.event ?? null,
       lastMessage: latestWatchdogLog?.message ?? null,
     },
-    lastDecisionRequired: parseJson(runtimeCampaign.decisionPayloadJson, null),
+    lastDecisionRequired: latestDecision,
     blocker,
     lastSuccessMarker:
       typeof latestSuccessMetadata?.successMarker === "string"
@@ -274,7 +297,8 @@ export async function GET(
     canContinue:
       !isTerminalStep &&
       campaign.status !== "completed" &&
-      (canContinueAutopilot(campaign.status) || canStartAutopilot(campaign.status)),
+      (canContinueAutopilot(campaign.status) || canStartAutopilot(campaign.status)) &&
+      !(blocker?.type === "invalid_url" && runtimeCampaign.currentStep !== "next_job"),
     nextRecommendedAction,
   });
 }

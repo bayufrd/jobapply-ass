@@ -25,6 +25,7 @@ import {
 } from "@/lib/browser/apply-wizard-state";
 import { isNormalJobstreetApplyUrl } from "@/lib/browser/jobstreet-apply-step-detector";
 import { runJobstreetApplyStep } from "@/lib/browser/jobstreet-apply-step-runner";
+import { normalizeSafeUrl } from "@/lib/jobstreet/safe-url";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -1358,8 +1359,46 @@ export async function submitApplication({
       metadata: { applicationId, jobUrl: jobListingUrl },
     });
 
+    const normalizedSubmitUrl = normalizeSafeUrl(jobListingUrl, {
+      defaultBaseUrl: "https://id.jobstreet.com",
+      allowExternal: false,
+    });
+
+    await writeAutomationLog({
+      campaignId,
+      jobListingId,
+      applicationId,
+      event: normalizedSubmitUrl.ok ? "url.normalize_started" : "url.normalize_failed",
+      message: normalizedSubmitUrl.ok
+        ? "URL lamaran mulai dinormalisasi sebelum submit manual-assisted."
+        : "URL lamaran gagal dinormalisasi sebelum submit manual-assisted.",
+      metadata: {
+        rawUrl: jobListingUrl,
+        normalizedUrl: normalizedSubmitUrl.ok ? normalizedSubmitUrl.url : null,
+        normalizedUrlOk: normalizedSubmitUrl.ok,
+        reason: normalizedSubmitUrl.ok ? null : normalizedSubmitUrl.reason,
+      },
+    });
+
+    if (!normalizedSubmitUrl.ok) {
+      await prisma.application.update({
+        where: { id: applicationId },
+        data: {
+          status: "failed",
+          notes: "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.",
+          skippedReason: "invalid_job_url",
+        },
+      });
+
+      return {
+        status: "failed",
+        message: "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.",
+        error: JSON.stringify({ rawUrl: jobListingUrl, reason: normalizedSubmitUrl.reason }),
+      };
+    }
+
     // Step 2: Navigate to job page
-    await page.goto(jobListingUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto(normalizedSubmitUrl.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForTimeout(2000);
 
     // Step 3: Check for manual intervention

@@ -9,6 +9,7 @@ import {
   PICKABLE_JOB_STATUSES,
 } from "@/lib/campaign/job-status";
 import { checkPlaywrightMcpHealth } from "@/lib/mcp/mcp-health";
+import { resolveCampaignPaginationDecision } from "@/lib/campaign/campaign-pagination-state";
 
 export type AutopilotAction =
   | "safe_continue"
@@ -312,6 +313,15 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
 
   await restartCampaignIfStopped(campaignId, campaign.status);
 
+  const runtimeCampaign = campaign as typeof campaign & {
+    currentSearchPage?: number | null;
+    currentSearchUrl?: string | null;
+    emptyPageCount?: number | null;
+    processedJobCount?: number | null;
+    unusableJobCount?: number | null;
+    lastAppliedJobstreetJobId?: string | null;
+  };
+
   if (campaign.appliedCount >= campaign.targetApplyCount) {
     await setCampaignRuntimeState(campaignId, {
       status: "completed",
@@ -443,27 +453,109 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
   while (consecutiveUnavailableJobs < maxConsecutiveUnavailableJobs) {
     const nextJob = await pickNextJob(campaignId, { includeApplying: true });
     if (!nextJob || !nextJob.campaign) {
-      await setCampaignRuntimeState(campaignId, {
-        status: "completed",
-        currentStep: "no_jobs_remaining",
-        decisionStatus: null,
-        decisionPayloadJson: null,
-        currentJobId: null,
-        currentQuestion: null,
-        currentJobTitle: null,
-        currentJobCompany: null,
+      const paginationDecision = resolveCampaignPaginationDecision(
+        {
+          currentSearchPage: runtimeCampaign.currentSearchPage ?? 1,
+          emptyPageCount: runtimeCampaign.emptyPageCount ?? 0,
+          verifiedSubmittedCount: campaign.appliedCount,
+          targetApplyCount: campaign.targetApplyCount,
+        },
+        {
+          pageHadProcessableJobs: (runtimeCampaign.processedJobCount ?? 0) > 0,
+          shouldAdvancePage: true,
+        },
+      );
+
+      if (paginationDecision.type === "advance_to_next_page") {
+        const nextSearchUrl = `${runtimeCampaign.currentSearchUrl ?? ""}` || null;
+        await prisma.campaign.update({
+          where: { id: campaignId },
+          data: {
+            currentSearchPage: paginationDecision.nextSearchPage,
+            currentSearchUrl: nextSearchUrl,
+            emptyPageCount: paginationDecision.emptyPageCount,
+            processedJobCount: 0,
+            currentStep: "searching_jobs",
+            currentJobId: null,
+            currentQuestion: null,
+            currentJobTitle: null,
+            currentJobCompany: null,
+            decisionStatus: null,
+            decisionPayloadJson: null,
+          },
+        });
+        await writeAutomationLog({
+          campaignId,
+          event: "campaign.page_exhausted_continue_next_page",
+          message: `Lowongan pada page ${paginationDecision.currentSearchPage} habis. Lanjut ke page ${paginationDecision.nextSearchPage}.`,
+          metadata: {
+            campaignId,
+            currentSearchPage: paginationDecision.currentSearchPage,
+            nextSearchPage: paginationDecision.nextSearchPage,
+            emptyPageCount: paginationDecision.emptyPageCount,
+          },
+        });
+        await writeAutomationLog({
+          campaignId,
+          event: "campaign.next_search_page",
+          message: `Menyiapkan pencarian Jobstreet page ${paginationDecision.nextSearchPage}.`,
+          metadata: {
+            campaignId,
+            currentSearchPage: paginationDecision.nextSearchPage,
+            previousSearchPage: paginationDecision.currentSearchPage,
+          },
+        });
+        return {
+          status: "search_continue",
+          message: `Page ${paginationDecision.currentSearchPage} selesai. Lanjut ke page ${paginationDecision.nextSearchPage}.`,
+          campaignId,
+          currentStep: "searching_jobs",
+        };
+      }
+
+      const terminalStep = paginationDecision.type === "too_many_empty_pages"
+        ? "too_many_empty_pages"
+        : paginationDecision.type === "target_reached"
+          ? "target_reached"
+          : "no_jobs_remaining_after_all_pages";
+      const terminalMessage = terminalStep === "too_many_empty_pages"
+        ? "Terlalu banyak halaman pencarian kosong berturut-turut. Kampanye dihentikan."
+        : terminalStep === "target_reached"
+          ? "Target lamaran tercapai."
+          : "Tidak ada lowongan eligible lagi setelah semua halaman pencarian diperiksa.";
+
+      await prisma.campaign.update({
+        where: { id: campaignId },
+        data: {
+          status: "completed",
+          currentStep: terminalStep,
+          currentJobId: null,
+          currentQuestion: null,
+          currentJobTitle: null,
+          currentJobCompany: null,
+          decisionStatus: null,
+          decisionPayloadJson: null,
+          emptyPageCount: paginationDecision.emptyPageCount,
+        },
       });
       await writeAutomationLog({
         campaignId,
-        event: "campaign.no_jobs_remaining",
-        message: "Tidak ada lowongan eligible yang bisa diproses. Kampanye dihentikan.",
-        metadata: { campaignId, currentStep: "no_jobs_remaining" },
+        event: terminalStep === "too_many_empty_pages"
+          ? "campaign.too_many_empty_pages"
+          : "campaign.no_jobs_remaining_after_all_pages",
+        message: terminalMessage,
+        metadata: {
+          campaignId,
+          currentStep: terminalStep,
+          currentSearchPage: paginationDecision.currentSearchPage,
+          emptyPageCount: paginationDecision.emptyPageCount,
+        },
       });
       return {
         status: "completed",
-        message: "Tidak ada lowongan lagi yang bisa diproses saat ini.",
+        message: terminalMessage,
         campaignId,
-        currentStep: "no_jobs_remaining",
+        currentStep: terminalStep,
       };
     }
 
@@ -777,7 +869,11 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     }
 
     if (["apply_unavailable", "stuck_no_progress", "submit_not_found_timeout"].includes(applyResult.status)) {
+      const blockerEvidence = applyResult.error ? parseJson<Record<string, unknown> | null>(applyResult.error, null) : null;
       const mappedStatus = applyResult.status === "apply_unavailable" ? "apply_unavailable" : "failed";
+      const blockerType = applyResult.status === "apply_unavailable"
+        ? (typeof blockerEvidence?.reason === "string" ? blockerEvidence.reason : "apply_unavailable")
+        : applyResult.status;
       await prisma.jobListing.update({ where: { id: job.id }, data: { status: mappedStatus } });
 
       await writeAutomationLog({
@@ -790,8 +886,15 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
             ? "Submit tidak ditemukan dalam batas waktu. Lowongan dilewati."
             : applyResult.status === "stuck_no_progress"
               ? "Halaman tidak berubah setelah 2 aksi. Lowongan dilewati."
-              : "Lowongan dilewati karena tidak ada aksi aman yang berguna.",
-        metadata: { resultStatus: applyResult.status, applicationId: applyResult.applicationId ?? null },
+              : blockerType === "external_redirect"
+                ? "Lowongan ini mengarah ke website eksternal. Untuk MVP Jobstreet internal, sistem melewati lowongan ini atau minta keputusan user."
+                : "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.",
+        metadata: {
+          resultStatus: applyResult.status,
+          applicationId: applyResult.applicationId ?? null,
+          blockerType,
+          blockerEvidence,
+        },
       });
 
       await writeAutomationLog({
@@ -838,7 +941,16 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         currentJobId: job.id,
         currentQuestion: applyResult.message,
         decisionStatus: null,
-        decisionPayloadJson: null,
+        decisionPayloadJson: JSON.stringify({
+          type: blockerType,
+          latestJob: {
+            id: job.id,
+            title: job.title,
+            company: job.company,
+          },
+          latestApplication: applyResult.applicationId ? { id: applyResult.applicationId, status: applyResult.status } : null,
+          blockerEvidence,
+        }),
       });
 
       return {

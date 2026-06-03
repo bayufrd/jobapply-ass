@@ -16,6 +16,9 @@ import {
   validateMcpSnapshot,
 } from "@/lib/mcp/playwright-mcp-client";
 
+import { buildJobstreetApplyUrl, extractJobstreetJobId } from "@/lib/jobstreet/jobstreet-url";
+import { normalizeSafeUrl, type SafeUrlResult } from "@/lib/jobstreet/safe-url";
+
 type SubmitModeStrategy = "review_each_application" | "auto_submit_safe_only";
 
 const LEGACY_BROWSER_BLOCKED_IN_MCP_MODE = "LEGACY_BROWSER_BLOCKED_IN_MCP_MODE";
@@ -239,6 +242,26 @@ async function createControlledManualInterventionResult(input: {
   };
 }
 
+function normalizeJobListingUrl(rawUrl: string): SafeUrlResult {
+  return normalizeSafeUrl(rawUrl, {
+    defaultBaseUrl: "https://id.jobstreet.com",
+    allowExternal: false,
+  });
+}
+
+function buildPlannerSkipReason(input: {
+  detectedStep: string;
+  pageKind: string;
+  fixtureConfidence: number;
+  normalizedUrlOk: boolean;
+}) {
+  if (!input.normalizedUrlOk) return "invalid_url";
+  if (input.detectedStep === "external_redirect") return "external_redirect";
+  if (input.pageKind === "unknown" && input.fixtureConfidence === 0) return "unknown_page";
+  if (input.pageKind === "external_redirect") return "external_redirect";
+  return "apply_unavailable";
+}
+
 export async function runMcpAiApplyRunner({
   campaign,
   jobListing,
@@ -265,6 +288,7 @@ export async function runMcpAiApplyRunner({
   const application = await createApplicationRecord(campaign, jobListing, "paused", "Lamaran diproses oleh runner MCP AI First.");
 
   const mcpUrl = client.getMcpUrl();
+  const normalizedJobUrl = normalizeJobListingUrl(jobListing.url);
 
   await writeAutomationLog({
     campaignId: campaign.id,
@@ -281,7 +305,7 @@ export async function runMcpAiApplyRunner({
         mcpUrl,
         jobTitle: jobListing.title,
         company: jobListing.company,
-        jobUrl: jobListing.url,
+        jobUrl: normalizedJobUrl.ok ? normalizedJobUrl.url : jobListing.url,
       }),
       mode,
     },
@@ -303,7 +327,7 @@ export async function runMcpAiApplyRunner({
         toolName: "initialize",
         jobTitle: jobListing.title,
         company: jobListing.company,
-        jobUrl: jobListing.url,
+        jobUrl: normalizedJobUrl.ok ? normalizedJobUrl.url : jobListing.url,
       }),
     });
     await client.connect();
@@ -322,7 +346,7 @@ export async function runMcpAiApplyRunner({
         toolName: "initialize",
         jobTitle: jobListing.title,
         company: jobListing.company,
-        jobUrl: jobListing.url,
+        jobUrl: normalizedJobUrl.ok ? normalizedJobUrl.url : jobListing.url,
       }),
     });
 
@@ -341,18 +365,79 @@ export async function runMcpAiApplyRunner({
         toolName: "browser_navigate",
         jobTitle: jobListing.title,
         company: jobListing.company,
-        jobUrl: jobListing.url,
+        jobUrl: normalizedJobUrl.ok ? normalizedJobUrl.url : jobListing.url,
       }),
     });
     await writeAutomationLog({
       campaignId: campaign.id,
       jobListingId: jobListing.id,
       applicationId: application.id,
+      event: normalizedJobUrl.ok ? "url.normalize_started" : "url.normalize_failed",
+      message: normalizedJobUrl.ok
+        ? "URL lowongan mulai dinormalisasi sebelum navigasi MCP."
+        : "URL lowongan gagal dinormalisasi sebelum navigasi MCP.",
+      metadata: {
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        rawUrl: jobListing.url,
+        normalizedUrl: normalizedJobUrl.ok ? normalizedJobUrl.url : null,
+        normalizedUrlOk: normalizedJobUrl.ok,
+        reason: normalizedJobUrl.ok ? null : normalizedJobUrl.reason,
+      },
+    });
+
+    if (!normalizedJobUrl.ok) {
+      await prisma.application.update({
+        where: { id: application.id },
+        data: {
+          status: "failed",
+          notes: "URL lamaran tidak valid atau tidak didukung untuk flow Jobstreet internal.",
+          skippedReason: "invalid_job_url",
+        },
+      });
+      await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "apply_unavailable" } });
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        level: "warn",
+        event: "mcp_ai.invalid_job_url",
+        message: "URL lamaran tidak valid. Lowongan dilewati agar kampanye bisa lanjut.",
+        metadata: {
+          rawUrl: jobListing.url,
+          normalizedUrlOk: false,
+          reason: normalizedJobUrl.reason,
+          inputPreview: normalizedJobUrl.inputPreview,
+        },
+      });
+      return {
+        status: "apply_unavailable",
+        message: "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.",
+        applicationId: application.id,
+        error: JSON.stringify({ reason: normalizedJobUrl.reason, rawUrl: jobListing.url }),
+      };
+    }
+
+    if (normalizedJobUrl.url !== jobListing.url) {
+      await writeAutomationLog({
+        campaignId: campaign.id,
+        jobListingId: jobListing.id,
+        applicationId: application.id,
+        event: "mcp_ai.job_url_normalized",
+        message: `URL lowongan dinormalisasi sebelum navigasi MCP: ${normalizedJobUrl.url}`,
+        metadata: { rawJobUrl: jobListing.url, normalizedJobUrl: normalizedJobUrl.url },
+      });
+    }
+
+    await writeAutomationLog({
+      campaignId: campaign.id,
+      jobListingId: jobListing.id,
+      applicationId: application.id,
       event: "mcp_ai.url_step_runner_started",
       message: "Runner MCP-only mulai dari URL lowongan aktif.",
-      metadata: { jobUrl: jobListing.url },
+      metadata: { jobUrl: normalizedJobUrl.url },
     });
-    await client.navigate(jobListing.url);
+    await client.navigate(normalizedJobUrl.url);
     await writeAutomationLog({
       campaignId: campaign.id,
       jobListingId: jobListing.id,
@@ -368,7 +453,7 @@ export async function runMcpAiApplyRunner({
         toolName: "browser_navigate",
         jobTitle: jobListing.title,
         company: jobListing.company,
-        jobUrl: jobListing.url,
+        jobUrl: normalizedJobUrl.url,
       }),
     });
 
@@ -567,7 +652,7 @@ export async function runMcpAiApplyRunner({
         },
       });
 
-      if (detectedStep === "choose_documents") {
+      if (detectedStep === "apply") {
         await writeAutomationLog({
           campaignId: campaign.id,
           jobListingId: jobListing.id,
@@ -577,7 +662,7 @@ export async function runMcpAiApplyRunner({
         });
       }
 
-      if (detectedStep === "employer_questions") {
+      if (detectedStep === "role-requirements") {
         await writeAutomationLog({
           campaignId: campaign.id,
           jobListingId: jobListing.id,
@@ -587,7 +672,7 @@ export async function runMcpAiApplyRunner({
         });
       }
 
-      if (detectedStep === "update_profile") {
+      if (detectedStep === "profile") {
         await writeAutomationLog({
           campaignId: campaign.id,
           jobListingId: jobListing.id,
@@ -613,7 +698,7 @@ export async function runMcpAiApplyRunner({
         });
       }
 
-      if (detectedStep === "review_submit") {
+      if (detectedStep === "review") {
         await writeAutomationLog({
           campaignId: campaign.id,
           jobListingId: jobListing.id,
@@ -741,17 +826,151 @@ export async function runMcpAiApplyRunner({
         },
       });
 
+      const normalizedCurrentUrl = normalizeSafeUrl(snapshot.url, {
+        defaultBaseUrl: normalizedJobUrl.url,
+        allowExternal: true,
+      });
+      const normalizedJobApplyUrl = normalizeSafeUrl(jobListing.url, {
+        defaultBaseUrl: "https://id.jobstreet.com",
+        allowExternal: false,
+      });
+      const jobId = extractJobstreetJobId(normalizedJobApplyUrl.ok ? normalizedJobApplyUrl.url : jobListing.url);
+      const fallbackApplyUrl = jobId ? buildJobstreetApplyUrl(jobId) : null;
+      const normalizedFallbackApplyUrl = fallbackApplyUrl
+        ? normalizeSafeUrl(fallbackApplyUrl, { defaultBaseUrl: "https://id.jobstreet.com", allowExternal: false })
+        : null;
+
+      if (normalizedCurrentUrl.ok && normalizedCurrentUrl.isJobstreet && detectedStep === "unknown" && normalized.pageKind === "unknown" && fixtureMatch.confidence === 0 && normalizedFallbackApplyUrl?.ok) {
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          event: "jobstreet.apply_url_fallback_built",
+          message: "URL apply internal Jobstreet dibangun dari job ID karena langkah apply belum terbuka jelas.",
+          metadata: {
+            rawUrl: jobListing.url,
+            currentSnapshotUrl: snapshot.url,
+            fallbackApplyUrl: normalizedFallbackApplyUrl.url,
+            jobId,
+          },
+        });
+        await client.navigate(normalizedFallbackApplyUrl.url);
+        snapshot = await client.snapshot();
+        normalized = normalizeMcpSnapshot(snapshot);
+      }
+
+      const shouldSkipPlanner =
+        !normalizedCurrentUrl.ok
+        || normalizedCurrentUrl.isExternal
+        || detectedStep === "external_redirect"
+        || normalized.pageKind === "external_redirect"
+        || (normalized.pageKind === "unknown" && fixtureMatch.confidence === 0);
+
+      if (detectedStep === "external_redirect" || normalized.pageKind === "external_redirect") {
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          level: normalizedCurrentUrl.ok ? "warn" : "error",
+          event: normalizedCurrentUrl.ok ? "jobstreet.external_redirect_detected" : "jobstreet.external_redirect_invalid_url",
+          message: normalizedCurrentUrl.ok
+            ? "Lowongan ini mengarah ke website eksternal. Untuk MVP Jobstreet internal, lowongan dilewati atau menunggu keputusan user."
+            : "External redirect terdeteksi tetapi URL saat ini tidak valid. Lowongan dilewati agar kampanye bisa lanjut.",
+          metadata: {
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+            detectedStep,
+            pageKind: normalized.pageKind,
+            fixtureMatch,
+            rawUrl: snapshot.url,
+            normalizedUrl: normalizedCurrentUrl.ok ? normalizedCurrentUrl.url : null,
+            normalizedUrlOk: normalizedCurrentUrl.ok,
+            currentSnapshotUrl: snapshot.url,
+            currentPageUrl: snapshot.url,
+            jobListingUrl: jobListing.url,
+            jobListingApplyUrl: fallbackApplyUrl,
+          },
+        });
+      }
+
+      if (shouldSkipPlanner) {
+        const reason = buildPlannerSkipReason({
+          detectedStep,
+          pageKind: normalized.pageKind,
+          fixtureConfidence: fixtureMatch.confidence,
+          normalizedUrlOk: normalizedCurrentUrl.ok,
+        });
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          level: "warn",
+          event: "mcp_ai.planner_skipped_invalid_state",
+          message: "AI planner MCP dilewati karena state halaman tidak valid untuk flow Jobstreet internal.",
+          metadata: {
+            detectedStep,
+            pageKind: normalized.pageKind,
+            fixtureConfidence: fixtureMatch.confidence,
+            currentUrl: snapshot.url,
+            normalizedUrl: normalizedCurrentUrl.ok ? normalizedCurrentUrl.url : null,
+            normalizedUrlOk: normalizedCurrentUrl.ok,
+            reason,
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+          },
+        });
+        await prisma.application.update({
+          where: { id: application.id },
+          data: {
+            status: "failed",
+            notes: reason === "external_redirect"
+              ? "Lowongan ini mengarah ke website eksternal. Untuk MVP Jobstreet internal, sistem melewati lowongan ini atau minta keputusan user."
+              : "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.",
+            skippedReason: reason,
+          },
+        });
+        await prisma.jobListing.update({ where: { id: jobListing.id }, data: { status: "apply_unavailable" } });
+        return {
+          status: "apply_unavailable",
+          message: reason === "external_redirect"
+            ? "Lowongan ini mengarah ke website eksternal. Untuk MVP Jobstreet internal, sistem melewati lowongan ini atau minta keputusan user."
+            : "URL lamaran tidak valid atau mengarah ke luar Jobstreet. Lowongan dilewati agar kampanye bisa lanjut.",
+          applicationId: application.id,
+          pageKind: normalized.pageKind,
+          error: JSON.stringify({
+            detectedStep,
+            pageKind: normalized.pageKind,
+            fixtureConfidence: fixtureMatch.confidence,
+            currentUrl: snapshot.url,
+            normalizedUrlOk: normalizedCurrentUrl.ok,
+            reason,
+            externalUrl: normalizedCurrentUrl.ok ? normalizedCurrentUrl.url : null,
+          }),
+        };
+      }
+
       await writeAutomationLog({
         campaignId: campaign.id,
         jobListingId: jobListing.id,
         event: "mcp_ai.plan_requested",
         message: "Meminta rencana aksi berikutnya ke AI planner MCP.",
-        metadata: { applicationId: application.id, step, pageKind: normalized.pageKind, fixtureMatch },
+        metadata: {
+          applicationId: application.id,
+          step,
+          pageKind: normalized.pageKind,
+          fixtureMatch,
+          rawUrl: snapshot.url,
+          normalizedUrl: normalizedCurrentUrl.url,
+          currentSnapshotUrl: snapshot.url,
+          currentPageUrl: snapshot.url,
+          jobListingUrl: jobListing.url,
+          jobListingApplyUrl: fallbackApplyUrl,
+        },
       });
 
       const plan = await planMcpUiAction({
         page: normalized,
-        currentUrl: snapshot.url,
+        currentUrl: normalizedCurrentUrl.url,
         candidateProfile: buildCandidateProfile(candidateProfile),
         campaignDefaults: {
           currentSalary: campaign.defaultCurrentSalary,
@@ -760,7 +979,10 @@ export async function runMcpAiApplyRunner({
           availability: campaign.defaultAvailability,
           workModePreference: campaign.workModePreference,
         },
-        jobListing,
+        jobListing: {
+          ...jobListing,
+          applyUrl: normalizedFallbackApplyUrl?.ok ? normalizedFallbackApplyUrl.url : null,
+        },
         questionMemory,
         previousActions,
         mode,
