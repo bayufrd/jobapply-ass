@@ -95,6 +95,7 @@ const MAX_SAME_SNAPSHOT_REPEATS = 2;
 const MAX_NO_PROGRESS_ACTIONS = 2;
 const MAX_JOB_DURATION_MS = 180000;
 const MAX_AI_PLANNER_RETRIES = 2;
+const MCP_APPLY_RUNNER_RUNTIME_STAMP = "2026-06-03T19:20Z-runtime-stamp-1";
 
 function parseJsonArray<T>(value: string | null | undefined): T[] {
   const parsed = safeJsonParse<unknown>(value, [], "mcp_apply.parse_json_array");
@@ -246,8 +247,10 @@ function normalizeJobListingUrl(rawUrl: string): SafeUrlResult {
 }
 
 function isBlankSnapshot(snapshot: McpSnapshot) {
-  const rawText = `${snapshot.title}\n${snapshot.accessibilityText}`.trim();
-  return snapshot.url === "about:blank" && rawText.length === 0 && snapshot.elements.length === 0;
+  const rawText = `${snapshot.title}\n${snapshot.accessibilityText}\n${snapshot.rawText}`.trim().toLowerCase();
+  const hasElements = snapshot.elements.length > 0;
+  const hasMeaningfulText = rawText.length > 0 && rawText !== "about:blank";
+  return snapshot.url === "about:blank" && !hasElements && !hasMeaningfulText;
 }
 
 async function captureStableSnapshotAfterNavigate(input: {
@@ -347,7 +350,7 @@ export async function runMcpAiApplyRunner({
     jobListingId: jobListing.id,
     applicationId: application.id,
     event: "mcp_ai.runner_started",
-    message: "Runner MCP AI First dimulai untuk lowongan ini.",
+    message: `Runner MCP AI First dimulai untuk lowongan ini. Runtime stamp: ${MCP_APPLY_RUNNER_RUNTIME_STAMP}.`,
     metadata: {
       ...buildMcpLogMetadata({
         campaignId: campaign.id,
@@ -360,6 +363,7 @@ export async function runMcpAiApplyRunner({
         jobUrl: normalizedJobUrl.ok ? normalizedJobUrl.url : jobListing.url,
       }),
       mode,
+      runtimeStamp: MCP_APPLY_RUNNER_RUNTIME_STAMP,
     },
   });
 
@@ -933,12 +937,47 @@ export async function runMcpAiApplyRunner({
         normalized = normalizeMcpSnapshot(snapshot);
       }
 
+      const isTransientBlankState = isBlankSnapshot(snapshot);
       const shouldSkipPlanner =
-        !normalizedCurrentUrl.ok
+        (!isTransientBlankState && !normalizedCurrentUrl.ok)
         || normalizedCurrentUrl.isExternal
-        || detectedStep === "external_redirect"
+        || (!isTransientBlankState && detectedStep === "external_redirect")
         || normalized.pageKind === "external_redirect"
-        || (normalized.pageKind === "unknown" && fixtureMatch.confidence === 0);
+        || (!isTransientBlankState && normalized.pageKind === "unknown" && fixtureMatch.confidence === 0);
+
+      if (isTransientBlankState) {
+        await writeAutomationLog({
+          campaignId: campaign.id,
+          jobListingId: jobListing.id,
+          applicationId: application.id,
+          level: "warn",
+          event: "mcp_ai.transient_blank_state_detected",
+          message: "Snapshot MCP masih about:blank setelah navigasi. State ini diperlakukan sebagai kondisi sementara dan sistem akan mencoba menunggu perubahan halaman.",
+          metadata: {
+            campaignId: campaign.id,
+            jobListingId: jobListing.id,
+            step,
+            currentUrl: snapshot.url,
+            title: snapshot.title,
+            elementCount: snapshot.elements.length,
+            fixtureConfidence: fixtureMatch.confidence,
+            detectedStep,
+            pageKind: normalized.pageKind,
+          },
+        });
+
+        const nextSnapshot = await client.waitForChange(snapshot, 4000);
+        const nextFingerprint = fingerprintSnapshot(nextSnapshot);
+        const currentFingerprint = fingerprintSnapshot(snapshot);
+
+        if (nextFingerprint !== currentFingerprint) {
+          snapshot = nextSnapshot;
+          normalized = normalizeMcpSnapshot(snapshot);
+          previousFingerprint = nextFingerprint;
+          sameSnapshotRepeats = 0;
+          continue;
+        }
+      }
 
       if (detectedStep === "external_redirect" || normalized.pageKind === "external_redirect") {
         await writeAutomationLog({
