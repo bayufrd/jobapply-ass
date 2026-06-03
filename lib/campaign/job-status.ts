@@ -18,6 +18,10 @@ export const PICKABLE_JOB_STATUSES = [
   "skipped",
 ] as const;
 
+export const AUTO_APPLY_FALLBACK_JOB_STATUSES = [
+  "discovered",
+] as const;
+
 export const NON_PICKABLE_JOB_STATUSES = [
   ...TERMINAL_JOB_STATUSES,
   ...ACTIVE_JOB_STATUSES,

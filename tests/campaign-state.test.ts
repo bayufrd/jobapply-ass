@@ -1,24 +1,29 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { isTerminalCampaignStep, TERMINAL_CAMPAIGN_STEPS } from "../lib/campaign/campaign-state";
+import { isTerminalCampaignStep, TERMINAL_CAMPAIGN_STEPS } from "../lib/campaign/campaign-state.ts";
 
 describe("campaign-state", () => {
   it("TERMINAL_CAMPAIGN_STEPS contains expected steps", () => {
     assert.deepStrictEqual(TERMINAL_CAMPAIGN_STEPS, [
       "no_jobs_remaining",
+      "no_jobs_remaining_after_all_pages",
       "target_reached",
+      "too_many_empty_pages",
       "too_many_unusable_jobs",
     ]);
   });
 
   it("isTerminalCampaignStep returns true for terminal steps", () => {
     assert.strictEqual(isTerminalCampaignStep("no_jobs_remaining"), true);
+    assert.strictEqual(isTerminalCampaignStep("no_jobs_remaining_after_all_pages"), true);
     assert.strictEqual(isTerminalCampaignStep("target_reached"), true);
+    assert.strictEqual(isTerminalCampaignStep("too_many_empty_pages"), true);
     assert.strictEqual(isTerminalCampaignStep("too_many_unusable_jobs"), true);
   });
 
   it("isTerminalCampaignStep returns false for non-terminal steps", () => {
     assert.strictEqual(isTerminalCampaignStep("searching_jobs"), false);
+    assert.strictEqual(isTerminalCampaignStep("search_completed"), false);
     assert.strictEqual(isTerminalCampaignStep("scoring_job"), false);
     assert.strictEqual(isTerminalCampaignStep("decision_required"), false);
     assert.strictEqual(isTerminalCampaignStep("opening_job"), false);

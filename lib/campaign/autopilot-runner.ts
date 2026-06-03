@@ -5,11 +5,13 @@ import { startJobApplication } from "@/lib/browser/jobstreet-apply-agent";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
 import { canStartAutopilot } from "@/lib/campaign/campaign-state";
 import {
+  AUTO_APPLY_FALLBACK_JOB_STATUSES,
   NON_REPICKABLE_APPLICATION_STATUSES,
   PICKABLE_JOB_STATUSES,
 } from "@/lib/campaign/job-status";
 import { checkPlaywrightMcpHealth } from "@/lib/mcp/mcp-health";
 import { resolveCampaignPaginationDecision } from "@/lib/campaign/campaign-pagination-state";
+import { safeJsonParse } from "@/lib/utils/safe-json";
 
 export type AutopilotAction =
   | "safe_continue"
@@ -33,6 +35,21 @@ export type AutopilotRunResult = {
   currentJobId?: string | null;
   applicationId?: string;
   decisionRequired?: Record<string, unknown> | null;
+  canContinue?: boolean;
+  nextAction?: "continue_autopilot";
+  nextStep?: string;
+  searchSummary?: {
+    foundCount: number;
+    savedCount: number;
+    scoredCount: number;
+    scoringFailedCount: number;
+  };
+  currentJob?: {
+    id: string;
+    title: string;
+    company: string;
+    url: string;
+  };
 };
 
 type DecisionInput = {
@@ -40,14 +57,6 @@ type DecisionInput = {
   reason?: string;
 };
 
-function parseJson<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
 
 function normalizePattern(input: string) {
   return input.toLowerCase().replace(/\s+/g, " ").trim();
@@ -111,7 +120,13 @@ async function ensureJobsExist(campaignId: string) {
 
   const existingJobs = await prisma.jobListing.count({ where: { campaignId } });
   if (existingJobs > 0) {
-    return { searched: false, jobsFound: existingJobs };
+    return {
+      searched: false,
+      jobsFound: existingJobs,
+      jobsSaved: existingJobs,
+      scoredCount: await prisma.jobListing.count({ where: { campaignId, matchScore: { not: null } } }),
+      scoringFailedCount: await prisma.jobListing.count({ where: { campaignId, matchScore: null, status: "discovered" } }),
+    };
   }
 
   const profile = await getLatestProfile();
@@ -183,7 +198,31 @@ async function ensureJobsExist(campaignId: string) {
     metadata: { campaignId, jobsSaved: result.jobsSaved ?? 0 },
   });
 
-  return { searched: true, jobsFound: result.jobsSaved ?? 0 };
+  return {
+    searched: true,
+    jobsFound: result.jobsFound ?? result.jobsSaved ?? 0,
+    jobsSaved: result.jobsSaved ?? 0,
+    scoredCount: await prisma.jobListing.count({ where: { campaignId, matchScore: { not: null } } }),
+    scoringFailedCount: await prisma.jobListing.count({ where: { campaignId, matchScore: null, status: "discovered" } }),
+  };
+}
+
+async function getCampaignJobStatusCounts(campaignId: string) {
+  const [foundCount, shortlistedCount, scoringFailedCount, skippedCount, applyUnavailableCount] = await Promise.all([
+    prisma.jobListing.count({ where: { campaignId } }),
+    prisma.jobListing.count({ where: { campaignId, status: "shortlisted" } }),
+    prisma.jobListing.count({ where: { campaignId, status: "discovered", matchScore: null } }),
+    prisma.jobListing.count({ where: { campaignId, status: "skipped" } }),
+    prisma.jobListing.count({ where: { campaignId, status: "apply_unavailable" } }),
+  ]);
+
+  return {
+    foundCount,
+    shortlistedCount,
+    scoringFailedCount,
+    skippedCount,
+    applyUnavailableCount,
+  };
 }
 
 async function scoreJobIfNeeded(campaignId: string, jobId: string) {
@@ -201,11 +240,11 @@ async function scoreJobIfNeeded(campaignId: string, jobId: string) {
     phone: profile.phone ?? "",
     location: profile.location ?? "",
     summary: profile.summary ?? "",
-    skills: parseJson<string[]>(profile.skillsJson, []),
-    workExperience: parseJson<Record<string, unknown>[]>(profile.experienceJson, []),
-    education: parseJson<Record<string, unknown>[]>(profile.educationJson, []),
-    projects: parseJson<Record<string, unknown>[]>(profile.projectsJson, []),
-    certifications: parseJson<string[]>(profile.certificationsJson, []),
+    skills: safeJsonParse<string[]>(profile.skillsJson, [], "autopilot.score.skills"),
+    workExperience: safeJsonParse<Record<string, unknown>[]>(profile.experienceJson, [], "autopilot.score.work_experience"),
+    education: safeJsonParse<Record<string, unknown>[]>(profile.educationJson, [], "autopilot.score.education"),
+    projects: safeJsonParse<Record<string, unknown>[]>(profile.projectsJson, [], "autopilot.score.projects"),
+    certifications: safeJsonParse<string[]>(profile.certificationsJson, [], "autopilot.score.certifications"),
     suggestedJobRoles: [],
   };
 
@@ -240,7 +279,10 @@ async function scoreJobIfNeeded(campaignId: string, jobId: string) {
   });
 }
 
-async function pickNextJob(campaignId: string, options?: { allowSkipped?: boolean; includeApplying?: boolean }) {
+async function pickNextJob(
+  campaignId: string,
+  options?: { allowSkipped?: boolean; includeApplying?: boolean; allowAutoApplyFallback?: boolean },
+) {
   const blockedJobIds = (
     await prisma.application.findMany({
       where: {
@@ -254,6 +296,10 @@ async function pickNextJob(campaignId: string, options?: { allowSkipped?: boolea
   const candidateStatuses = options?.allowSkipped
     ? [...PICKABLE_JOB_STATUSES]
     : PICKABLE_JOB_STATUSES.filter((status) => status !== "skipped");
+
+  if (options?.allowAutoApplyFallback) {
+    candidateStatuses.push(...AUTO_APPLY_FALLBACK_JOB_STATUSES);
+  }
 
   if (options?.includeApplying) {
     candidateStatuses.push("applying" as (typeof candidateStatuses)[number]);
@@ -450,9 +496,90 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
   let consecutiveUnavailableJobs = 0;
   let consecutiveStuckJobs = 0;
 
+  if (searchState.searched) {
+    await setCampaignRuntimeState(campaignId, {
+      status: "running",
+      currentStep: "search_completed",
+      decisionStatus: null,
+      decisionPayloadJson: null,
+    });
+
+    return {
+      status: "search_continue",
+      message: "Fase pencarian selesai. Melanjutkan ke fase apply...",
+      campaignId,
+      currentStep: "search_completed",
+      canContinue: true,
+      nextAction: "continue_autopilot",
+      nextStep: "apply",
+      searchSummary: {
+        foundCount: searchState.jobsFound ?? searchState.jobsSaved ?? 0,
+        savedCount: searchState.jobsSaved ?? searchState.jobsFound ?? 0,
+        scoredCount: searchState.scoredCount ?? 0,
+        scoringFailedCount: searchState.scoringFailedCount ?? 0,
+      },
+    };
+  }
+
   while (consecutiveUnavailableJobs < maxConsecutiveUnavailableJobs) {
-    const nextJob = await pickNextJob(campaignId, { includeApplying: true });
+    const campaignSnapshot = await prisma.campaign.findUnique({ where: { id: campaignId } });
+    const lowScoreMode = (campaignSnapshot as typeof campaignSnapshot & { lowScoreMode?: string | null })?.lowScoreMode ?? null;
+    const forceApplyLowScore = lowScoreMode === "auto_apply";
+    const eligibleStatusList = Array.from(new Set([
+      ...(forceApplyLowScore ? AUTO_APPLY_FALLBACK_JOB_STATUSES : []),
+      ...PICKABLE_JOB_STATUSES.filter((status) => status !== "skipped"),
+      "applying",
+    ]));
+    const jobStatusCounts = await getCampaignJobStatusCounts(campaignId);
+
+    await writeAutomationLog({
+      campaignId,
+      event: "campaign.apply_candidate_query_started",
+      message: "Memeriksa lowongan eligible untuk fase apply.",
+      metadata: {
+        campaignId,
+        eligibleStatusList,
+        lowScoreMode,
+        forceApplyLowScore,
+        ...jobStatusCounts,
+      },
+    });
+
+    const nextJob = await pickNextJob(campaignId, {
+      includeApplying: true,
+      allowAutoApplyFallback: forceApplyLowScore || jobStatusCounts.shortlistedCount === 0,
+    });
+
+    await writeAutomationLog({
+      campaignId,
+      event: "campaign.apply_candidate_query_result",
+      message: nextJob
+        ? `Ditemukan lowongan eligible untuk diproses: ${nextJob.title}.`
+        : "Tidak ada lowongan eligible untuk fase apply.",
+      metadata: {
+        campaignId,
+        eligibleStatusList,
+        eligibleCount: nextJob ? 1 : 0,
+        lowScoreMode,
+        forceApplyLowScore,
+        ...jobStatusCounts,
+      },
+    });
     if (!nextJob || !nextJob.campaign) {
+      await writeAutomationLog({
+        campaignId,
+        level: "warn",
+        event: "campaign.no_eligible_jobs_for_apply",
+        message: "Tidak ada lowongan eligible untuk dilamar. Cek status scoring dan mode lowScoreMode.",
+        metadata: {
+          campaignId,
+          eligibleStatusList,
+          eligibleCount: 0,
+          lowScoreMode,
+          forceApplyLowScore,
+          ...jobStatusCounts,
+        },
+      });
       const paginationDecision = resolveCampaignPaginationDecision(
         {
           currentSearchPage: runtimeCampaign.currentSearchPage ?? 1,
@@ -468,7 +595,11 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
 
       if (paginationDecision.type === "advance_to_next_page") {
         const nextSearchUrl = `${runtimeCampaign.currentSearchUrl ?? ""}` || null;
-        await prisma.campaign.update({
+        await (prisma as typeof prisma & {
+          campaign: {
+            update: (args: unknown) => Promise<unknown>;
+          };
+        }).campaign.update({
           where: { id: campaignId },
           data: {
             currentSearchPage: paginationDecision.nextSearchPage,
@@ -524,7 +655,11 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
           ? "Target lamaran tercapai."
           : "Tidak ada lowongan eligible lagi setelah semua halaman pencarian diperiksa.";
 
-      await prisma.campaign.update({
+      await (prisma as typeof prisma & {
+        campaign: {
+          update: (args: unknown) => Promise<unknown>;
+        };
+      }).campaign.update({
         where: { id: campaignId },
         data: {
           status: "completed",
@@ -789,7 +924,11 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       const application = applyResult.applicationId
         ? await prisma.application.findUnique({ where: { id: applyResult.applicationId } })
         : null;
-      const answers = parseJson<{ pendingQuestions?: Array<{ question: string }> }>(application?.answersJson, {});
+      const answers = safeJsonParse<{ pendingQuestions?: Array<{ question: string }> }>(
+        application?.answersJson,
+        {},
+        "autopilot.application_answers",
+      );
       const pendingQuestion = answers.pendingQuestions?.[0]?.question ?? null;
 
       const pausedReason = applyResult.message;
@@ -829,7 +968,9 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
                       ? "submit_unverified"
                       : "apply_paused";
 
-      const blockerEvidence = applyResult.error ? parseJson<Record<string, unknown> | null>(applyResult.error, null) : null;
+      const blockerEvidence = applyResult.error
+        ? safeJsonParse<Record<string, unknown> | null>(applyResult.error, null, "autopilot.apply_paused_blocker")
+        : null;
 
       await setCampaignRuntimeState(campaignId, {
         status: "paused",
@@ -869,7 +1010,9 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     }
 
     if (["apply_unavailable", "stuck_no_progress", "submit_not_found_timeout"].includes(applyResult.status)) {
-      const blockerEvidence = applyResult.error ? parseJson<Record<string, unknown> | null>(applyResult.error, null) : null;
+      const blockerEvidence = applyResult.error
+        ? safeJsonParse<Record<string, unknown> | null>(applyResult.error, null, "autopilot.apply_unavailable_blocker")
+        : null;
       const mappedStatus = applyResult.status === "apply_unavailable" ? "apply_unavailable" : "failed";
       const blockerType = applyResult.status === "apply_unavailable"
         ? (typeof blockerEvidence?.reason === "string" ? blockerEvidence.reason : "apply_unavailable")
@@ -943,6 +1086,9 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         decisionStatus: null,
         decisionPayloadJson: JSON.stringify({
           type: blockerType,
+          message: applyResult.message,
+          canContinue: true,
+          currentStep: blockerType === "invalid_url" ? "external_redirect_invalid_url" : blockerType,
           latestJob: {
             id: job.id,
             title: job.title,
@@ -1044,7 +1190,11 @@ export async function applyAutopilotDecision(campaignId: string, input: Decision
     throw new Error("Kampanye tidak ditemukan.");
   }
 
-  const payload = parseJson<Record<string, unknown> | null>((campaign as typeof campaign & { decisionPayloadJson?: string | null }).decisionPayloadJson, null);
+  const payload = safeJsonParse<Record<string, unknown> | null>(
+    (campaign as typeof campaign & { decisionPayloadJson?: string | null }).decisionPayloadJson,
+    null,
+    "autopilot.handle_decision_payload",
+  );
   const jobId = typeof payload?.jobId === "string" ? payload.jobId : null;
   const applicationId = typeof payload?.applicationId === "string" ? payload.applicationId : null;
   const decisionType = typeof payload?.type === "string" ? payload.type : null;

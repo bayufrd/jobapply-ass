@@ -359,9 +359,14 @@ export function CampaignActions({
       await fetchStatus();
  
       const shouldAutoContinue = status !== null && ["submitted_continue", "skipped_continue", "search_continue", "safe_continue"].includes(status);
-      if (options?.autoSequence && shouldAutoContinue && autoContinueCountRef.current < 50) {
+      const explicitContinue = data.canContinue === true && data.nextAction === "continue_autopilot";
+      if (options?.autoSequence && (shouldAutoContinue || explicitContinue) && autoContinueCountRef.current < 3) {
         autoContinueCountRef.current += 1;
-        const delay = 500 + Math.floor(Math.random() * 1000);
+        if (status === "search_continue") {
+          setResultMessage("Fase pencarian selesai. Melanjutkan ke fase apply...");
+          setResultTone("success");
+        }
+        const delay = 500;
         clearAutoContinueTimer();
         autoContinueTimerRef.current = window.setTimeout(async () => {
           const latestStatus = await fetch(`/api/campaigns/${campaignId}/status`, { cache: "no-store" })
@@ -375,7 +380,14 @@ export function CampaignActions({
           const latestCampaignStatus = isRecord(latestStatus) && isRecord(latestStatus.campaign) && typeof latestStatus.campaign.status === "string"
             ? latestStatus.campaign.status
             : null;
+          const latestCurrentStep = isRecord(latestStatus) && isRecord(latestStatus.campaign) && typeof latestStatus.campaign.currentStep === "string"
+            ? latestStatus.campaign.currentStep
+            : null;
           if (latestCampaignStatus !== null && ["stopped", "paused", "completed"].includes(latestCampaignStatus)) {
+            clearAutoContinueTimer();
+            return;
+          }
+          if (status === "search_continue" && latestCurrentStep === "search_completed" && autoContinueCountRef.current >= 3) {
             clearAutoContinueTimer();
             return;
           }
