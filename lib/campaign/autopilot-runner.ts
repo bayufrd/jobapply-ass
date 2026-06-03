@@ -156,6 +156,8 @@ async function ensureJobsExist(campaignId: string) {
     location: campaign.location,
     targetApplyCount: campaign.targetApplyCount,
     matchThreshold: campaign.matchThreshold,
+    currentSearchPage: (campaign as typeof campaign & { currentSearchPage?: number | null }).currentSearchPage ?? 1,
+    currentSearchUrl: (campaign as typeof campaign & { currentSearchUrl?: string | null }).currentSearchUrl ?? null,
     profile: {
       fullName: profile.fullName ?? undefined,
       email: profile.email ?? undefined,
@@ -285,34 +287,87 @@ async function scoreJobIfNeeded(campaignId: string, jobId: string) {
 
 async function pickNextJob(
   campaignId: string,
-  options?: { allowSkipped?: boolean; includeApplying?: boolean; allowAutoApplyFallback?: boolean },
+  options?: {
+    allowSkipped?: boolean;
+    includeApplying?: boolean;
+    allowAutoApplyFallback?: boolean;
+    directJobId?: string | null;
+    directJobstreetJobId?: string | null;
+  },
 ) {
-  const blockedJobIds = (
-    await prisma.application.findMany({
-      where: {
-        campaignId,
-        status: { in: [...NON_REPICKABLE_APPLICATION_STATUSES] as Array<"submitted" | "pending_review" | "paused" | "failed"> },
-      },
-      select: { jobListingId: true },
-    })
-  ).map((item) => item.jobListingId);
-
-  const candidateStatuses = options?.allowSkipped
+  const directCandidateStatuses = options?.allowSkipped
     ? [...PICKABLE_JOB_STATUSES]
     : PICKABLE_JOB_STATUSES.filter((status) => status !== "skipped");
 
   if (options?.allowAutoApplyFallback) {
-    candidateStatuses.push(...AUTO_APPLY_FALLBACK_JOB_STATUSES);
+    directCandidateStatuses.push(...AUTO_APPLY_FALLBACK_JOB_STATUSES);
   }
 
   if (options?.includeApplying) {
-    candidateStatuses.push("applying" as (typeof candidateStatuses)[number]);
+    directCandidateStatuses.push("applying" as (typeof directCandidateStatuses)[number]);
+  }
+
+  const uniqueCandidateStatuses = [...new Set(directCandidateStatuses)] as Array<"discovered" | "shortlisted" | "skipped" | "applying">;
+
+  let resolvedDirectListingId: string | null = null;
+  if (options?.directJobId || options?.directJobstreetJobId) {
+    const resolvedDirectListing = await prisma.jobListing.findFirst({
+      where: {
+        campaignId,
+        OR: [
+          ...(options.directJobId ? [{ id: options.directJobId }] : []),
+          ...(options.directJobstreetJobId ? [{ jobstreetJobId: options.directJobstreetJobId }] : []),
+        ],
+      },
+      orderBy: [{ updatedAt: "desc" }],
+      select: { id: true },
+    });
+    resolvedDirectListingId = resolvedDirectListing?.id ?? null;
+  }
+
+  const blockedApplications = await prisma.application.findMany({
+    where: {
+      campaignId,
+      status: { in: [...NON_REPICKABLE_APPLICATION_STATUSES] as Array<"submitted" | "pending_review" | "paused" | "failed"> },
+    },
+    select: { jobListingId: true, status: true },
+  });
+
+  const blockedJobIds = blockedApplications
+    .filter((item) => {
+      if (!resolvedDirectListingId || item.jobListingId !== resolvedDirectListingId) {
+        return true;
+      }
+
+      return item.status !== "failed";
+    })
+    .map((item) => item.jobListingId);
+
+  if (options?.directJobId || options?.directJobstreetJobId) {
+    const directCandidate = await prisma.jobListing.findFirst({
+      where: {
+        campaignId,
+        status: { in: uniqueCandidateStatuses },
+        id: { notIn: blockedJobIds },
+        OR: [
+          ...(resolvedDirectListingId ? [{ id: resolvedDirectListingId }] : []),
+          ...(options.directJobId ? [{ id: options.directJobId }] : []),
+          ...(options.directJobstreetJobId ? [{ jobstreetJobId: options.directJobstreetJobId }] : []),
+        ],
+      },
+      orderBy: [{ updatedAt: "desc" }],
+      include: { campaign: true },
+    });
+
+    if (directCandidate) {
+      return directCandidate;
+    }
   }
 
   return prisma.jobListing.findFirst({
     where: {
       campaignId,
-      status: { in: [...new Set(candidateStatuses)] as Array<"discovered" | "shortlisted" | "skipped" | "applying"> },
+      status: { in: uniqueCandidateStatuses },
       id: { notIn: blockedJobIds },
     },
     orderBy: [{ matchScore: "desc" }, { createdAt: "asc" }],
@@ -474,11 +529,20 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     });
   }
 
+  const initialDecisionPayload = safeJsonParse<Record<string, unknown> | null>(
+    (campaign as typeof campaign & { decisionPayloadJson?: string | null }).decisionPayloadJson,
+    null,
+    "autopilot.initial_decision_payload",
+  );
+  const preserveDirectApplyPayload = initialDecisionPayload?.forceDirectApply === true;
+
   await setCampaignRuntimeState(campaignId, {
     status: "running",
     currentStep: "searching_jobs",
     decisionStatus: null,
-    decisionPayloadJson: null,
+    decisionPayloadJson: preserveDirectApplyPayload
+      ? JSON.stringify(initialDecisionPayload)
+      : null,
   });
 
   const searchState = await ensureJobsExist(campaignId);
@@ -529,6 +593,13 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     const campaignSnapshot = await prisma.campaign.findUnique({ where: { id: campaignId } });
     const lowScoreMode = (campaignSnapshot as typeof campaignSnapshot & { lowScoreMode?: string | null })?.lowScoreMode ?? null;
     const forceApplyLowScore = lowScoreMode === "auto_apply";
+    const directApplyPayload = safeJsonParse<Record<string, unknown> | null>(
+      (campaignSnapshot as typeof campaignSnapshot & { decisionPayloadJson?: string | null })?.decisionPayloadJson,
+      null,
+      "autopilot.direct_apply_payload",
+    );
+    const forcedDirectApply = directApplyPayload?.forceDirectApply === true;
+    const directJobId = typeof directApplyPayload?.directJobId === "string" ? directApplyPayload.directJobId : null;
     const eligibleStatusList = Array.from(new Set([
       ...(forceApplyLowScore ? AUTO_APPLY_FALLBACK_JOB_STATUSES : []),
       ...PICKABLE_JOB_STATUSES.filter((status) => status !== "skipped"),
@@ -545,6 +616,8 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         eligibleStatusList,
         lowScoreMode,
         forceApplyLowScore,
+        forcedDirectApply,
+        directJobId,
         ...jobStatusCounts,
       },
     });
@@ -552,6 +625,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     const nextJob = await pickNextJob(campaignId, {
       includeApplying: true,
       allowAutoApplyFallback: forceApplyLowScore || jobStatusCounts.shortlistedCount === 0,
+      directJobstreetJobId: forcedDirectApply ? directJobId : null,
     });
 
     await writeAutomationLog({
@@ -566,10 +640,53 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         eligibleCount: nextJob ? 1 : 0,
         lowScoreMode,
         forceApplyLowScore,
+        forcedDirectApply,
+        directJobId,
+        selectedJobstreetJobId: nextJob?.jobstreetJobId ?? null,
         ...jobStatusCounts,
       },
     });
     if (!nextJob || !nextJob.campaign) {
+      if (forcedDirectApply) {
+        await writeAutomationLog({
+          campaignId,
+          level: "warn",
+          event: "campaign.direct_apply_candidate_missing",
+          message: "Forced direct apply aktif tetapi lowongan target tidak ditemukan dalam kandidat eligible.",
+          metadata: {
+            campaignId,
+            directJobId,
+            eligibleStatusList,
+            lowScoreMode,
+            forceApplyLowScore,
+            ...jobStatusCounts,
+          },
+        });
+
+        await setCampaignRuntimeState(campaignId, {
+          status: "error",
+          currentStep: "direct_apply_candidate_missing",
+          currentQuestion: "Forced direct apply aktif tetapi lowongan target tidak eligible.",
+          decisionStatus: "direct_apply_candidate_missing",
+          decisionPayloadJson: JSON.stringify({
+            type: "direct_apply_candidate_missing",
+            forceDirectApply: true,
+            directJobId,
+            eligibleStatusList,
+          }),
+        });
+
+        return {
+          status: "error",
+          message: "Forced direct apply gagal karena lowongan target tidak ditemukan sebagai kandidat eligible.",
+          campaignId,
+          currentStep: "direct_apply_candidate_missing",
+          decisionRequired: {
+            type: "direct_apply_candidate_missing",
+            directJobId,
+          },
+        };
+      }
       await writeAutomationLog({
         campaignId,
         level: "warn",
@@ -645,6 +762,9 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
           message: `Page ${paginationDecision.currentSearchPage} selesai. Lanjut ke page ${paginationDecision.nextSearchPage}.`,
           campaignId,
           currentStep: "searching_jobs",
+          canContinue: true,
+          nextAction: "continue_autopilot",
+          nextStep: "searching_jobs",
         };
       }
 
@@ -706,12 +826,14 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
     });
 
     let job = nextJob;
+    let scoringFailed = false;
     try {
       const scoredJob = await scoreJobIfNeeded(campaignId, nextJob.id);
       if (scoredJob) {
         job = scoredJob;
       }
     } catch (error) {
+      scoringFailed = true;
       await writeAutomationLog({
         campaignId,
         jobListingId: nextJob.id,
@@ -721,6 +843,8 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         metadata: {
           error: error instanceof Error ? error.message : String(error),
           jobUrl: nextJob.url,
+          jobStatus: nextJob.status,
+          existingMatchScore: nextJob.matchScore,
         },
       });
     }
@@ -730,9 +854,9 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
 
     const score = job.matchScore ?? 0;
     const threshold = job.campaign.matchThreshold;
-    const shouldApplyEligibleJobWithoutScore = job.status === "shortlisted" && job.matchScore === null;
+    const shouldBypassLowScoreGate = job.matchScore === null && (job.status === "shortlisted" || scoringFailed);
 
-    if (!shouldApplyEligibleJobWithoutScore && score < threshold) {
+    if (!shouldBypassLowScoreGate && score < threshold) {
       const rule = await findMatchingLowScoreRule(campaignId, job.title);
       if (rule?.action === "auto_skip") {
         await prisma.jobListing.update({ where: { id: job.id }, data: { status: "skipped" } });
@@ -761,15 +885,15 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         });
       } else {
         const decisionPayload = {
-        type: "low_score",
-        campaignId,
-        jobId: job.id,
-        title: job.title,
-        company: job.company,
-        score,
-        threshold,
-        reason: job.matchReason ?? "AI menyarankan lowongan ini dilewati.",
-      };
+          type: "low_score",
+          campaignId,
+          jobId: job.id,
+          title: job.title,
+          company: job.company,
+          score,
+          threshold,
+          reason: job.matchReason ?? "AI menyarankan lowongan ini dilewati.",
+        };
 
         await setCampaignRuntimeState(campaignId, {
           status: "paused",
@@ -1180,8 +1304,58 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
       const blockerType = applyResult.status === "apply_unavailable"
         ? (typeof blockerEvidence?.reason === "string" ? blockerEvidence.reason : "apply_unavailable")
         : applyResult.status;
+      const recoverableApplyUnavailable = applyResult.status === "apply_unavailable"
+        && blockerEvidence?.canContinue !== false;
       await prisma.jobListing.update({ where: { id: job.id }, data: { status: mappedStatus } });
 
+      if (recoverableApplyUnavailable) {
+        await writeAutomationLog({
+          campaignId,
+          jobListingId: job.id,
+          level: "warn",
+          event: "campaign.autopilot_job_apply_unavailable",
+          message: applyResult.message,
+          metadata: {
+            resultStatus: applyResult.status,
+            applicationId: applyResult.applicationId ?? null,
+            blockerType,
+            blockerEvidence,
+          },
+        });
+
+        await setCampaignRuntimeState(campaignId, {
+          status: "running",
+          currentStep: "next_job",
+          currentJobId: job.id,
+          currentQuestion: applyResult.message,
+          decisionStatus: null,
+          decisionPayloadJson: JSON.stringify({
+            type: blockerType,
+            message: applyResult.message,
+            canContinue: true,
+            currentStep: blockerType === "invalid_url" ? "external_redirect_invalid_url" : blockerType,
+            latestJob: {
+              id: job.id,
+              title: job.title,
+              company: job.company,
+            },
+            latestApplication: applyResult.applicationId ? { id: applyResult.applicationId, status: applyResult.status } : null,
+            blockerEvidence,
+          }),
+          currentJobTitle: job.title,
+          currentJobCompany: job.company,
+        });
+
+        return {
+          status: "skipped_continue",
+          message: "Autopilot lanjut ke lowongan berikutnya.",
+          campaignId,
+          currentStep: "next_job",
+          currentJobId: job.id,
+          applicationId: applyResult.applicationId,
+        };
+      }
+ 
       await writeAutomationLog({
         campaignId,
         jobListingId: job.id,
@@ -1202,7 +1376,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
           blockerEvidence,
         },
       });
-
+ 
       await setCampaignRuntimeState(campaignId, {
         status: "error",
         currentStep: blockerType === "invalid_url" ? "external_redirect_invalid_url" : blockerType,
@@ -1224,7 +1398,7 @@ export async function runCampaignAutopilot(campaignId: string): Promise<Autopilo
         currentJobTitle: job.title,
         currentJobCompany: job.company,
       });
-
+ 
       return {
         status: "error",
         message: "Autopilot dihentikan karena error pada lowongan saat ini.",

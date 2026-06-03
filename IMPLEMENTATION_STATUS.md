@@ -762,23 +762,29 @@ Isi setelah testing:
 
 | No | Job Title | Company | JobListing ID | Application ID | Status | SubmittedAt | Evidence / Log Event | Catatan |
 | -- | --------- | ------- | ------------- | -------------- | ------ | ----------- | -------------------- | ------- |
-| 1 | — | — | — | — | Belum diuji live | — | `mcp_ai.runner_started`, `mcp_ai.snapshot_captured`, `mcp_ai.page_kind_detected` (target event implementasi) | QA live belum dijalankan pada task ini. |
-| 2 | — | — | — | — | Belum diuji live | — | `mcp_ai.plan_requested`, `mcp_ai.plan_received`, `mcp_ai.action_executed` (target event implementasi) | Butuh Playwright MCP aktif dan session Jobstreet login. |
-| 3 | — | — | — | — | Belum diuji live | — | `mcp_ai.final_submit_detected`, `mcp_ai.final_submit_clicked` (target event implementasi) | Submit aman baru boleh diverifikasi dari snapshot MCP. |
-| 4 | — | — | — | — | Belum diuji live | — | `mcp_ai.submit_verified` / `mcp_ai.submit_unverified` (target event implementasi) | Belum ada bukti submit verified nyata. |
-| 5 | — | — | — | — | Belum diuji live | — | `mcp_ai.server_unavailable` (blocker saat MCP belum aktif) | Jangan klaim PASS sebelum 5 submit verified nyata. |
+| 1 | IT Fullstack Developer | PT Sinar Sukses Mandiri | `cmpyc0wnl00229kvgsatdxtkv` | `cmpyhaghh00ee9kvgx7516n91` | failed | — | `jobstreet.external_redirect_invalid_url`, `application.apply_unavailable` | Bukti live terdahulu menunjukkan URL apply jatuh ke `about:blank`, lalu lowongan ditandai `apply_unavailable` dan tidak dihitung submit. |
+| 2 | — | — | — | — | QA rerun verified | — | `campaign.qa_run_requested`, `mcp.preflight_ok` | Rerun QA untuk campaign `cmpybm8rh00009k0b057yhrg0` berhasil start ulang dari status `completed` setelah patch pada [`app/api/qa/campaigns/[id]/run/route.ts`](app/api/qa/campaigns/[id]/run/route.ts). |
+| 3 | — | — | — | — | Pagination verified live | — | `campaign.page_exhausted_continue_next_page`, `campaign.next_search_page` | QA live `2026-06-03T20:41:32Z` membuktikan flow reset dari page 1 lalu lanjut nyata ke page 2 dan page 3; fix propagasi `currentSearchPage`/`currentSearchUrl` kini terverifikasi live. |
+| 4 | QA Direct Apply 92457600 | — | `cmpyjxu8o00ic9kvgq7oqhtmg` | — | failed | — | `campaign.phase_apply_job_selected`, `qa.failed`, `blockerEvidence.type=login` | QA live `2026-06-03T21:33:43Z` membuktikan forced direct-apply kini benar-benar memilih lowongan seeded `92457600` lagi setelah patch internal-ID repick pada [`pickNextJob()`](lib/campaign/autopilot-runner.ts:288); blocker lama `direct_apply_candidate_missing` tidak muncul lagi. |
+| 5 | QA Direct Apply 92457600 | — | `cmpyjxu8o00ic9kvgq7oqhtmg` | — | manual_intervention_required | — | `currentStep=apply_failed`, `decisionRequired.type=stuck_no_progress`, `blockerEvidence.type=login` | Run live terbaru berhenti pada intervensi manual login/security dengan bukti MCP bahwa halaman/login URL terdeteksi pada target direct Jobstreet. Ini blocker live yang valid; belum ada bukti URL sudah mencapai `/apply` atau `/apply/success`. |
+| 6 | — | — | — | — | Regression verified | — | `node --test ./tests/autopilot-apply-dispatch.test.ts`, `npx tsc --noEmit` | Test baru pada [`tests/autopilot-apply-dispatch.test.ts`](tests/autopilot-apply-dispatch.test.ts:194) memverifikasi failed application yang hanya punya `jobListingId` internal tidak lagi memblokir forced direct repick; validasi TypeScript juga lulus. |
 
 ### Status Akhir QA
 
-`FAILED`
+`FAILED_WITH_VERIFIED_LIVE_BLOCKER`
 
 Ringkasan aktual task ini:
+- campaign diuji live: `cmpybm8rh00009k0b057yhrg0`
+- target direct saat ini: `https://id.jobstreet.com/id/job/92457600`
 - submitted verified: 0
 - skipped: 0
-- `apply_unavailable`: 0
-- stuck: 0
-- `manual_intervention`: 0
+- `apply_unavailable`: historis tetap ada pada run terdahulu
+- stuck: 1 run direct terbaru berhenti di `stuck_no_progress`
+- `manual_intervention`: 1 blocker live terbaru terdeteksi sebagai login/security
 - `submit_unverified`: 0
-- evidence log events implementasi: `mcp_ai.runner_started`, `mcp_ai.snapshot_captured`, `mcp_ai.page_kind_detected`, `mcp_ai.plan_requested`, `mcp_ai.plan_received`, `mcp_ai.action_executed`, `mcp_ai.no_progress_detected`, `mcp_ai.ask_user_required`, `mcp_ai.final_submit_detected`, `mcp_ai.final_submit_clicked`, `mcp_ai.submit_verified`, `mcp_ai.submit_unverified`, `mcp_ai.runner_failed`, `mcp_ai.server_unavailable`
-- blocker utama: QA live campaign `cmpw0lf1q00009kzenh71ae42` belum dijalankan, sehingga belum ada 5 submit verified; MCP sidecar dan hambatan Jobstreet live belum divalidasi pada task ini.
-- next fix yang diperlukan: jalankan `npm run mcp:playwright`, `npm run dev`, buka campaign target, pastikan `formAutomationMode = mcp_ai_first`, lalu lakukan QA live sampai minimal 5 submit verified atau dokumentasikan blocker live yang nyata dengan jujur.
+- bukti live QA terbaru: [`storage/logs/qa-autopilot-2026-06-03T21-33-43-482Z.log`](storage/logs/qa-autopilot-2026-06-03T21-33-43-482Z.log), [`storage/logs/campaign-cmpybm8rh00009k0b057yhrg0.log`](storage/logs/campaign-cmpybm8rh00009k0b057yhrg0.log)
+- hasil fix terverifikasi: forced direct rerun tidak lagi gagal di `direct_apply_candidate_missing`; seeded listing `QA Direct Apply 92457600` berhasil dipilih kembali secara live setelah patch pada [`pickNextJob()`](lib/campaign/autopilot-runner.ts:288).
+- blocker utama terverifikasi sekarang: intervensi manual login/captcha/OTP/security pada sesi visible Chromium / MCP, bukan lagi exhausted search pool untuk jalur direct ini.
+- hal yang belum boleh diklaim: belum ada bukti live bahwa run terbaru mencapai `https://id.jobstreet.com/id/job/92457600/apply`, belum ada bukti `/apply/success`, dan `appliedCount` tetap 0.
+- integritas hasil: tidak ada false `submitted`, tidak ada false `completed_success`, dan tidak ada klaim submit tanpa marker sukses terverifikasi.
+- next fix yang diperlukan: siapkan sesi Jobstreet login yang valid pada Chromium visible tanpa mengotomasi password/login/OTP, lalu rerun QA direct yang sama untuk memverifikasi apakah flow bisa lanjut minimal ke `/apply`.

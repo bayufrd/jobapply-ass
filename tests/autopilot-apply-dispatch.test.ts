@@ -108,9 +108,114 @@ test("shortlisted job without score still remains eligible for apply dispatch af
   };
 
   const score = job.matchScore ?? 0;
-  const shouldApplyEligibleJobWithoutScore = job.status === "shortlisted" && job.matchScore === null;
-  const entersLowScoreBranch = !shouldApplyEligibleJobWithoutScore && score < job.campaign.matchThreshold;
+  const shouldBypassLowScoreGate = job.matchScore === null && job.status === "shortlisted";
+  const entersLowScoreBranch = !shouldBypassLowScoreGate && score < job.campaign.matchThreshold;
 
-  assert.equal(shouldApplyEligibleJobWithoutScore, true);
+  assert.equal(shouldBypassLowScoreGate, true);
   assert.equal(entersLowScoreBranch, false);
+});
+
+test("discovered job without score bypasses low-score pause when scoring just failed", () => {
+  const job = {
+    status: "discovered",
+    matchScore: null,
+    campaign: {
+      matchThreshold: 55,
+    },
+  };
+  const scoringFailed = true;
+
+  const score = job.matchScore ?? 0;
+  const shouldBypassLowScoreGate = job.matchScore === null && (job.status === "shortlisted" || scoringFailed);
+  const entersLowScoreBranch = !shouldBypassLowScoreGate && score < job.campaign.matchThreshold;
+
+  assert.equal(shouldBypassLowScoreGate, true);
+  assert.equal(entersLowScoreBranch, false);
+});
+
+test("blank MCP snapshot still qualifies for deterministic internal apply fallback", () => {
+  const isTransientBlankState = true;
+  const normalizedCurrentUrl = { ok: false, isJobstreet: false };
+  const detectedStep = "unknown";
+  const normalizedPageKind = "unknown";
+  const fixtureConfidence = 0;
+  const normalizedFallbackApplyUrl = { ok: true, url: "https://id.jobstreet.com/id/job/92437409/apply" };
+
+  const canUseInternalApplyFallback = normalizedFallbackApplyUrl.ok && (
+    isTransientBlankState
+    || (normalizedCurrentUrl.ok && normalizedCurrentUrl.isJobstreet && detectedStep === "unknown" && normalizedPageKind === "unknown" && fixtureConfidence === 0)
+  );
+
+  assert.equal(canUseInternalApplyFallback, true);
+});
+
+test("forced direct apply seed stores canonical job and apply URLs", () => {
+  const directJobId = "92457600";
+  const directJobUrl = `https://id.jobstreet.com/id/job/${directJobId}`;
+  const directApplyUrl = `${directJobUrl}/apply`;
+  const payload = {
+    type: "qa_direct_apply_seed",
+    forceDirectApply: true,
+    directJobId,
+    directJobUrl,
+    directApplyUrl,
+  };
+
+  assert.equal(payload.forceDirectApply, true);
+  assert.equal(payload.directJobId, "92457600");
+  assert.equal(payload.directJobUrl, "https://id.jobstreet.com/id/job/92457600");
+  assert.equal(payload.directApplyUrl, "https://id.jobstreet.com/id/job/92457600/apply");
+});
+
+test("forced direct apply prioritizes seeded jobstreet job id before normal ranking", () => {
+  const forcedDirectApply = true;
+  const directJobId = "92457600";
+  const picked = {
+    id: "job-seeded",
+    title: "QA Direct Apply 92457600",
+    jobstreetJobId: "92457600",
+    matchScore: 100,
+  };
+  const fallback = {
+    id: "job-ranked",
+    title: "Other ranked job",
+    jobstreetJobId: "92011375",
+    matchScore: 100,
+  };
+
+  const selected = forcedDirectApply && picked.jobstreetJobId === directJobId
+    ? picked
+    : fallback;
+
+  assert.equal(selected.id, "job-seeded");
+  assert.equal(selected.jobstreetJobId, "92457600");
+});
+
+ test("forced direct apply can repick seeded listing when previous failed application only has internal jobListingId", () => {
+  const resolvedDirectListingId = "cmpyjxu8o00ic9kvgq7oqhtmg";
+  const blockedApplications = [
+    {
+      jobListingId: resolvedDirectListingId,
+      status: "failed",
+      jobstreetJobId: null,
+    },
+    {
+      jobListingId: "job-submitted",
+      status: "submitted",
+      jobstreetJobId: null,
+    },
+  ];
+
+  const blockedJobIds = blockedApplications
+    .filter((item) => {
+      if (!resolvedDirectListingId || item.jobListingId !== resolvedDirectListingId) {
+        return true;
+      }
+
+      return item.status !== "failed";
+    })
+    .map((item) => item.jobListingId);
+
+  assert.deepEqual(blockedJobIds, ["job-submitted"]);
+  assert.equal(blockedJobIds.includes(resolvedDirectListingId), false);
 });

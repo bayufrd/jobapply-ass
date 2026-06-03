@@ -339,6 +339,21 @@ async function getCampaignStatus(config) {
   return result;
 }
 
+async function continueAutopilot(config, reason) {
+  const result = await fetchJsonSafely(`${config.appUrl}/api/campaigns/${config.campaignId}/autopilot/continue`, {
+    method: "POST",
+  });
+  appendLog("qa.autopilot_continue_requested", {
+    reason,
+    statusCode: result.status,
+    responseStatus: result.body?.status ?? null,
+    currentStep: result.body?.currentStep ?? null,
+    canContinue: result.body?.canContinue ?? null,
+    nextAction: result.body?.nextAction ?? null,
+  });
+  return result;
+}
+
 async function getRuntimeState(config) {
   const result = await fetchJsonSafely(`${config.appUrl}/api/debug/campaigns/${config.campaignId}/runtime-state`);
   appendLog("qa.runtime_state_polled", {
@@ -476,6 +491,8 @@ async function main() {
   let lastProgressAt = Date.now();
   let lastObservedSignature = "";
 
+  let lastContinueKey = "";
+
   while (Date.now() - startedAt < config.maxMinutes * 60 * 1000) {
     const [statusResult, runtimeResult] = await Promise.all([
       getCampaignStatus(config),
@@ -511,6 +528,26 @@ async function main() {
     };
 
     appendLog("qa.poll_summary", lastQaStatus);
+
+    const continueKey = JSON.stringify({
+      campaignStatus: statusBody.campaignStatus ?? null,
+      currentStep: statusBody.currentStep ?? null,
+      latestApplicationId: statusBody.latestApplication?.id ?? null,
+      latestLogId: Array.isArray(statusBody.latestLogs) && statusBody.latestLogs[0]?.id
+        ? statusBody.latestLogs[0].id
+        : null,
+      verifiedSubmittedCount: statusBody.verifiedSubmittedCount ?? null,
+    });
+    const shouldRequestContinue =
+      statusBody.campaignStatus === "running"
+      && ["searching_jobs", "search_completed", "next_job", "opening_job"].includes(String(statusBody.currentStep ?? ""));
+
+    if (shouldRequestContinue && continueKey !== lastContinueKey) {
+      lastContinueKey = continueKey;
+      await continueAutopilot(config, `auto:${statusBody.currentStep ?? "unknown"}`);
+      await sleep(1500);
+      continue;
+    }
 
     if (
       Number(statusBody.verifiedSubmittedCount ?? 0) >= config.target

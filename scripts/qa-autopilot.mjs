@@ -14,6 +14,10 @@ const DEFAULTS = {
   maxSameStatusRepeats: 5,
   maxNoProgressSeconds: 45,
   maxMcpRestartAttempts: 2,
+  skipAppliedBaseline: false,
+  forceDirectApply: false,
+  directJobUrl: null,
+  directJobId: null,
 };
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -43,6 +47,14 @@ function parseArgs(argv) {
     if (rawKey === "maxMinutes" && value) parsed.maxMinutes = Number.parseInt(value, 10) || DEFAULTS.maxMinutes;
     if (rawKey === "mcpUrl" && value) parsed.mcpUrl = value;
     if (rawKey === "appUrl" && value) parsed.appUrl = value;
+    if (rawKey === "job-url" && value) parsed.directJobUrl = value;
+    if (rawKey === "job-id" && value) parsed.directJobId = value;
+    if (rawKey === "force-direct-apply") {
+      parsed.forceDirectApply = value ? value !== "false" : true;
+    }
+    if (rawKey === "skip-applied-baseline") {
+      parsed.skipAppliedBaseline = value ? value !== "false" : true;
+    }
   }
   return parsed;
 }
@@ -485,6 +497,9 @@ async function startCampaign(config) {
       forceMcpAiFirst: true,
       forceAutoSubmitSafeOnly: true,
       forceApplyLowScore: true,
+      forceDirectApply: config.forceDirectApply,
+      directJobUrl: config.directJobUrl,
+      directJobId: config.directJobId,
     },
   });
 
@@ -871,6 +886,10 @@ async function main() {
   campaignLogRelative = `storage/logs/campaign-${config.campaignId}.log`;
   appendQaLog("process_started", { config, qaLog: qaLogRelative });
 
+  if (config.forceDirectApply && !config.directJobUrl && !config.directJobId) {
+    throw new Error("Flag --force-direct-apply membutuhkan --job-url atau --job-id.");
+  }
+
   try {
     await ensureChromiumInstalled(config);
     await ensureMcpReady(config);
@@ -878,28 +897,36 @@ async function main() {
     await checkMcpHealth(config);
 
     // TASK 4 — QA runner harus membaca baseline sebelum apply
-    console.log("Membaca baseline Applied Jobs Jobstreet...");
-    const baselineResponse = await fetchJson(`${config.appUrl}/api/debug/jobstreet/applied-jobs-count`);
-    if (!baselineResponse.ok || baselineResponse.body?.count === null) {
-      const reason = baselineResponse.body?.message || "Tidak bisa membaca baseline Applied Jobs Jobstreet.";
-      appendQaLog("qa.failed", {
-        reason,
-        event: "qa.applied_jobs_baseline_failed",
-        message: "QA FAILED: Tidak bisa membaca baseline Applied Jobs Jobstreet. Pastikan sudah login di browser MCP.",
+    if (config.skipAppliedBaseline) {
+      appendQaLog("qa.applied_jobs_baseline_skipped", {
+        message: "Baseline Applied Jobs Jobstreet dilewati oleh flag CLI.",
       });
-      console.log("QA FAILED");
-      console.log(`Reason: ${reason}`);
-      process.exit(1);
+      console.log("Melewati baseline Applied Jobs Jobstreet karena flag --skip-applied-baseline.");
+      config.appliedJobsBefore = null;
+    } else {
+      console.log("Membaca baseline Applied Jobs Jobstreet...");
+      const baselineResponse = await fetchJson(`${config.appUrl}/api/debug/jobstreet/applied-jobs-count`);
+      if (!baselineResponse.ok || baselineResponse.body?.count === null) {
+        const reason = baselineResponse.body?.message || "Tidak bisa membaca baseline Applied Jobs Jobstreet.";
+        appendQaLog("qa.failed", {
+          reason,
+          event: "qa.applied_jobs_baseline_failed",
+          message: "QA FAILED: Tidak bisa membaca baseline Applied Jobs Jobstreet. Pastikan sudah login di browser MCP.",
+        });
+        console.log("QA FAILED");
+        console.log(`Reason: ${reason}`);
+        process.exit(1);
+      }
+
+      const appliedJobsBefore = baselineResponse.body.count;
+      appendQaLog("qa.applied_jobs_baseline", {
+        appliedJobsBefore,
+        message: `Total lamaran Jobstreet sebelum QA: ${appliedJobsBefore} lowongan.`,
+      });
+      console.log(`Total lamaran Jobstreet sebelum QA: ${appliedJobsBefore} lowongan.`);
+
+      config.appliedJobsBefore = appliedJobsBefore;
     }
-
-    const appliedJobsBefore = baselineResponse.body.count;
-    appendQaLog("qa.applied_jobs_baseline", {
-      appliedJobsBefore,
-      message: `Total lamaran Jobstreet sebelum QA: ${appliedJobsBefore} lowongan.`,
-    });
-    console.log(`Total lamaran Jobstreet sebelum QA: ${appliedJobsBefore} lowongan.`);
-
-    config.appliedJobsBefore = appliedJobsBefore;
 
     await startCampaign(config);
     const exitCode = await runLoop(config);

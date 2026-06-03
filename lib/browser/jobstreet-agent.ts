@@ -27,6 +27,8 @@ type StartCampaignInput = {
   location?: string | null;
   targetApplyCount: number;
   matchThreshold: number;
+  currentSearchPage?: number;
+  currentSearchUrl?: string | null;
   profile: {
     fullName?: string;
     email?: string;
@@ -568,7 +570,10 @@ export async function runJobstreetCampaign(
     if (homeIntervention) return homeIntervention;
 
     // 4. Build search URL and navigate
-    const searchUrl = buildJobstreetSearchUrl(input.keyword);
+    const requestedSearchPage = Math.max(1, input.currentSearchPage ?? 1);
+    const searchUrl = input.currentSearchUrl?.trim()
+      ? input.currentSearchUrl
+      : buildJobstreetSearchUrl(input.keyword, requestedSearchPage);
     await writeAutomationLog({
       campaignId: input.campaignId,
       event: "jobstreet.search_page_loaded",
@@ -577,6 +582,8 @@ export async function runJobstreetCampaign(
         location: JOBSTREET_DEFAULT_LOCATION,
         locationSlug: JOBSTREET_DEFAULT_LOCATION_SLUG,
         searchUrl,
+        requestedSearchPage,
+        resumedFromSavedSearchUrl: Boolean(input.currentSearchUrl?.trim()),
       },
     });
 

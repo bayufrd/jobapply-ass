@@ -3,13 +3,124 @@ import { runCampaignAutopilot } from "@/lib/campaign/autopilot-runner";
 import { writeAutomationLog } from "@/lib/logging/automation-log";
 import { safeJsonParse } from "@/lib/utils/safe-json";
 import { jsonControlled, jsonError, jsonOk } from "@/lib/api/json-response";
+import { buildJobstreetApplyUrl, extractJobstreetJobId } from "@/lib/jobstreet/jobstreet-url";
 
 type RunBody = {
   targetSubmissions?: number;
   forceMcpAiFirst?: boolean;
   forceAutoSubmitSafeOnly?: boolean;
   forceApplyLowScore?: boolean;
+  forceDirectApply?: boolean;
+  directJobUrl?: string;
+  directJobId?: string;
+  quickApplyAvailable?: boolean;
 };
+
+function normalizeDirectApplyInput(body: RunBody) {
+  if (!body.forceDirectApply) {
+    return null;
+  }
+
+  const directJobUrl = typeof body.directJobUrl === "string" ? body.directJobUrl.trim() : "";
+  const directJobId = typeof body.directJobId === "string" ? body.directJobId.trim() : "";
+  const resolvedJobId = directJobId || (directJobUrl ? extractJobstreetJobId(directJobUrl) : null);
+
+  if (!resolvedJobId) {
+    throw new Error("Direct apply QA membutuhkan job ID atau Jobstreet job URL yang valid.");
+  }
+
+  const canonicalJobUrl = directJobUrl || `https://id.jobstreet.com/id/job/${resolvedJobId}`;
+
+  return {
+    jobId: resolvedJobId,
+    jobUrl: canonicalJobUrl,
+    applyUrl: buildJobstreetApplyUrl(resolvedJobId),
+    quickApplyAvailable: body.quickApplyAvailable ?? true,
+  };
+}
+
+async function seedDirectApplyJob(input: {
+  campaignId: string;
+  directApply: NonNullable<ReturnType<typeof normalizeDirectApplyInput>>;
+}) {
+  const existing = await prisma.jobListing.findFirst({
+    where: {
+      OR: [
+        { url: input.directApply.jobUrl },
+        { jobstreetJobId: input.directApply.jobId },
+      ],
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  await writeAutomationLog({
+    campaignId: input.campaignId,
+    jobListingId: existing?.id ?? null,
+    event: "qa.direct_apply_seed_started",
+    message: "QA direct apply seed dimulai untuk lowongan Jobstreet tertentu.",
+    metadata: {
+      campaignId: input.campaignId,
+      jobstreetJobId: input.directApply.jobId,
+      jobUrl: input.directApply.jobUrl,
+      applyUrl: input.directApply.applyUrl,
+      existingJobListingId: existing?.id ?? null,
+      existingStatus: existing?.status ?? null,
+      previousCampaignId: existing?.campaignId ?? null,
+    },
+  });
+
+  const seededJob = existing
+    ? await prisma.jobListing.update({
+        where: { id: existing.id },
+        data: {
+          campaignId: input.campaignId,
+          source: "jobstreet",
+          jobstreetJobId: input.directApply.jobId,
+          url: input.directApply.jobUrl,
+          applyUrl: input.directApply.applyUrl,
+          quickApplyAvailable: input.directApply.quickApplyAvailable,
+          searchPage: 0,
+          status: "shortlisted",
+          matchScore: 100,
+          matchReason: "QA forced direct apply seed.",
+        },
+      })
+    : await prisma.jobListing.create({
+        data: {
+          campaignId: input.campaignId,
+          source: "jobstreet",
+          title: `QA Direct Apply ${input.directApply.jobId}`,
+          company: "Jobstreet Direct Apply Target",
+          url: input.directApply.jobUrl,
+          applyUrl: input.directApply.applyUrl,
+          jobstreetJobId: input.directApply.jobId,
+          quickApplyAvailable: input.directApply.quickApplyAvailable,
+          searchPage: 0,
+          matchScore: 100,
+          matchReason: "QA forced direct apply seed.",
+          status: "shortlisted",
+        },
+      });
+
+  await writeAutomationLog({
+    campaignId: input.campaignId,
+    jobListingId: seededJob.id,
+    event: "qa.direct_apply_seed_done",
+    message: "QA direct apply seed selesai dan lowongan dibuat eligible untuk fase apply.",
+    metadata: {
+      campaignId: input.campaignId,
+      jobListingId: seededJob.id,
+      jobstreetJobId: seededJob.jobstreetJobId,
+      url: seededJob.url,
+      applyUrl: seededJob.applyUrl,
+      quickApplyAvailable: seededJob.quickApplyAvailable,
+      status: seededJob.status,
+      searchPage: seededJob.searchPage,
+    },
+  });
+
+  return seededJob;
+}
 
 export async function POST(
   request: Request,
@@ -18,11 +129,14 @@ export async function POST(
   try {
     const { id } = await params;
     const body = (await request.json().catch(() => ({}))) as RunBody;
+    const directApply = normalizeDirectApplyInput(body);
 
     const campaign = await prisma.campaign.findUnique({ where: { id } });
     if (!campaign) {
       return jsonError("campaign_not_found", "Kampanye tidak ditemukan.", undefined, { status: 404 });
     }
+
+    const shouldForceRestart = ["completed", "error", "stopped"].includes(campaign.status);
 
     await prisma.campaign.update({
       where: { id },
@@ -36,15 +150,36 @@ export async function POST(
         autoSubmitSafeOnly: body.forceAutoSubmitSafeOnly === false ? campaign.autoSubmitSafeOnly : true,
         lowScoreMode: body.forceApplyLowScore ? "auto_apply" : campaign.lowScoreMode,
         currentStep: null,
-        currentJobId: null,
+        currentJobId: directApply ? "qa_direct_apply_pending" : null,
         currentQuestion: null,
         decisionStatus: null,
-        decisionPayloadJson: null,
+        decisionPayloadJson: directApply
+          ? JSON.stringify({
+              type: "qa_direct_apply_seed",
+              forceDirectApply: true,
+              directJobId: directApply.jobId,
+              directJobUrl: directApply.jobUrl,
+              directApplyUrl: directApply.applyUrl,
+            })
+          : null,
         currentJobTitle: null,
         currentJobCompany: null,
-        status: campaign.status === "stopped" ? "running" : campaign.status,
+        currentSearchPage: shouldForceRestart ? 1 : campaign.currentSearchPage,
+        currentSearchUrl: shouldForceRestart ? null : campaign.currentSearchUrl,
+        processedJobCount: shouldForceRestart ? 0 : campaign.processedJobCount,
+        unusableJobCount: shouldForceRestart ? 0 : campaign.unusableJobCount,
+        emptyPageCount: shouldForceRestart ? 0 : campaign.emptyPageCount,
+        lastAppliedJobstreetJobId: shouldForceRestart ? null : campaign.lastAppliedJobstreetJobId,
+        status: shouldForceRestart ? "running" : campaign.status,
       },
     });
+
+    if (directApply) {
+      await seedDirectApplyJob({
+        campaignId: id,
+        directApply,
+      });
+    }
 
     await writeAutomationLog({
       campaignId: id,
@@ -55,6 +190,22 @@ export async function POST(
         forceMcpAiFirst: body.forceMcpAiFirst ?? true,
         forceAutoSubmitSafeOnly: body.forceAutoSubmitSafeOnly ?? true,
         forceApplyLowScore: body.forceApplyLowScore ?? false,
+        forceDirectApply: body.forceDirectApply ?? false,
+        directJobId: directApply?.jobId ?? null,
+        directJobUrl: directApply?.jobUrl ?? null,
+        directApplyUrl: directApply?.applyUrl ?? null,
+        previousStatus: campaign.status,
+        forceRestarted: shouldForceRestart,
+        resetRuntimeState: shouldForceRestart
+          ? {
+              currentSearchPage: 1,
+              currentSearchUrl: null,
+              processedJobCount: 0,
+              unusableJobCount: 0,
+              emptyPageCount: 0,
+              lastAppliedJobstreetJobId: null,
+            }
+          : null,
       },
     });
 
