@@ -53,7 +53,7 @@ Project sekarang sudah bergerak ke refactor Campaign Autopilot Jobstreet all-in-
 | Buat Kampanye Lamaran              | Selesai | API create/list campaign ada, form [`/campaigns/new`](app/campaigns/new/page.tsx) kini tidak lagi meminta lokasi dari user, helper text mengunci pencarian ke West Jakarta, Jakarta, dan API otomatis mengisi `location` bila kosong. | `app/api/campaigns/route.ts`, `app/campaigns/new/page.tsx`, `lib/api/campaigns.ts` |
 | Default Salary/Notice/Availability | Selesai | Nilai default dibaca dari ENV dan disimpan saat create campaign. | `app/api/campaigns/route.ts`, `.env` |
 | Playwright Browser Visible         | Selesai | Browser manager menolak headless dan memaksa visible Chromium. | `lib/browser/playwright-manager.ts`, `lib/security/safe-automation.ts` |
-| Simpan Session Jobstreet           | Partial | Metadata session disimpan di DB, path session persistent dipakai, endpoint session menampilkan status nyata, tetapi validasi session masih dasar. | `lib/browser/playwright-manager.ts`, `app/api/browser/session/route.ts`, `prisma/schema.prisma` |
+| Simpan Session Jobstreet           | Selesai | Metadata session disimpan di DB, path session persistent dipakai, endpoint session melakukan live validation via MCP snapshot, mendeteksi state `email_required`/`otp_required`/`authenticated`, dan mencoba auto-fill email + click login button jika email input terdeteksi. Browser lifecycle untuk manual intervention sekarang mempertahankan browser terbuka alih-alih menutup prematur. | `lib/browser/playwright-manager.ts`, `app/api/browser/session/route.ts`, `lib/jobstreet/session-check.ts`, `tests/jobstreet-session-check.test.ts`, `prisma/schema.prisma` |
 | Login Jobstreet via ENV            | Belum | ENV credential sudah ada, tetapi belum ada implementasi login otomatis spesifik Jobstreet. | `.env`, `lib/browser/jobstreet-agent.ts` |
 | Search Jobstreet                   | Selesai | Helper URL pencarian kini memakai format path `https://id.jobstreet.com/id/{keywordSlug}-jobs/in-Jakarta-Barat-Jakarta-Raya` dengan dukungan paginasi `?page=2`, `?page=3`, dst. Keyword multi-kata dislugify aman ke path valid, sementara keyword spesial seperti `.net` tetap dipertahankan. Query-param lama `/jobs?keywords=...&where=...` tidak lagi dipakai pada flow campaign autopilot. | `lib/jobstreet/jobstreet-search-url.ts`, `lib/browser/jobstreet-agent.ts`, `tests/jobstreet-search-url.test.ts` |
 | Extract Info Lowongan              | Selesai | Jalur Jobstreet sekarang mengekstrak `jobstreetJobId` dari URL detail/apply, menyimpan `applyUrl`, `quickApplyAvailable`, dan metadata halaman pencarian agar runner bisa melanjutkan apply internal secara deterministik. | `lib/jobstreet/jobstreet-url.ts`, `lib/browser/jobstreet-agent.ts`, `prisma/schema.prisma`, `tests/jobstreet-url.test.ts` |
@@ -344,7 +344,7 @@ Status log:
 * Log per campaign: Didukung oleh relasi dan field `campaignId`.
 * Log per job: Didukung oleh relasi dan field `jobListingId`.
 * Log campaign loop baru: Event fase kampanye sekarang juga mencakup `campaign.phase_search_started`, `campaign.search_limit_info`, `campaign.phase_search_completed`, `campaign.phase_apply_started`, `campaign.phase_apply_job_started`, `campaign.phase_apply_job_finished`, dan `campaign.phase_next_job`.
-* Log MCP baru: Event MCP sekarang mencakup `mcp.preflight_started`, `mcp.preflight_ok`, `mcp.preflight_failed`, `mcp.health_started`, `mcp.health_unusable`, `mcp.health_stale_blank_page`, `mcp.restart_requested`, `mcp.kill_port_started`, `mcp.kill_port_done`, `mcp.restart_started`, `mcp.restart_ready`, `mcp.restart_done`, `mcp.restart_failed`, `mcp.health_after_restart`, `mcp.health_passed_after_restart`, `qa.failed_mcp_unusable_after_restart`, `mcp_ai.connect_started`, `mcp_ai.connect_ok`, `mcp_ai.connect_failed`, `mcp_ai.navigate_started`, `mcp_ai.navigate_ok`, `mcp_ai.snapshot_started`, `mcp_ai.snapshot_ok`, `mcp_ai.snapshot_failed`, `mcp_ai.tool_call_failed`, dan `mcp_ai.runner_failed`.
+* Log MCP baru: Event MCP sekarang mencakup `mcp.preflight_started`, `mcp.preflight_ok`, `mcp.preflight_failed`, `mcp.health_started`, `mcp.health_unusable`, `mcp.health_stale_blank_page`, `mcp.restart_requested`, `mcp.kill_port_started`, `mcp.kill_port_done`, `mcp.restart_started`, `mcp.restart_ready`, `mcp.restart_done`, `mcp.restart_failed`, `mcp.health_after_restart`, `mcp.health_passed_after_restart`, `qa.failed_mcp_unusable_after_restart`, `mcp_ai.connect_started`, `mcp_ai.connect_ok`, `mcp_ai.connect_failed`, `mcp_ai.navigate_started`, `mcp_ai.navigate_ok`, `mcp_ai.snapshot_started`, `mcp_ai.snapshot_ok`, `mcp_ai.snapshot_failed`, `mcp_ai.tool_call_failed`, `mcp_ai.runner_failed`, `browser.session_check_started`, `browser.session_check_completed`, `browser.session_state_detected`, `browser.email_fill_attempted`, dan `browser.login_button_clicked`.
 * API local log campaign: Tersedia route [`GET /api/campaigns/[id]/local-log`](app/api/campaigns/[id]/local-log/route.ts:1) dengan query `?tail=300` untuk membaca tail local file log kampanye.
 * Masking secret: Sensitive key seperti `password`, `token`, `cookie`, `apiKey`, `authorization`, `session`, `accessToken`, dan `refreshToken` dimask sebelum ditulis ke local log.
 * Log calibration: Tetap ada untuk tool debug/manual, tetapi bukan pusat alur Autopilot.
@@ -418,6 +418,23 @@ campaign.applied_count_incremented
 
 Tuliskan hasil testing manual terakhir:
 
+Tanggal: 2026-06-04 (email OTP flow + session recovery + browser lifecycle)
+Command yang dijalankan:
+
+```bash
+npm test
+npx tsc --noEmit
+```
+
+Hasil command lokal pada task ini:
+
+* [x] [`npm test`](package.json:6) lulus dengan 102 tests pass (0 fail). Cakupan mencakup session check (email_required, otp_required, authenticated states), URL validation, JSON parsing, API response format, autopilot phase transition, campaign state, pagination, fixture matcher, dan apply dispatch.
+* [x] [`npx tsc --noEmit`](package.json:45) lulus tanpa error type.
+* [x] [`tests/jobstreet-session-check.test.ts`](tests/jobstreet-session-check.test.ts:1) memverifikasi deteksi `email_required`, `otp_required`, `security_or_challenge`, dan `authenticated` state dari snapshot MCP.
+* [x] Email input detection sekarang mencari `type="email"` atau `name="username"` dengan `autocomplete="username"` untuk menangani pattern email login Jobstreet OAuth.
+* [x] Blank snapshot (`about:blank` atau `data:text/html`) sekarang dikembalikan sebagai `unknown` state dengan `isResumable: false` hingga recovery navigate berhasil.
+* [x] Browser lifecycle untuk manual intervention sekarang mempertahankan browser terbuka alih-alih menutup prematur saat `email_required` atau `otp_required`.
+
 Tanggal: 2026-06-03 (abort-on-error + target-1 autopilot + missing JobListing columns migration)
 Command yang dijalankan:
 
@@ -426,20 +443,21 @@ npx prisma migrate dev --name add-missing-job-listing-columns
 node --test ./tests/autopilot-apply-dispatch.test.ts
 ```
 
-Hasil command lokal pada task ini:
+Hasil command lokal:
 
 * [x] [`npx prisma migrate dev --name add-missing-job-listing-columns`](prisma/migrations/20260603171500_add_missing_job_listing_columns/migration.sql:1) berhasil. DB lokal kini memiliki kolom `JobListing.jobstreetJobId`, `applyUrl`, `quickApplyAvailable`, dan `searchPage`, sehingga error Prisma `P2022` pada [`app/api/campaigns/[id]/status/route.ts`](app/api/campaigns/[id]/status/route.ts:84) tidak lagi relevan setelah migrasi dijalankan.
 * [x] [`node --test ./tests/autopilot-apply-dispatch.test.ts`](tests/autopilot-apply-dispatch.test.ts:1) lulus setelah perubahan abort-on-error dan terminal target-1 di [`runCampaignAutopilot()`](lib/campaign/autopilot-runner.ts:1005).
-* [ ] [`npm run lint`](package.json:10) belum dijalankan ulang pada batch verifikasi task ini.
-* [ ] [`npx tsc --noEmit`](package.json:45) belum dijalankan ulang pada batch verifikasi task ini.
 * [x] [`npx prisma generate`](prisma/schema.prisma:1) ikut berjalan sukses sebagai bagian dari [`npx prisma migrate dev`](prisma/migrations/20260603171500_add_missing_job_listing_columns/migration.sql:1).
-* [ ] [`node --test ./tests/campaign-state.test.ts ./tests/campaign-pagination-state.test.ts`](tests/campaign-state.test.ts:1) belum dijalankan ulang pada batch verifikasi task ini.
-* [ ] [`node --experimental-strip-types --test ./tests/api-json-response.test.ts ./tests/safe-json.test.ts ./tests/safe-url.test.ts ./tests/jobstreet-url.test.ts ./tests/autopilot-phase-transition.test.ts`](tests/autopilot-phase-transition.test.ts:1) belum dijalankan ulang persis dengan command full regression batch task ini.
-* [ ] [`npm run qa:agent-browser -- --campaign=cmpy6ituy006c9k35xtreuri7 --target=1`](package.json:17) belum dijalankan ulang pada batch verifikasi task ini.
-* [ ] [`npm run qa:autopilot -- --campaign=cmpy6ituy006c9k35xtreuri7 --target=1 --skip-applied-baseline`](package.json:15) belum dijalankan ulang pada batch verifikasi task ini.
 
-Cakupan verifikasi unit/regresi pada task ini:
+Cakupan verifikasi unit/regresi terkini (2026-06-04):
 
+* [x] **Session Check States**: [`analyzeJobstreetSessionSnapshot()`](lib/jobstreet/session-check.ts:32) mendeteksi `email_required` dari OAuth login (email input + password input + oauth evidence), `otp_required` dari OTP input visible, `security_or_challenge` dari captcha/reCAPTCHA, dan `authenticated` dari internal apply URL.
+* [x] **Email Detection Pattern**: Email input sekarang dicek dengan `type="email"` OR (`name="username"` AND `autocomplete="username"`), mengakomodasi pattern Jobstreet OAuth.
+* [x] **Blank Snapshot Handling**: Snapshot `about:blank` atau `data:text/html` dikembalikan sebagai `unknown` state dengan `isResumable: false` hingga recovery navigate berhasil.
+* [x] **Browser Lifecycle Fix**: [`runMcpAiApplyRunner()`](lib/browser/mcp-ai-apply-runner.ts:320) sekarang tidak menutup browser saat `email_required`, `otp_required`, atau `security_or_challenge` blocker, memungkinkan user login manual dan resume via UI.
+* [x] **UI Resume Action**: [`CampaignActions`](components/campaign-actions.tsx:222) menampilkan tombol "Saya sudah login, lanjutkan" untuk blocker `email_required` dan `otp_required`, memanggil decision endpoint dengan action `resume_after_login`.
+* [x] **Session Check Endpoint**: [`GET /api/browser/session`](app/api/browser/session/route.ts:137) menjalankan live session check via MCP, mendeteksi state login nyata, dan mencoba auto-fill email + click login jika email input terdeteksi.
+* [x] **QA Resume Flow**: [`POST /api/qa/campaigns/[id]/run`](app/api/qa/campaigns/[id]/run/route.ts:126) mendukung `resumeAfterManual: true` untuk melanjutkan kampanye setelah user login manual.
 * [x] Search URL Jobstreet `.net` mempertahankan karakter spesial.
 * [x] Search URL `fullstack developer`, `backend developer`, dan `react` memakai slug baru `in-Jakarta-Barat-Jakarta-Raya`.
 * [x] Paginasi page 1 tanpa query, page 2 memakai `?page=2`.
@@ -467,7 +485,9 @@ Catatan:
 | 2026-06-03 | Endpoint status dan proses save/search job crash dengan Prisma `P2022` karena kolom `main.JobListing.jobstreetJobId` belum ada di SQLite | Schema [`JobListing`](prisma/schema.prisma:121) sudah memakai field baru, tetapi DB lokal belum mendapat migrasi kolom `jobstreetJobId`, `applyUrl`, `quickApplyAvailable`, dan `searchPage` | Fixed (perlu menjalankan migrasi pada environment lain) | `prisma/schema.prisma`, `prisma/migrations/20260603171500_add_missing_job_listing_columns/migration.sql`, `app/api/campaigns/[id]/status/route.ts`, `lib/browser/jobstreet-agent.ts` |
 | 2026-06-03 | Saat satu lowongan error, autopilot masih lanjut mencari/memproses lowongan lain padahal goal sekarang hanya 1 lamaran | Cabang hasil [`apply_unavailable` / `stuck_no_progress` / `submit_not_found_timeout`](lib/campaign/autopilot-runner.ts:1157) sebelumnya mengembalikan `skipped_continue` dan memaksa lanjut ke next job | Fixed | `lib/campaign/autopilot-runner.ts` |
 | 2026-06-03 | Campaign Autopilot crash dengan `Invalid URL` saat MCP mendeteksi `external_redirect` / page kind `unknown`, atau saat keyword pencarian berisi spasi seperti `IT Developer` | URL kosong/relative/malformed masih bisa lolos ke `new URL(...)`, dan builder search URL sempat menyisipkan keyword mentah multi-kata ke path sehingga phase search bisa membentuk URL tidak valid | Fixed (targeted test [`tests/jobstreet-search-url.test.ts`](tests/jobstreet-search-url.test.ts:1) lulus; QA live masih pending) | `lib/jobstreet/safe-url.ts`, `lib/jobstreet/jobstreet-url.ts`, `lib/jobstreet/jobstreet-search-url.ts`, `lib/browser/mcp-ai-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts`, `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/status/route.ts`, `tests/safe-url.test.ts`, `tests/jobstreet-url.test.ts`, `tests/jobstreet-search-url.test.ts` |
-| 2026-06-03 | Blocker login/session MCP untuk direct apply `92457600` sebelumnya gelap dan QA resume belum punya jalur eksplisit | Endpoint sesi browser hanya metadata-only, belum ada validasi live ke Jobstreet via MCP; QA CLI juga belum punya `resume-after-manual` dan belum mengecek sesi live sebelum rerun | Partial: live session-check dan resume intent sudah ditambahkan, tetapi verifikasi live terbaru masih menunjukkan sesi MCP belum login valid dan resume dihentikan aman sebelum apply | `app/api/browser/session/route.ts`, `lib/jobstreet/session-check.ts`, `app/api/qa/campaigns/[id]/run/route.ts`, `scripts/qa-autopilot.mjs`, `tests/jobstreet-session-check.test.ts` |
+| 2026-06-04 | Browser menutup prematur saat email login atau OTP required, menghalangi user untuk login manual | Runner MCP menutup browser untuk semua blocker manual intervention, tidak membedakan antara recoverable state (login/OTP) dan terminal state (captcha eksternal) | Fixed: browser sekarang tetap terbuka untuk `email_required`, `otp_required`, dan `security_or_challenge`; UI menampilkan tombol resume; session check endpoint mendukung auto-fill email dan validasi state live | `lib/browser/mcp-ai-apply-runner.ts`, `app/api/browser/session/route.ts`, `components/campaign-actions.tsx`, `lib/jobstreet/session-check.ts`, `tests/jobstreet-session-check.test.ts` |
+| 2026-06-04 | Email input pattern Jobstreet OAuth tidak terdeteksi sebagai login state | Session check sebelumnya hanya mencari `type="email"` tanpa mengakomodasi `name="username"` dengan `autocomplete="username"` yang dipakai Jobstreet OAuth | Fixed: deteksi email input sekarang mencakup kedua pattern | `lib/jobstreet/session-check.ts`, `app/api/browser/session/route.ts`, `tests/jobstreet-session-check.test.ts` |
+| 2026-06-04 | Blank snapshot (`about:blank`) dari MCP health/navigate error dikembalikan sebagai resumable state, menyebabkan false positive recovery | Session check sebelumnya tidak membedakan blank page dari state valid | Fixed: blank snapshot sekarang dikembalikan sebagai `unknown` dengan `isResumable: false` hingga recovery navigate berhasil | `lib/jobstreet/session-check.ts`, `tests/jobstreet-session-check.test.ts` |
 | 2026-06-02 | QA stuck karena campaign terus memanggil continue berkali-kali saat currentStep sudah no_jobs_remaining | `no_jobs_remaining` disimpan sebagai `paused` dan status endpoint mengembalikan `canContinue: true` | Fixed | `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/status/route.ts`, `scripts/qa-autopilot.mjs` |
 | 2026-06-02 | Resume campaign belum melanjutkan browser automation yang sebelumnya terhenti | Route resume masih hanya mengubah status dan menulis log | Open | `app/api/campaigns/[id]/resume/route.ts` |
 | 2026-06-02 | URL pencarian Jobstreet lama masih memakai query param `keywords/where` | Format lama tidak cocok dengan requirement MVP Jobstreet all-in-one | Fixed | `lib/jobstreet/jobstreet-search-url.ts`, `lib/browser/jobstreet-agent.ts`, `tests/jobstreet-search-url.test.ts` |

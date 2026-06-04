@@ -150,7 +150,7 @@ export async function GET(
             ? "review_required"
             : campaign.status === "paused" && runtimeCampaign.decisionStatus === "submit_unverified"
               ? "submit_unverified"
-              : campaign.status === "paused" && ["otp_required", "login_required", "security_or_challenge", "manual_intervention"].includes(runtimeCampaign.decisionStatus ?? "")
+              : campaign.status === "paused" && ["otp_required", "email_required", "security_or_challenge", "manual_intervention"].includes(runtimeCampaign.decisionStatus ?? "")
                 ? "resume_after_login"
                 : campaign.status === "paused" && runtimeCampaign.decisionStatus === "mcp_unavailable"
                   ? "mcp_unavailable"
@@ -181,7 +181,7 @@ export async function GET(
             type: "question_required",
             message: "Pertanyaan ditemukan. Pilih jawaban di modal ini untuk melanjutkan.",
           }
-        : ["otp_required", "login_required", "security_or_challenge", "manual_intervention"].includes(runtimeCampaign.decisionStatus ?? "")
+        : ["otp_required", "email_required", "security_or_challenge", "manual_intervention"].includes(runtimeCampaign.decisionStatus ?? "")
           ? {
               type: runtimeCampaign.decisionStatus,
               message:

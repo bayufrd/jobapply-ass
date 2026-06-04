@@ -1599,7 +1599,7 @@ export async function applyAutopilotDecision(campaignId: string, input: Decision
           continue;
         }
 
-        if (result.state === "login_required") {
+        if (result.state === "email_required") {
           const emailElement = findVisibleEmailElement();
           if (emailElement && !emailFillCompleted) {
             emailFillAttempted = true;
@@ -1632,7 +1632,7 @@ export async function applyAutopilotDecision(campaignId: string, input: Decision
           }
         }
 
-        if ((result.state !== "unknown" && !(result.state === "login_required" && emailFillCompleted && attempt < 3)) || attempt === 3) {
+        if ((result.state !== "unknown" && !(result.state === "email_required" && emailFillCompleted && attempt < 3)) || attempt === 3) {
           break;
         }
 
@@ -1727,8 +1727,8 @@ export async function applyAutopilotDecision(campaignId: string, input: Decision
 
       const pausedDecisionType = result.state === "otp_required"
         ? "otp_required"
-        : result.state === "login_required"
-          ? "login_required"
+        : result.state === "email_required"
+          ? "email_required"
           : result.state === "security_or_challenge"
             ? "security_or_challenge"
             : "manual_intervention";

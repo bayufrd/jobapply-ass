@@ -74,7 +74,7 @@ async function settleJobstreetSession(input: {
       continue;
     }
 
-    if (result.state === "login_required") {
+    if (result.state === "email_required") {
       const emailElement = findVisibleEmailElement(snapshot);
       if (emailElement && !emailFillCompleted) {
         emailFillAttempted = true;
@@ -106,7 +106,7 @@ async function settleJobstreetSession(input: {
       }
     }
 
-    if ((result.state !== "unknown" && !(result.state === "login_required" && emailFillCompleted && attempt < 3)) || attempt === 3) {
+    if ((result.state !== "unknown" && !(result.state === "email_required" && emailFillCompleted && attempt < 3)) || attempt === 3) {
       break;
     }
 

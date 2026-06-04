@@ -17,13 +17,13 @@ test("returns default direct QA URL for session check", () => {
   assert.equal(getDefaultJobstreetSessionCheckUrl(), "https://id.jobstreet.com/id/job/92457600");
 });
 
-test("detects login_required from oauth login evidence", () => {
+test("detects email_required from oauth login evidence", () => {
   const result = analyzeJobstreetSessionSnapshot(createSnapshot({
     accessibilityText: "Masuk untuk melanjutkan",
     rawText: "/id/oauth/login?returnUrl=%2Fid%2Fjob%2F92457600",
   }));
 
-  assert.equal(result.state, "login_required");
+  assert.equal(result.state, "email_required");
   assert.equal(result.canResumeAutopilot, false);
   assert.equal(result.loginUrlDetected, true);
 });

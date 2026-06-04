@@ -713,7 +713,7 @@ export function CampaignActions({
         </section>
       )}
 
-      {statusData?.blocker?.type && ["otp_required", "login_required", "security_or_challenge", "manual_intervention"].includes(statusData.blocker.type) && (
+      {statusData?.blocker?.type && ["otp_required", "email_required", "security_or_challenge", "manual_intervention"].includes(statusData.blocker.type) && (
         <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-6">
           <p className="text-xs uppercase tracking-[0.3em] text-amber-300">Login / OTP Jobstreet</p>
           <h3 className="mt-2 text-lg font-semibold text-white">

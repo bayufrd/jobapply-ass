@@ -1,6 +1,6 @@
 import type { McpSnapshot } from "@/lib/mcp/playwright-mcp-client";
 
-export type JobstreetSessionState = "authenticated" | "login_required" | "otp_required" | "security_or_challenge" | "unknown";
+export type JobstreetSessionState = "authenticated" | "email_required" | "otp_required" | "security_or_challenge" | "unknown";
 
 export type JobstreetSessionCheckResult = {
   state: JobstreetSessionState;
@@ -43,13 +43,21 @@ export function analyzeJobstreetSessionSnapshot(snapshot: McpSnapshot): Jobstree
   const snapshotPreview = `${snapshot.title}\n${snapshot.accessibilityText}`.trim().slice(0, 1200);
 
   const loginUrlDetected = hasAny(combined, ["/oauth/login", "/id/oauth/login", "returnurl="]);
+  const emailInputDetected = snapshot.elements.some((element) => {
+    if (element.disabled) return false;
+    const role = normalizeText(element.role);
+    const name = normalizeText(element.name);
+    const textValue = normalizeText(element.text);
+    const combined = `${name} ${textValue}`;
+    return role.includes("textbox") && (combined.includes("email") || combined.includes("e-mail") || combined.includes("username") || combined.includes("alamat email"));
+  });
   const passwordInputDetected = snapshot.elements.some((element) => {
     const role = normalizeText(element.role);
     const name = normalizeText(element.name);
     const textValue = normalizeText(element.text);
     return role.includes("textbox") && (name.includes("password") || textValue.includes("password"));
-  }) || hasAny(combined, ["password", "kata sandi"]);
-  const otpDetected = hasAny(combined, ["verification code", "kode verifikasi", "one-time password", "otp"]);
+  });
+  const otpDetected = hasAny(combined, ["verification code", "kode verifikasi", "one-time password", "otp", "enter the code"]);
   const captchaDetected = hasAny(combined, ["captcha", "i'm not a robot", "saya bukan robot"]);
   const securityDetected = hasAny(combined, ["security verification", "verify it is you", "verifikasi keamanan"]);
   const applyUrlDetected = /\/id\/job\/\d+\/apply(?:[/?#]|$)/.test(url);
@@ -89,12 +97,27 @@ export function analyzeJobstreetSessionSnapshot(snapshot: McpSnapshot): Jobstree
     };
   }
 
+  if (loginUrlDetected && emailInputDetected && !otpDetected) {
+    return {
+      state: "email_required",
+      currentUrl,
+      evidence: ["Halaman login Jobstreet dengan input email terlihat pada snapshot MCP."],
+      confidence: 0.98,
+      visibleBrowserRequired: true,
+      canResumeAutopilot: false,
+      loginUrlDetected,
+      passwordInputDetected,
+      applyUrlDetected,
+      snapshotPreview,
+    };
+  }
+
   if (loginUrlDetected || passwordInputDetected) {
     return {
-      state: "login_required",
+      state: "email_required",
       currentUrl,
-      evidence: ["Halaman login atau URL oauth/login terlihat pada snapshot MCP."],
-      confidence: 0.98,
+      evidence: ["URL oauth/login atau indikasi halaman login terlihat pada snapshot MCP."],
+      confidence: 0.95,
       visibleBrowserRequired: true,
       canResumeAutopilot: false,
       loginUrlDetected,

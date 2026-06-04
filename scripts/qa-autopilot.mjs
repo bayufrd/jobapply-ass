@@ -815,13 +815,14 @@ async function runLoop(config) {
       const combined = `${notes} ${message}`;
       const manualKeywords = ["login", "captcha", "otp", "verifikasi", "security", "keamanan manual"];
       const isManualIntervention = manualKeywords.some((kw) => combined.includes(kw));
-      if (isManualIntervention) {
+      if (isManualIntervention && !config.waitForManualLogin) {
         const reason = "Butuh tindakan manual login/captcha/OTP/security di browser.";
         appendQaLog("qa.failed", {
           reason,
           blockerType: "manual_intervention",
           latestApplication: status.latestApplication,
           resumeAfterManual: config.resumeAfterManual,
+          waitForManualLogin: config.waitForManualLogin,
           logFiles: buildLogFiles(config),
         });
         console.log("QA FAILED");
@@ -834,6 +835,17 @@ async function runLoop(config) {
         console.log(`Dev log: ${devLogRelative}`);
         console.log("Send these logs to ChatGPT for analysis.");
         return 1;
+      }
+      if (isManualIntervention && config.waitForManualLogin) {
+        appendQaLog("qa.manual_intervention_detected_wait_mode", {
+          reason: "Manual intervention detected, but --wait-for-manual-login is active. Browser stays open, polling continues.",
+          blockerType: "manual_intervention",
+          latestApplication: status.latestApplication,
+          logFiles: buildLogFiles(config),
+        });
+        console.log("Manual intervention detected. Browser stays open. Polling continues...");
+        await sleep(config.pollIntervalMs);
+        continue;
       }
     }
 
@@ -865,19 +877,36 @@ async function runLoop(config) {
     }
 
     if (status.blocker) {
+      const blockerType = status.blockerType || status.blocker?.type || null;
+      const isManualInterventionBlocker = ["otp_required", "email_required", "security_or_challenge", "manual_intervention"].includes(blockerType);
+
+      if (isManualInterventionBlocker && config.waitForManualLogin) {
+        appendQaLog("qa.blocker_detected_wait_mode", {
+          reason: "Blocker detected, but --wait-for-manual-login is active. Browser stays open, polling continues.",
+          blockerType,
+          blocker: status.blocker,
+          blockerEvidence: status.blockerEvidence || status.blocker?.evidence || null,
+          logFiles: buildLogFiles(config),
+        });
+        console.log(`Blocker detected: ${blockerType}. Browser stays open. Polling continues...`);
+        await sleep(config.pollIntervalMs);
+        continue;
+      }
+
       appendQaLog("qa.failed", {
         reason: status.blocker.message,
         latestCampaignStatus: status.status,
         latestJob: status.currentJob?.title || null,
         latestApplication: status.latestApplication?.id || null,
         blocker: status.blocker,
-        blockerType: status.blockerType || status.blocker?.type || null,
+        blockerType,
         blockerEvidence: status.blockerEvidence || status.blocker?.evidence || null,
         lastMcpSnapshotPreview: status.lastMcpSnapshotPreview || null,
+        waitForManualLogin: config.waitForManualLogin,
         logFiles: buildLogFiles(config),
       });
       console.log("QA FAILED");
-      if ((status.blockerType || status.blocker?.type) === "manual_intervention_required") {
+      if (blockerType === "manual_intervention_required") {
         const evidence = status.blockerEvidence || status.blocker?.evidence || {};
         console.log("Reason: manual_intervention_required");
         console.log(`Type: ${evidence.type || "unknown"}`);
@@ -1008,8 +1037,8 @@ async function main() {
         liveCheck,
       });
       if (!liveCheck?.canResumeAutopilot) {
-        const reason = liveCheck?.state === "login_required"
-          ? "Sesi MCP Jobstreet masih meminta login manual."
+        const reason = liveCheck?.state === "email_required"
+          ? "Sesi MCP Jobstreet masih meminta email login."
           : liveCheck?.state === "security_or_challenge"
             ? "Sesi MCP Jobstreet masih berada di captcha/OTP/verifikasi keamanan."
             : liveCheck?.currentUrl === "about:blank"
