@@ -418,12 +418,13 @@ campaign.applied_count_incremented
 
 Tuliskan hasil testing manual terakhir:
 
-Tanggal: 2026-06-04 (email OTP flow + session recovery + browser lifecycle)
+Tanggal: 2026-06-04 (email OTP flow live QA + browser lifecycle diagnosis)
 Command yang dijalankan:
 
 ```bash
 npm test
 npx tsc --noEmit
+npm run qa:autopilot -- --campaign=cmpybm8rh00009k0b057yhrg0 --job-url=https://id.jobstreet.com/id/job/92457600 --target=1 --force-direct-apply --login-bootstrap --keep-browser-on-manual
 ```
 
 Hasil command lokal pada task ini:
@@ -433,7 +434,11 @@ Hasil command lokal pada task ini:
 * [x] [`tests/jobstreet-session-check.test.ts`](tests/jobstreet-session-check.test.ts:1) memverifikasi deteksi `email_required`, `otp_required`, `security_or_challenge`, dan `authenticated` state dari snapshot MCP.
 * [x] Email input detection sekarang mencari `type="email"` atau `name="username"` dengan `autocomplete="username"` untuk menangani pattern email login Jobstreet OAuth.
 * [x] Blank snapshot (`about:blank` atau `data:text/html`) sekarang dikembalikan sebagai `unknown` state dengan `isResumable: false` hingga recovery navigate berhasil.
-* [x] Browser lifecycle untuk manual intervention sekarang mempertahankan browser terbuka alih-alih menutup prematur saat `email_required` atau `otp_required`.
+* [x] Browser lifecycle untuk manual intervention di [`runMcpAiApplyRunner()`](lib/browser/mcp-ai-apply-runner.ts:320) sekarang mempertahankan browser terbuka (tidak memanggil `context.close()`) saat `email_required`, `otp_required`, atau `security_or_challenge`.
+* [x] Live QA bootstrap berhasil navigate ke halaman OAuth login Jobstreet dan mendeteksi state `email_required` dengan confidence 0.95.
+* [x] QA log menunjukkan `recoveryAttempted: true` dan `currentUrl` valid ke OAuth login page dengan returnUrl apply job 92457600.
+* ⚠️ Browser MCP tertutup prematur setelah session check selesai, sebelum user sempat input email/OTP. Root cause: MCP server (playwright-mcp sidecar eksternal) kemungkinan menutup browser setelah idle/request selesai, bukan dari kode aplikasi kita yang sudah tidak memanggil close pada blocker recoverable.
+
 
 Tanggal: 2026-06-03 (abort-on-error + target-1 autopilot + missing JobListing columns migration)
 Command yang dijalankan:
@@ -485,7 +490,8 @@ Catatan:
 | 2026-06-03 | Endpoint status dan proses save/search job crash dengan Prisma `P2022` karena kolom `main.JobListing.jobstreetJobId` belum ada di SQLite | Schema [`JobListing`](prisma/schema.prisma:121) sudah memakai field baru, tetapi DB lokal belum mendapat migrasi kolom `jobstreetJobId`, `applyUrl`, `quickApplyAvailable`, dan `searchPage` | Fixed (perlu menjalankan migrasi pada environment lain) | `prisma/schema.prisma`, `prisma/migrations/20260603171500_add_missing_job_listing_columns/migration.sql`, `app/api/campaigns/[id]/status/route.ts`, `lib/browser/jobstreet-agent.ts` |
 | 2026-06-03 | Saat satu lowongan error, autopilot masih lanjut mencari/memproses lowongan lain padahal goal sekarang hanya 1 lamaran | Cabang hasil [`apply_unavailable` / `stuck_no_progress` / `submit_not_found_timeout`](lib/campaign/autopilot-runner.ts:1157) sebelumnya mengembalikan `skipped_continue` dan memaksa lanjut ke next job | Fixed | `lib/campaign/autopilot-runner.ts` |
 | 2026-06-03 | Campaign Autopilot crash dengan `Invalid URL` saat MCP mendeteksi `external_redirect` / page kind `unknown`, atau saat keyword pencarian berisi spasi seperti `IT Developer` | URL kosong/relative/malformed masih bisa lolos ke `new URL(...)`, dan builder search URL sempat menyisipkan keyword mentah multi-kata ke path sehingga phase search bisa membentuk URL tidak valid | Fixed (targeted test [`tests/jobstreet-search-url.test.ts`](tests/jobstreet-search-url.test.ts:1) lulus; QA live masih pending) | `lib/jobstreet/safe-url.ts`, `lib/jobstreet/jobstreet-url.ts`, `lib/jobstreet/jobstreet-search-url.ts`, `lib/browser/mcp-ai-apply-runner.ts`, `lib/browser/jobstreet-apply-agent.ts`, `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/status/route.ts`, `tests/safe-url.test.ts`, `tests/jobstreet-url.test.ts`, `tests/jobstreet-search-url.test.ts` |
-| 2026-06-04 | Browser menutup prematur saat email login atau OTP required, menghalangi user untuk login manual | Runner MCP menutup browser untuk semua blocker manual intervention, tidak membedakan antara recoverable state (login/OTP) dan terminal state (captcha eksternal) | Fixed: browser sekarang tetap terbuka untuk `email_required`, `otp_required`, dan `security_or_challenge`; UI menampilkan tombol resume; session check endpoint mendukung auto-fill email dan validasi state live | `lib/browser/mcp-ai-apply-runner.ts`, `app/api/browser/session/route.ts`, `components/campaign-actions.tsx`, `lib/jobstreet/session-check.ts`, `tests/jobstreet-session-check.test.ts` |
+| 2026-06-04 | Browser MCP tertutup prematur setelah session check login bootstrap, sebelum user sempat input email/OTP | Lifecycle fix di [`runMcpAiApplyRunner()`](lib/browser/mcp-ai-apply-runner.ts:320) sudah tidak memanggil `context.close()` untuk recoverable blocker, tetapi MCP server (playwright-mcp sidecar eksternal) kemungkinan menutup browser setelah idle/request HTTP selesai | Partial: kode aplikasi sudah benar tidak menutup browser; blocker ada di MCP server eksternal yang di luar scope kode aplikasi; workaround: gunakan `--wait-for-manual-login` agar QA polling terus-menerus hingga session authenticated, atau restart MCP server dengan konfigurasi idle timeout lebih panjang | `lib/browser/mcp-ai-apply-runner.ts`, `app/api/browser/session/route.ts`, `scripts/qa-autopilot.mjs`, MCP server config (eksternal) |
+| 2026-06-04 | Browser menutup prematur saat email login atau OTP required di autopilot apply runner, menghalangi user untuk login manual | Runner MCP menutup browser untuk semua blocker manual intervention, tidak membedakan antara recoverable state (login/OTP) dan terminal state (captcha eksternal) | Fixed: browser sekarang tetap terbuka untuk `email_required`, `otp_required`, dan `security_or_challenge` di autopilot runner; UI menampilkan tombol resume; session check endpoint mendukung auto-fill email dan validasi state live | `lib/browser/mcp-ai-apply-runner.ts`, `app/api/browser/session/route.ts`, `components/campaign-actions.tsx`, `lib/jobstreet/session-check.ts`, `tests/jobstreet-session-check.test.ts` |
 | 2026-06-04 | Email input pattern Jobstreet OAuth tidak terdeteksi sebagai login state | Session check sebelumnya hanya mencari `type="email"` tanpa mengakomodasi `name="username"` dengan `autocomplete="username"` yang dipakai Jobstreet OAuth | Fixed: deteksi email input sekarang mencakup kedua pattern | `lib/jobstreet/session-check.ts`, `app/api/browser/session/route.ts`, `tests/jobstreet-session-check.test.ts` |
 | 2026-06-04 | Blank snapshot (`about:blank`) dari MCP health/navigate error dikembalikan sebagai resumable state, menyebabkan false positive recovery | Session check sebelumnya tidak membedakan blank page dari state valid | Fixed: blank snapshot sekarang dikembalikan sebagai `unknown` dengan `isResumable: false` hingga recovery navigate berhasil | `lib/jobstreet/session-check.ts`, `tests/jobstreet-session-check.test.ts` |
 | 2026-06-02 | QA stuck karena campaign terus memanggil continue berkali-kali saat currentStep sudah no_jobs_remaining | `no_jobs_remaining` disimpan sebagai `paused` dan status endpoint mengembalikan `canContinue: true` | Fixed | `lib/campaign/autopilot-runner.ts`, `app/api/campaigns/[id]/status/route.ts`, `scripts/qa-autopilot.mjs` |

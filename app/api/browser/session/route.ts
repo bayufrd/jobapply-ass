@@ -33,10 +33,13 @@ async function settleJobstreetSession(input: {
   targetUrl: string;
   applyTargetUrl: string;
   recoverBlank: boolean;
+  skipNavigate?: boolean;
 }) {
-  const { client, campaignId, targetUrl, applyTargetUrl, recoverBlank } = input;
+  const { client, campaignId, targetUrl, applyTargetUrl, recoverBlank, skipNavigate } = input;
 
-  await client.navigate(applyTargetUrl || targetUrl);
+  if (!skipNavigate) {
+    await client.navigate(applyTargetUrl || targetUrl);
+  }
   let snapshot = await client.snapshot();
   let result = analyzeJobstreetSessionSnapshot(snapshot);
   let lastActionableResult = result.state === "unknown" ? null : result;
@@ -48,7 +51,7 @@ async function settleJobstreetSession(input: {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     settleAttempts = attempt;
 
-    if (recoverBlank && result.state === "unknown" && String(result.currentUrl || "").trim().toLowerCase() === "about:blank") {
+    if (recoverBlank && !skipNavigate && result.state === "unknown" && String(result.currentUrl || "").trim().toLowerCase() === "about:blank") {
       recoveryAttempted = true;
 
       await writeAutomationLog({
@@ -145,6 +148,7 @@ export async function GET(request: Request) {
   const targetUrl = searchParams.get("targetUrl") || getDefaultJobstreetSessionCheckUrl();
   const applyTargetUrl = searchParams.get("applyTargetUrl") || targetUrl;
   const recoverBlank = searchParams.get("recoverBlank") === "1";
+  const skipNavigate = searchParams.get("skipNavigate") === "1";
   const visibleMode = (process.env.PLAYWRIGHT_HEADLESS ?? "false") !== "true";
 
   let liveCheck: Record<string, unknown> | null = null;
@@ -157,6 +161,7 @@ export async function GET(request: Request) {
       metadata: {
         targetUrl,
         visibleMode,
+        skipNavigate,
       },
     }).catch(() => undefined);
 
@@ -169,6 +174,7 @@ export async function GET(request: Request) {
         targetUrl,
         applyTargetUrl,
         recoverBlank,
+        skipNavigate,
       });
 
       liveCheck = {
@@ -176,6 +182,7 @@ export async function GET(request: Request) {
         targetUrl,
         applyTargetUrl,
         recoverBlank,
+        skipNavigate,
         recoveryAttempted: settled.recoveryAttempted,
         emailFillAttempted: settled.emailFillAttempted,
         emailFillCompleted: settled.emailFillCompleted,

@@ -42,7 +42,7 @@ export function analyzeJobstreetSessionSnapshot(snapshot: McpSnapshot): Jobstree
   const combined = `${url}\n${title}\n${text}\n${elementText}`;
   const snapshotPreview = `${snapshot.title}\n${snapshot.accessibilityText}`.trim().slice(0, 1200);
 
-  const loginUrlDetected = hasAny(combined, ["/oauth/login", "/id/oauth/login", "returnurl="]);
+  const loginUrlDetected = hasAny(combined, ["/oauth/login", "/id/oauth/login", "returnurl=", "login.seek.com", "id.jobstreet.com/id/oauth"]);
   const emailInputDetected = snapshot.elements.some((element) => {
     if (element.disabled) return false;
     const role = normalizeText(element.role);
@@ -60,24 +60,12 @@ export function analyzeJobstreetSessionSnapshot(snapshot: McpSnapshot): Jobstree
   const otpDetected = hasAny(combined, ["verification code", "kode verifikasi", "one-time password", "otp", "enter the code"]);
   const captchaDetected = hasAny(combined, ["captcha", "i'm not a robot", "saya bukan robot"]);
   const securityDetected = hasAny(combined, ["security verification", "verify it is you", "verifikasi keamanan"]);
-  const applyUrlDetected = /\/id\/job\/\d+\/apply(?:[/?#]|$)/.test(url);
-  const jobDetailDetected = /\/id\/job\/\d+(?:[/?#]|$)/.test(url) || url.includes("/id/job/92457600");
+  
+  // Tighten regex to ensure we are matching the path, not query params or fragments
+  const applyUrlDetected = /^https?:\/\/[^/]+\/id\/job\/\d+\/apply(?:[/?#]|$)/.test(url) || /^\/id\/job\/\d+\/apply(?:[/?#]|$)/.test(url);
+  const jobDetailDetected = /^https?:\/\/[^/]+\/id\/job\/\d+(?:[/?#]|$)/.test(url) || /^\/id\/job\/\d+(?:[/?#]|$)/.test(url);
 
-  if (applyUrlDetected) {
-    return {
-      state: "authenticated",
-      currentUrl,
-      evidence: ["URL apply internal Jobstreet terdeteksi pada snapshot MCP."],
-      confidence: 0.99,
-      visibleBrowserRequired: false,
-      canResumeAutopilot: true,
-      loginUrlDetected,
-      passwordInputDetected,
-      applyUrlDetected,
-      snapshotPreview,
-    };
-  }
-
+  // PRIORITY 1: Security Challenges (OTP, Captcha)
   if (captchaDetected || otpDetected || securityDetected) {
     const evidence = [];
     if (captchaDetected) evidence.push("Sinyal captcha terlihat pada snapshot MCP.");
@@ -97,6 +85,7 @@ export function analyzeJobstreetSessionSnapshot(snapshot: McpSnapshot): Jobstree
     };
   }
 
+  // PRIORITY 2: Login Forms (Email/Password)
   if (loginUrlDetected && emailInputDetected && !otpDetected) {
     return {
       state: "email_required",
@@ -127,6 +116,22 @@ export function analyzeJobstreetSessionSnapshot(snapshot: McpSnapshot): Jobstree
     };
   }
 
+  // PRIORITY 3: Authenticated States (Apply Page or Job Detail)
+  if (applyUrlDetected) {
+    return {
+      state: "authenticated",
+      currentUrl,
+      evidence: ["URL apply internal Jobstreet terdeteksi pada snapshot MCP."],
+      confidence: 0.99,
+      visibleBrowserRequired: false,
+      canResumeAutopilot: true,
+      loginUrlDetected,
+      passwordInputDetected,
+      applyUrlDetected,
+      snapshotPreview,
+    };
+  }
+
   if (jobDetailDetected) {
     return {
       state: "authenticated",
@@ -142,6 +147,7 @@ export function analyzeJobstreetSessionSnapshot(snapshot: McpSnapshot): Jobstree
     };
   }
 
+  // FALLBACK: Unknown
   return {
     state: "unknown",
     currentUrl,

@@ -342,7 +342,7 @@ async function pickNextJob(
         return true;
       }
 
-      return item.status !== "failed";
+      return item.status !== "failed" && item.status !== "paused" && item.status !== "pending_review";
     })
     .map((item) => item.jobListingId);
 

@@ -150,9 +150,9 @@ export async function POST(
           body.forceAutoSubmitSafeOnly === false ? campaign.automationMode : "auto_submit_safe_only",
         autoSubmitSafeOnly: body.forceAutoSubmitSafeOnly === false ? campaign.autoSubmitSafeOnly : true,
         lowScoreMode: body.forceApplyLowScore ? "auto_apply" : campaign.lowScoreMode,
-        currentStep: null,
-        currentJobId: directApply ? "qa_direct_apply_pending" : null,
-        currentQuestion: null,
+        currentStep: body.resumeAfterManual ? campaign.currentStep : null,
+        currentJobId: directApply ? "qa_direct_apply_pending" : (body.resumeAfterManual ? campaign.currentJobId : null),
+        currentQuestion: body.resumeAfterManual ? campaign.currentQuestion : null,
         decisionStatus: null,
         decisionPayloadJson: directApply
           ? JSON.stringify({
@@ -216,6 +216,11 @@ export async function POST(
     });
 
     const result = await runCampaignAutopilot(id);
+
+    // Jika runner meminta intervensi manual (login/OTP), kita tidak ingin
+    // QA script langsung menganggap ini sebagai kegagalan akhir jika persistent-mcp aktif.
+    // Namun, di level API ini kita hanya mengembalikan status runner apa adanya.
+
     const refreshed = await prisma.campaign.findUnique({
       where: { id },
       include: {

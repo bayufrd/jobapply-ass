@@ -21,6 +21,7 @@ const DEFAULTS = {
   resumeAfterManual: false,
   loginBootstrap: false,
   waitForManualLogin: false,
+  persistentMcp: false,
 };
 
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -66,6 +67,9 @@ function parseArgs(argv) {
     }
     if (rawKey === "wait-for-manual-login") {
       parsed.waitForManualLogin = value ? value !== "false" : true;
+    }
+    if (rawKey === "persistent-mcp") {
+      parsed.persistentMcp = value ? value !== "false" : true;
     }
   }
   return parsed;
@@ -595,6 +599,10 @@ async function checkLiveBrowserSession(config, options = {}) {
     params.set("recoverBlank", "1");
   }
 
+  if (options.skipNavigate) {
+    params.set("skipNavigate", "1");
+  }
+
   const response = await fetchJson(`${config.appUrl}/api/browser/session?${params.toString()}`);
   appendQaLog("jobstreet.live_session_check", {
     status: response.status,
@@ -622,15 +630,24 @@ async function runLoginBootstrap(config) {
   console.log(`Evidence: ${JSON.stringify(liveCheck?.evidence || [])}`);
   console.log("Browser visible harus tetap terbuka. Selesaikan login manual di Chromium MCP.");
 
-  if (!config.waitForManualLogin) {
+  if (!config.waitForManualLogin && !config.persistentMcp) {
     console.log(`Resume command: npm run qa:autopilot -- --campaign=${config.campaignId} --job-url=${config.directJobUrl || getDefaultTargetJobUrl()} --target=${config.target} --force-direct-apply --resume-after-manual${config.skipAppliedBaseline ? " --skip-applied-baseline" : ""}`);
     return 0;
+  }
+
+  if (config.persistentMcp) {
+    appendQaLog("persistent_mcp.enabled", {
+      state: liveCheck?.state,
+      currentUrl: liveCheck?.currentUrl,
+      message: "Persistent MCP mode active. Delegating polling to main().",
+    });
+    return { persistent: true, liveCheck };
   }
 
   const deadline = Date.now() + 5 * 60 * 1000;
   while (Date.now() < deadline) {
     await sleep(3000);
-    const polled = await checkLiveBrowserSession(config, { recoverBlank: true });
+    const polled = await checkLiveBrowserSession(config, { recoverBlank: true, skipNavigate: true });
     appendQaLog("jobstreet.session_state_after_resume", {
       mode: "login_bootstrap_wait",
       liveCheck: polled,
@@ -1022,7 +1039,43 @@ async function main() {
       if (bootstrapResult === 0) {
         process.exit(0);
       }
-      config.resumeAfterManual = true;
+      if (bootstrapResult?.persistent) {
+        appendQaLog("persistent_mcp.keep_alive_started", {
+          state: bootstrapResult.liveCheck?.state,
+          currentUrl: bootstrapResult.liveCheck?.currentUrl,
+          message: "Starting persistent MCP keep-alive polling.",
+        });
+        console.log("[persistent-mcp] MCP persistent mode active. Keeping browser and MCP alive for manual intervention.");
+        const persistentDeadline = Date.now() + 15 * 60 * 1000;
+        while (Date.now() < persistentDeadline) {
+          await sleep(config.pollIntervalMs);
+          const polled = await checkLiveBrowserSession(config, { recoverBlank: true, skipNavigate: true });
+          appendQaLog("persistent_mcp.keep_alive_ping", {
+            state: polled?.state,
+            currentUrl: polled?.currentUrl,
+            canResume: polled?.canResumeAutopilot
+          });
+          if (polled?.canResumeAutopilot && polled?.state === "authenticated") {
+            appendQaLog("persistent_mcp.authenticated_detected", {
+              state: polled.state,
+              currentUrl: polled.currentUrl,
+              message: "Authenticated detected. Continuing to direct apply.",
+            });
+            console.log("[persistent-mcp] Authenticated detected. Continuing to direct apply.");
+            config.resumeAfterManual = true;
+            break;
+          }
+          if (["terminated", "error", "no_jobs_remaining", "target_reached"].includes(polled?.state)) {
+            appendQaLog("persistent_mcp.terminal_state", {
+              state: polled.state,
+              message: `Terminal state detected: ${polled.state}.`,
+            });
+            console.log(`[persistent-mcp] Terminal state detected: ${polled?.state}. Exiting persistent MCP mode.`);
+            process.exit(1);
+          }
+        }
+        config.resumeAfterManual = true;
+      }
     }
 
     if (config.resumeAfterManual) {
@@ -1068,7 +1121,7 @@ async function main() {
     }
 
     // TASK 4 — QA runner harus membaca baseline sebelum apply
-    if (config.skipAppliedBaseline) {
+    if (config.skipAppliedBaseline || config.persistentMcp) {
       appendQaLog("qa.applied_jobs_baseline_skipped", {
         message: "Baseline Applied Jobs Jobstreet dilewati oleh flag CLI.",
       });
@@ -1099,7 +1152,7 @@ async function main() {
       config.appliedJobsBefore = appliedJobsBefore;
     }
 
-    await startCampaign(config);
+    await startCampaign(config, { resumeAfterManual: config.resumeAfterManual });
     const exitCode = await runLoop(config);
     process.exit(exitCode);
   } catch (error) {
