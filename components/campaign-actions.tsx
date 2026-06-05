@@ -228,6 +228,7 @@ export function CampaignActions({
 }: Props) {
   const [statusData, setStatusData] = useState<CampaignStatusResponse | null>(null);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [otpValue, setOtpValue] = useState("");
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [resultTone, setResultTone] = useState<"success" | "warning" | "error" | null>(null);
   const autoContinueCountRef = useRef(0);
@@ -441,6 +442,39 @@ export function CampaignActions({
                             : action === "resume_after_login"
                               ? "User sudah selesai login manual dan meminta direct apply dilanjutkan."
                               : "User ingin memutuskan nanti.",
+
+  async function submitOtp() {
+    if (!otpValue || otpValue.length < 6) {
+      setResultMessage("Masukkan 6 digit OTP.");
+      setResultTone("error");
+      return;
+    }
+
+    setLoadingAction("submit_otp");
+    setResultMessage(null);
+    try {
+      const url = `/api/campaigns/${campaignId}/auth/otp`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otp: otpValue }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Gagal mengirim OTP.");
+      }
+      setResultMessage(data.message || "OTP terkirim.");
+      setResultTone("success");
+      setOtpValue("");
+      await fetchStatus();
+    } catch (error) {
+      setResultMessage(error instanceof Error ? error.message : "Terjadi kesalahan.");
+      setResultTone("error");
+    } finally {
+      setLoadingAction(null);
+    }
+  }
+
         }),
       });
       const data = await readJsonSafely(res, { actionName: "send_decision", method, url });
@@ -722,21 +756,57 @@ export function CampaignActions({
           <p className="mt-3 text-sm text-slate-200">
             {statusData.blocker.message ?? "Selesaikan login atau verifikasi keamanan di browser Jobstreet yang terbuka, lalu lanjutkan dari aplikasi."}
           </p>
-          <p className="mt-3 text-sm text-slate-400">
-            Masukkan OTP 6 digit langsung di browser Jobstreet yang terbuka. Setelah berhasil login, klik tombol Lanjutkan dari aplikasi.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              onClick={() => submitDecision("resume_after_login")}
-              disabled={loadingAction !== null}
-              className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-50"
-            >
-              Saya sudah login, lanjutkan
-            </button>
-            <Link href={statusData?.localLog.apiUrl ?? `/api/campaigns/${campaignId}/local-log?tail=300`} target="_blank" className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
-              Lihat Local Log
-            </Link>
-          </div>
+          
+          {statusData.blocker.type === "otp_required" ? (
+            <div className="mt-5 space-y-4">
+              <div className="max-w-xs">
+                <label htmlFor="otp" className="block text-xs font-medium text-slate-400 uppercase tracking-wider">Masukkan 6-digit OTP</label>
+                <input
+                  id="otp"
+                  type="text"
+                  maxLength={6}
+                  placeholder="000000"
+                  value={otpValue}
+                  onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, ""))}
+                  className="mt-2 block w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-2xl font-bold tracking-[0.5em] text-white focus:border-cyan-500 focus:ring-cyan-500"
+                />
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={submitOtp}
+                  disabled={loadingAction !== null || otpValue.length < 6}
+                  className="rounded-xl bg-cyan-500 px-6 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
+                >
+                  {loadingAction === "submit_otp" ? "Mengirim..." : "Kirim OTP"}
+                </button>
+                <button
+                  onClick={() => submitDecision("resume_after_login")}
+                  disabled={loadingAction !== null}
+                  className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                >
+                  Gunakan OTP di browser, lalu Lanjutkan
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="mt-3 text-sm text-slate-400">
+                Selesaikan login atau verifikasi keamanan langsung di browser Jobstreet yang terbuka. Setelah berhasil login, klik tombol Lanjutkan dari aplikasi.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  onClick={() => submitDecision("resume_after_login")}
+                  disabled={loadingAction !== null}
+                  className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-300 hover:bg-cyan-500/20 disabled:opacity-50"
+                >
+                  Saya sudah login, lanjutkan
+                </button>
+                <Link href={statusData?.localLog.apiUrl ?? `/api/campaigns/${campaignId}/local-log?tail=300`} target="_blank" className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
+                  Lihat Local Log
+                </Link>
+              </div>
+            </>
+          )}
         </section>
       )}
 

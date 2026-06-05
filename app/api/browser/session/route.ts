@@ -7,7 +7,7 @@ import {
   getDefaultJobstreetSessionCheckUrl,
 } from "@/lib/jobstreet/session-check";
 
-const SAFE_JOBSTREET_EMAIL = "bayu.farid36@gmail.com";
+const SAFE_JOBSTREET_EMAIL = process.env.JOBSTREET_EMAIL || "bayu.farid36@gmail.com";
 
 function findVisibleEmailElement(snapshot: McpSnapshot) {
   return snapshot.elements.find((element) => {
@@ -94,6 +94,39 @@ async function settleJobstreetSession(input: {
 
         await client.fill(emailElement.elementId, SAFE_JOBSTREET_EMAIL);
         emailFillCompleted = true;
+
+        await writeAutomationLog({
+          campaignId,
+          event: "auth.email_filled",
+          message: `Email filled automatically.`,
+          metadata: { currentUrl: result.currentUrl },
+        }).catch(() => undefined);
+
+        // Try to find and click "Continue" button
+        const continueButton = snapshot.elements.find((el) => {
+          const name = String(el.name ?? "").toLowerCase();
+          const text = String(el.text ?? "").toLowerCase();
+          return (el.role === "button" || el.role === "link") && (name.includes("continue") || text.includes("continue") || name.includes("lanjut") || text.includes("lanjut") || name.includes("next") || text.includes("next"));
+        });
+
+        if (continueButton) {
+          await client.click(continueButton.elementId);
+          await writeAutomationLog({
+            campaignId,
+            event: "auth.login_continue_clicked",
+            message: "Tombol Continue diklik otomatis setelah isi email.",
+            metadata: { currentUrl: result.currentUrl },
+          }).catch(() => undefined);
+        } else {
+          // Fallback: press Enter
+          await client.fill(emailElement.elementId, SAFE_JOBSTREET_EMAIL + "\n");
+          await writeAutomationLog({
+            campaignId,
+            event: "auth.login_continue_clicked",
+            message: "Enter ditekan otomatis setelah isi email (tombol Continue tidak ditemukan).",
+            metadata: { currentUrl: result.currentUrl },
+          }).catch(() => undefined);
+        }
 
         await writeAutomationLog({
           campaignId,

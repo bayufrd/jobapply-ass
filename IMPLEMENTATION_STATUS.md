@@ -93,6 +93,12 @@ app/
     jobs/
       [id]/
         apply/
+| Jobstreet OTP Input | Selesai | Campaign UI sekarang menampilkan input card untuk OTP 6 digit dan mensubmitnya via API ke browser MCP. | `app/api/campaigns/[id]/auth/otp/route.ts`, `components/campaign-actions.tsx` |
+| Auto-fill Email Jobstreet | Selesai | Email sekarang diisi otomatis dari `JOBSTREET_EMAIL` environment variable. | `app/api/browser/session/route.ts`, `lib/campaign/autopilot-runner.ts` |
+| Auto-click Continue Login | Selesai | Sistem mencoba mengklik tombol Continue secara otomatis setelah mengisi email. | `app/api/browser/session/route.ts`, `lib/campaign/autopilot-runner.ts` |
+| OTP/Login Debug Wizard | Selesai | Endpoint debug baru ditambahkan untuk memantau state login Jobstreet secara live. | `app/api/debug/jobstreet/login-wizard/route.ts` |
+| Auth Event Logging | Selesai | Log spesifik ditambahkan untuk `auth.email_filled`, `auth.login_continue_clicked`, `auth.otp_required`, dll. | `lib/browser/mcp-ai-apply-runner.ts`, `app/api/browser/session/route.ts` |
+
           calibrate/  (NEW)
           start/
         calibration/  (NEW)

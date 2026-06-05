@@ -806,6 +806,28 @@ export async function runMcpAiApplyRunner({
         }
 
         if (evidenceType && evidence.length > 0 && confidence >= 0.85) {
+          if (evidenceType === "otp") {
+            await writeAutomationLog({
+              campaignId: campaign.id,
+              event: "auth.otp_required",
+              message: "Halaman OTP Jobstreet terdeteksi.",
+              metadata: { currentUrl: snapshot.url }
+            }).catch(() => undefined);
+            await writeAutomationLog({
+              campaignId: campaign.id,
+              event: "auth.browser_kept_open_for_otp",
+              message: "Browser dipertahankan terbuka untuk input OTP manual.",
+              metadata: { currentUrl: snapshot.url }
+            }).catch(() => undefined);
+          } else if (evidenceType === "login") {
+            await writeAutomationLog({
+              campaignId: campaign.id,
+              event: "auth.login_required",
+              message: "Halaman login Jobstreet terdeteksi.",
+              metadata: { currentUrl: snapshot.url }
+            }).catch(() => undefined);
+          }
+
           return await createControlledManualInterventionResult({
             campaign,
             jobListing,
